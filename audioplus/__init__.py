@@ -12,12 +12,12 @@ from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import box
 
 try:
-    import wavelink  # Wavelink 3.x (Lavalink v4)
+    import wavelink  # Requires Wavelink 3.x (compatible with Lavalink v4)
 except Exception as e:
-    # why: show a clear message in Red’s logs when dependency is missing
     raise ImportError(
-        "audioplus requires Wavelink 3.x (Lavalink v4). "
-        "Install with: pip install -U 'wavelink>=3,<4'  (or [p]pipinstall wavelink==3.*)"
+        "audioplus requires Wavelink 3.x (Lavalink v4).\n"
+        "Install with your Red venv: pip install -U 'wavelink>=3,<4'\n"
+        "or via Red: [p]pipinstall wavelink==3.*"
     ) from e
 
 YOUTUBE_URL_RE = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
@@ -35,7 +35,7 @@ class LoopMode:
     ALL = "all"
 
 class MusicPlayer(wavelink.Player):
-    """Guild player with queue + loop."""
+    """Guild-scoped player with queue/loop state."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.queue: wavelink.Queue[wavelink.Playable] = wavelink.Queue()
@@ -60,16 +60,18 @@ class MusicPlayer(wavelink.Player):
             pass
 
 class AudioPlus(redcommands.Cog):
-    """Lavalink v4 YouTube-only player (lyric-first), with queue/seek/repeat, help/diag, and probe."""
+    """Lavalink v4 YouTube-only player (lyric-first) with queue/seek/repeat, help/diag, and probe."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
-        self.config: Config = Config.get_conf(self, identifier=0xAUDIOP1, force_registration=True)
+        # FIX: use a valid hex literal (A–F, 0–9). 0xA71D01 is arbitrary but stable.
+        self.config: Config = Config.get_conf(self, identifier=0xA71D01, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self._node_ready: bool = False
 
-    # ---------- node ----------
+    # ---------- node mgmt ----------
     async def _connect_node(self, guild: Optional[discord.Guild] = None) -> Optional[wavelink.Node]:
+        """Return a connected node if available; otherwise try to create one from guild config."""
         try:
             if wavelink.NodePool.nodes:
                 node = wavelink.NodePool.get_node()
@@ -78,7 +80,9 @@ class AudioPlus(redcommands.Cog):
                     return node
         except Exception:
             pass
-        for g in ([guild] if guild else list(self.bot.guilds)):
+
+        targets = [guild] if guild else list(self.bot.guilds)
+        for g in targets:
             conf = await self.config.guild(g).node()
             if not conf["host"]:
                 continue
@@ -125,6 +129,7 @@ class AudioPlus(redcommands.Cog):
             raise redcommands.UserFeedbackCheckFailure("You must be in my voice channel.")
 
     async def _search_youtube(self, guild: discord.Guild, query: str) -> Optional[wavelink.Playable]:
+        """YouTube-only search; prefer lyric videos by title."""
         prefer_lyrics = await self.config.guild(guild).prefer_lyrics()
 
         async def _search(q: str) -> List[wavelink.Playable]:
@@ -134,6 +139,7 @@ class AudioPlus(redcommands.Cog):
             except Exception:
                 return []
 
+        # URL path: only accept YouTube URLs
         if YOUTUBE_URL_RE.search(query):
             try:
                 res = await wavelink.Playable.search(query)
@@ -141,30 +147,27 @@ class AudioPlus(redcommands.Cog):
             except Exception:
                 return None
 
-        queries = [query]
-        if prefer_lyrics:
-            queries = [f"{query} lyrics", f"{query} lyric video", query]
-
+        # Query path: try lyric-first, then plain
+        queries = [f"{query} lyrics", f"{query} lyric video", query] if prefer_lyrics else [query]
         candidates: List[wavelink.Playable] = []
         for q in queries:
             items = await _search(q)
             if items:
                 candidates.extend(items)
                 break
-
         if not candidates:
             return None
 
         if prefer_lyrics:
             def score(t: wavelink.Playable) -> Tuple[int, int]:
                 title = (getattr(t, "title", "") or "").lower()
-                has = 0 if ("lyric" in title or "lyrics" in title) else 1
+                has = 0 if ("lyric" in title or "lyrics" in title) else 1  # why: prefer lyric videos
                 return (has, len(title))
             candidates.sort(key=score)
 
         return candidates[0]
 
-    # ---------- events ----------
+    # ---------- wavelink events ----------
     @commands.Cog.listener()
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
         player: MusicPlayer = payload.player  # type: ignore[assignment]
@@ -172,10 +175,13 @@ class AudioPlus(redcommands.Cog):
             return
         try:
             if player.loop == LoopMode.ONE and payload.reason == "finished":
-                await player.play(payload.track); return
+                await player.play(payload.track)
+                return
             if player.loop == LoopMode.ALL and payload.reason == "finished":
-                try: player.queue.put(payload.track)
-                except Exception: pass
+                try:
+                    player.queue.put(payload.track)
+                except Exception:
+                    pass
             if not player.queue.is_empty:
                 nxt = player.queue.get()
                 await player.play(nxt)
@@ -212,6 +218,7 @@ class AudioPlus(redcommands.Cog):
 
     @music.command()
     async def help(self, ctx: redcommands.Context):
+        """Full command list."""
         await self._help_full(ctx)
 
     async def _help_full(self, ctx: redcommands.Context):
@@ -227,11 +234,9 @@ class AudioPlus(redcommands.Cog):
             f"**Playback**\n"
             f"• `{p}play <query|youtube-url>` (alias: `{p}p`) — prefers lyric videos\n"
             f"• `{p}pause` • `{p}resume` • `{p}skip` • `{p}stop`\n"
-            f"• `{p}seek <mm:ss|hh:mm:ss|seconds|+/-seconds>` • `{p}volume <0-150>`\n"
-            f"• `{p}now`\n\n"
+            f"• `{p}seek <mm:ss|hh:mm:ss|seconds|+/-seconds>` • `{p}volume <0-150>` • `{p}now`\n\n"
             f"**Queue**\n"
-            f"• `{p}queue` • `{p}remove <index>` • `{p}clear` • `{p}shuffle`\n"
-            f"• `{p}repeat <off|one|all>`\n\n"
+            f"• `{p}queue` • `{p}remove <index>` • `{p}clear` • `{p}shuffle` • `{p}repeat <off|one|all>`\n\n"
             f"*Node must be Lavalink **v4** with a YouTube cipher plugin (server-side).*"
         )
         try:
@@ -241,6 +246,7 @@ class AudioPlus(redcommands.Cog):
 
     @music.command()
     async def diag(self, ctx: redcommands.Context):
+        """Run a non-intrusive system check."""
         g = ctx.guild
         me = g.me
         node = await self._connect_node(g)
@@ -295,46 +301,55 @@ class AudioPlus(redcommands.Cog):
 
     @music.command()
     async def probe(self, ctx: redcommands.Context, channel: Optional[discord.VoiceChannel] = None):
-        """Silent VC connect → validate perms → disconnect."""
+        """Silent VC connect → validate perms → disconnect. No audio is played."""
         node = await self._connect_node(ctx.guild)
         if not node:
             return await ctx.send("Node not configured/connected. Run `music node set` then `music diag`.")
         target = channel or (ctx.author.voice.channel if ctx.author.voice else None)
         if not target:
             return await ctx.send("Join a voice channel or specify one.")
+
         me = ctx.guild.me
         vperm = target.permissions_for(me)
         pre_connected = isinstance(ctx.voice_client, MusicPlayer)
         created = False
+
         if not pre_connected:
             try:
                 player: MusicPlayer = await target.connect(cls=MusicPlayer)  # type: ignore[arg-type]
                 bind_id = await self.config.guild(ctx.guild).bind_channel()
                 player.text_channel_id = bind_id or ctx.channel.id
                 vol = await self.config.guild(ctx.guild).default_volume()
-                try: await player.set_volume(int(max(0, min(150, vol))))
-                except Exception: pass
+                try:
+                    await player.set_volume(int(max(0, min(150, vol))))
+                except Exception:
+                    pass
                 created = True
             except Exception as e:
                 return await ctx.send(f"Connect failed: `{type(e).__name__}`")
+
         lines = [
             f"target={target.name}",
             f"bot_perms(connect={vperm.connect}, speak={vperm.speak}, move_members={vperm.move_members})",
             f"connected={'yes' if (created or pre_connected) else 'no'}",
         ]
         if created:
-            try: await ctx.voice_client.disconnect()  # type: ignore[union-attr]
-            except Exception: pass
+            try:
+                await ctx.voice_client.disconnect()  # type: ignore[union-attr]
+            except Exception:
+                pass
         await ctx.send(box("\n".join(lines), lang="ini"))
 
-    # ----- node config / binding / prefs -----
+    # ---------- node config & binding ----------
     @music.group(name="node")
     @redcommands.admin_or_permissions(manage_guild=True)
     async def nodegrp(self, ctx: redcommands.Context): ...
 
     @nodegrp.command(name="set")
     async def node_set(self, ctx: redcommands.Context, host: str, port: int, password: str, https: Optional[bool] = False):
-        await self.config.guild(ctx.guild).node.set({"host": host, "port": int(port), "password": password, "https": bool(https), "resume_key": None})
+        await self.config.guild(ctx.guild).node.set({
+            "host": host, "port": int(port), "password": password, "https": bool(https), "resume_key": None
+        })
         self._node_ready = False
         await ctx.tick()
 
@@ -369,11 +384,13 @@ class AudioPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).default_volume.set(value)
         player = ctx.voice_client
         if isinstance(player, MusicPlayer):
-            try: await player.set_volume(value)
-            except Exception: pass
+            try:
+                await player.set_volume(value)
+            except Exception:
+                pass
         await ctx.send(f"default_volume = **{value}%**")
 
-    # ----- voice -----
+    # ---------- voice ----------
     @music.command()
     async def join(self, ctx: redcommands.Context, channel: Optional[discord.VoiceChannel] = None):
         node = await self._connect_node(ctx.guild)
@@ -385,13 +402,16 @@ class AudioPlus(redcommands.Cog):
         if ctx.voice_client and isinstance(ctx.voice_client, MusicPlayer):
             if ctx.voice_client.channel == target:
                 return await ctx.tick()
-            await ctx.voice_client.move_to(target); return await ctx.tick()
+            await ctx.voice_client.move_to(target)
+            return await ctx.tick()
         player: MusicPlayer = await target.connect(cls=MusicPlayer)  # type: ignore[arg-type]
         bind_id = await self.config.guild(ctx.guild).bind_channel()
         player.text_channel_id = bind_id or ctx.channel.id
         vol = await self.config.guild(ctx.guild).default_volume()
-        try: await player.set_volume(int(max(0, min(150, vol))))
-        except Exception: pass
+        try:
+            await player.set_volume(int(max(0, min(150, vol))))
+        except Exception:
+            pass
         await ctx.tick()
 
     @music.command()
@@ -400,19 +420,19 @@ class AudioPlus(redcommands.Cog):
         if not isinstance(player, MusicPlayer):
             return await ctx.send("Not connected.")
         self._ensure_same_vc(ctx, player)
-        await player.disconnect(); await ctx.tick()
+        await player.disconnect()
+        await ctx.tick()
 
-    # ----- playback -----
+    # ---------- playback ----------
     @music.command(aliases=["p"])
     async def play(self, ctx: redcommands.Context, *, query: str):
         player = await self._get_player(ctx, connect=True)
-        if not YOUTUBE_URL_RE.search(query):
-            track = await self._search_youtube(ctx.guild, query)
-        else:
-            track = await self._search_youtube(ctx.guild, query)
+        # Only YouTube is allowed; free-form queries are searched on YT
+        track = await self._search_youtube(ctx.guild, query)
         if not track:
             return await ctx.send("No YouTube results.")
         player.requester_id = ctx.author.id
+
         if not player.playing and not player.paused:
             await player.play(track)
             await player.announce(f"▶️ Now playing: **{getattr(track, 'title', 'Unknown')}**")
@@ -503,7 +523,7 @@ class AudioPlus(redcommands.Cog):
             return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
         await ctx.send(f"🎵 **{getattr(track, 'title', 'Unknown')}** [{fmt(pos)}/{fmt(dur)}]")
 
-    # ----- queue -----
+    # ---------- queue ----------
     @music.command()
     async def queue(self, ctx: redcommands.Context):
         player = await self._get_player(ctx, connect=False)
