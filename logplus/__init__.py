@@ -343,8 +343,7 @@ class LogPlus(redcommands.Cog):
             "",
             "Server exempt:", *(f"- <#{i}>" for i in s) or ["- none"],
         ]
-        await ctx.send(box("
-".join(lines)))
+        await ctx.send(box("\n".join(lines), lang="ini"))
 
     # overrides mgmt
     @logplus.group(name="override")
