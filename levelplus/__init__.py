@@ -20,14 +20,11 @@ __red_end_user_data_statement__ = (
     "Data persists across leaves/joins to preserve user progress. Admins may export or erase specific users via commands."
 )
 
-__author__ = "Code Copilot"
-__version__ = "0.3.3"
-
 DEFAULTS_GUILD = {
     "curve": "linear",
     "multiplier": 1.0,
     "max_level": 0,
-    "linear": {"base": 83.2, "inc": 100.433},  # Arcane-like
+    "linear": {"base": 83.2, "inc": 100.433},  # Arcane-like scale
     "message": {"enabled": True, "mode": "perword", "min": 1, "max": 1, "cooldown": 60},
     "reaction": {"enabled": True, "awards": "both", "min": 25, "max": 25, "cooldown": 300},
     "voice": {"enabled": True, "min": 15, "max": 40, "cooldown": 180, "min_members": 1, "anti_afk": False},
@@ -85,7 +82,7 @@ def level_from_xp(xp: int, curve: str, mult: float, max_level: int, base: float,
 
 
 class LevelPlus(redcommands.Cog):
-    """Arcane-style leveling with messages/reactions/voice/slash XP, leaderboards, CSV import, tests, calibration, and migration helpers."""
+    """Arcane-style leveling: messages/reactions/voice/slash XP, leaderboard, CSV import, tests, calibration, and purge tools."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -100,10 +97,6 @@ class LevelPlus(redcommands.Cog):
 
     def cog_unload(self) -> None:
         self.voice_tick.cancel()
-
-    def format_help_for_context(self, ctx: redcommands.Context) -> str:
-        base = super().format_help_for_context(ctx)
-        return f"{base}\nCog Version: {__version__} • Author: {__author__}"
 
     # ---------- helpers ----------
     async def _g(self, guild: discord.Guild):
@@ -359,22 +352,47 @@ class LevelPlus(redcommands.Cog):
 
     @level.command(name="help")
     async def level_help(self, ctx: redcommands.Context):
+        """List **all** commands."""
         p = ctx.clean_prefix
         desc = (
-            f"**View** `{p}level`, `{p}level show`, `{p}level leaderboard`, `{p}level diag`\n"
-            f"**Formula** `{p}level formula preset arcane` • `{p}level formula calibrate <L1> <XP1> <L2> <XP2>`\n"
-            f"**Message** `{p}level message enable|mode|min|max|cooldown`\n"
-            f"**Reaction** `{p}level reaction enable|awards|min|max|cooldown`\n"
-            f"**Voice** `{p}level voice enable|range|cooldown|minmembers|antiafk`\n"
-            f"**Restrict** `{p}level restrict nochannels|noroles|toggles`\n"
-            f"**LevelUp** `{p}level levelup enable|channel|template`\n"
-            f"**Import/Export** `{p}level xp exportcsv` • `{p}level xp importcsv` • `{p}level xp importlines`\n"
-            f"**Leavers** `{p}level lookup <name>` • `{p}level xp setid <id> <xp>` • `{p}level name setid <id> <alias>`\n"
-            f"**Tests** `{p}level testmsg` • `{p}level testup`\n"
-            f"*Bots are ignored everywhere.*"
+            f"**Core**\n"
+            f"• `{p}level` • `{p}level help` • `{p}level diag`\n"
+            f"• `{p}level show [@user]` • `{p}level leaderboard [N]`\n"
+            f"• `{p}level testmsg [@user]` • `{p}level testup [@user] [levels]`\n\n"
+            f"**Formula & Scale**\n"
+            f"• `{p}level formula curve <linear|exponential|constant>`\n"
+            f"• `{p}level formula multiplier <float>` • `{p}level formula maxlevel <0|N>`\n"
+            f"• `{p}level formula preset arcane` • `{p}level formula calibrate <L1> <XP1> <L2> <XP2>`\n"
+            f"• `{p}level formula linear base <float>` • `linear inc <float>`\n\n"
+            f"**Message XP**\n"
+            f"• `{p}level message enable [true|false]` • `mode <perword|random|none>`\n"
+            f"• `min <n>` `max <n>` `cooldown <sec>`\n\n"
+            f"**Reaction XP**\n"
+            f"• `{p}level reaction enable [true|false]` • `awards <both|author|reactor|none>`\n"
+            f"• `min <n>` `max <n>` `cooldown <sec>`\n\n"
+            f"**Voice XP**\n"
+            f"• `{p}level voice enable [true|false]` • `range <min> <max>` • `cooldown <sec>`\n"
+            f"• `minmembers <n>` • `antiafk [true|false]`\n\n"
+            f"**Restrictions**\n"
+            f"• `{p}level restrict nochannels add|remove|list|clear <#ch>`\n"
+            f"• `{p}level restrict noroles add|remove|list|clear <@role>`\n"
+            f"• `{p}level restrict toggles <threadxp|forumxp|textvoicexp|slashxp> [true|false]`\n\n"
+            f"**Level-up Message**\n"
+            f"• `{p}level levelup enable [true|false]` • `channel [#ch|none]`\n"
+            f"• `template <text with {{user.*}}>`\n\n"
+            f"**XP Admin & Migration**\n"
+            f"• `{p}level xp set @user <amount>` • `{p}level xp add @user <amount>`\n"
+            f"• `{p}level xp setid <id> <amount>`\n"
+            f"• `{p}level xp exportcsv` • `{p}level xp importcsv` • `{p}level xp importlines`\n"
+            f"• `{p}level xp remove @user` • `{p}level xp removeid <id>`\n"
+            f"• `{p}level xp purgebots` • `{p}level xp clear yes`\n\n"
+            f"**Leavers / Aliases / Lookup**\n"
+            f"• `{p}level lookup <name|@mention|id>` → show ID(s)\n"
+            f"• `{p}level name set @user <alias>` • `name setid <id> <alias>` • `name get <id>`\n\n"
+            f"*Bots never gain XP. Data persists across leaves/joins.*"
         )
         try:
-            await ctx.send(embed=discord.Embed(title="LevelPlus — Help", description=desc, color=discord.Color.blurple()))
+            await ctx.send(embed=discord.Embed(title="LevelPlus — Commands", description=desc, color=discord.Color.blurple()))
         except discord.Forbidden:
             await ctx.send(box(desc, lang="ini"))
 
@@ -731,6 +749,38 @@ class LevelPlus(redcommands.Cog):
         old, new = await self._add_xp(ctx.guild, member, amount)
         await self.maybe_announce_levelup(ctx.guild, member, old, new); await ctx.tick()
 
+    @xpgrp.command(name="remove")
+    async def xp_remove(self, ctx: redcommands.Context, member: discord.Member):
+        data = await self.config.guild(ctx.guild).xp()
+        data.pop(str(member.id), None)
+        await self.config.guild(ctx.guild).xp.set(data)
+        await ctx.send(f"Removed XP row for {member.mention}.")
+
+    @xpgrp.command(name="removeid")
+    async def xp_removeid(self, ctx: redcommands.Context, user_id: int):
+        data = await self.config.guild(ctx.guild).xp()
+        data.pop(str(user_id), None)
+        await self.config.guild(ctx.guild).xp.set(data)
+        await ctx.send(f"Removed XP row for `{user_id}`.")
+
+    @xpgrp.command(name="purgebots")
+    async def xp_purgebots(self, ctx: redcommands.Context):
+        data = await self.config.guild(ctx.guild).xp()
+        before = len(data)
+        bot_ids = {str(m.id) for m in ctx.guild.members if m.bot}
+        for bid in bot_ids:
+            data.pop(bid, None)
+        await self.config.guild(ctx.guild).xp.set(data)
+        await ctx.send(f"Purged **{before - len(data)}** bot row(s).")
+
+    @xpgrp.command(name="clear")
+    async def xp_clear(self, ctx: redcommands.Context, confirm: Optional[str] = None):
+        if confirm != "yes":
+            return await ctx.send("This will WIPE XP & aliases for this guild. Confirm with `level xp clear yes`.")
+        await self.config.guild(ctx.guild).xp.set({})
+        await self.config.guild(ctx.guild).names.set({})
+        await ctx.send("Cleared XP and aliases.")
+
     @xpgrp.command(name="exportcsv")
     async def xp_export(self, ctx: redcommands.Context):
         g = await self._g(ctx.guild)
@@ -793,6 +843,7 @@ class LevelPlus(redcommands.Cog):
 
         def resolve_id(identifier: str) -> Optional[int]:
             identifier = identifier.strip()
+            # mention or raw id
             m = re.search(r"(\d{15,25})", identifier)
             if m:
                 return int(m.group(1))
@@ -846,23 +897,35 @@ class LevelPlus(redcommands.Cog):
     # ---- lookup & aliases
     @level.command(name="lookup")
     async def level_lookup(self, ctx: redcommands.Context, *, query: str):
-        q = query.lower()
-        candidates: Dict[int, str] = {}
-        for m in ctx.guild.members:
-            if m.bot:
+        """
+        Lookup IDs by **@mention**, **raw ID**, or name fragment.
+        """
+        q = query.strip()
+        m = re.search(r"(\d{15,25})", q)
+        if m:
+            uid = int(m.group(1))
+            mbr = ctx.guild.get_member(uid)
+            name = (mbr.display_name if mbr else None) or (await self.config.guild(ctx.guild).names()).get(str(uid), "unknown")
+            return await ctx.send(box(f"1. {name} — `{uid}`", lang="ini"))
+
+        ql = q.lower()
+        results: List[Tuple[int, str]] = []
+        for mbr in ctx.guild.members:
+            if mbr.bot:
                 continue
-            names = [m.display_name, m.name, getattr(m, "global_name", None)]
-            if any(n and q in n.lower() for n in names):
-                candidates[m.id] = m.display_name
-        for u in self.bot.users:
-            if getattr(u, "bot", False):
-                continue
-            names = [u.name, getattr(u, "global_name", None)]
-            if any(n and q in n.lower() for n in names):
-                candidates[u.id] = getattr(u, "global_name", None) or u.name
-        if not candidates:
+            names = [mbr.display_name, mbr.name, getattr(mbr, "global_name", None)]
+            if any(n and ql in n.lower() for n in names):
+                results.append((mbr.id, mbr.display_name))
+        if not results:
+            for u in self.bot.users:
+                if getattr(u, "bot", False):
+                    continue
+                names = [u.name, getattr(u, "global_name", None)]
+                if any(n and ql in n.lower() for n in names):
+                    results.append((u.id, getattr(u, "global_name", None) or u.name))
+        if not results:
             return await ctx.send("No matches.")
-        lines = [f"{i:>2}. {name} — `{uid}`" for i, (uid, name) in enumerate(list(candidates.items())[:20], start=1)]
+        lines = [f"{i:>2}. {name} — `{uid}`" for i, (uid, name) in enumerate(results[:20], start=1)]
         await ctx.send(box("\n".join(lines), lang="ini"))
 
     @level.group(name="name")
