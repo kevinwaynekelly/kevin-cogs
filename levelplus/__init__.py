@@ -16,18 +16,18 @@ from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import box
 
 __red_end_user_data_statement__ = (
-    "This cog stores per-guild leveling settings and per-user XP totals. "
-    "Data persists across leaves/joins to preserve user progress. "
-    "Admins may export or erase specific users via commands."
+    "This cog stores per-guild leveling settings, per-user XP totals, and a last-known display name. "
+    "Data persists across leaves/joins to preserve user progress. Admins may export or erase specific users via commands."
 )
 
 __author__ = "Code Copilot"
-__version__ = "0.2.1"
+__version__ = "0.3.3"
 
 DEFAULTS_GUILD = {
     "curve": "linear",
     "multiplier": 1.0,
-    "max_level": 0,  # 0 => unlimited
+    "max_level": 0,
+    "linear": {"base": 83.2, "inc": 100.433},  # Arcane-like
     "message": {"enabled": True, "mode": "perword", "min": 1, "max": 1, "cooldown": 60},
     "reaction": {"enabled": True, "awards": "both", "min": 25, "max": 25, "cooldown": 300},
     "voice": {"enabled": True, "min": 15, "max": 40, "cooldown": 180, "min_members": 1, "anti_afk": False},
@@ -45,32 +45,32 @@ DEFAULTS_GUILD = {
         "template": "{user.mention} has reached level **{user.level}**! GG!",
         "image": False,
     },
-    "xp": {},  # {user_id(str): int}
+    "xp": {},      # {user_id(str): int}
+    "names": {},   # {user_id(str): alias}
 }
 
 WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
 
 
-def level_thresholds(curve: str, mult: float, max_level: int) -> List[int]:
+def level_thresholds(curve: str, mult: float, max_level: int, linear_base: float, linear_inc: float) -> List[int]:
     curve = (curve or "linear").lower()
-
-    def per_level_cost(lvl: int) -> float:
-        if curve == "constant":
-            return 100.0 * mult
-        if curve == "exponential":
-            return 100.0 * (1.25 ** (lvl - 1)) * mult
-        return (100.0 + 20.0 * (lvl - 1)) * mult  # linear
-
     cap = max(1, max_level) if max_level > 0 else 200
-    out, total = [0], 0.0
+    out: List[int] = [0]
+    total: float = 0.0
     for lvl in range(1, cap + 1):
-        total += per_level_cost(lvl)
+        if curve == "constant":
+            need = 100.0 * mult
+        elif curve == "exponential":
+            need = (100.0 * (1.25 ** (lvl - 1))) * mult
+        else:
+            need = (linear_base + linear_inc * (lvl - 1)) * mult
+        total += max(0.0, need)
         out.append(int(round(total)))
     return out
 
 
-def level_from_xp(xp: int, curve: str, mult: float, max_level: int) -> int:
-    th = level_thresholds(curve, mult, max_level)
+def level_from_xp(xp: int, curve: str, mult: float, max_level: int, base: float, inc: float) -> int:
+    th = level_thresholds(curve, mult, max_level, base, inc)
     lo, hi = 0, len(th) - 1
     while lo <= hi:
         mid = (lo + hi) // 2
@@ -85,7 +85,7 @@ def level_from_xp(xp: int, curve: str, mult: float, max_level: int) -> int:
 
 
 class LevelPlus(redcommands.Cog):
-    """Arcane-style leveling with messages/reactions/voice/slash XP, leaderboards, CSV import, and rich help."""
+    """Arcane-style leveling with messages/reactions/voice/slash XP, leaderboards, CSV import, tests, calibration, and migration helpers."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -101,12 +101,29 @@ class LevelPlus(redcommands.Cog):
     def cog_unload(self) -> None:
         self.voice_tick.cancel()
 
-    # Help override so `[p]help LevelPlus` shows meta
     def format_help_for_context(self, ctx: redcommands.Context) -> str:
         base = super().format_help_for_context(ctx)
         return f"{base}\nCog Version: {__version__} • Author: {__author__}"
 
-    # ---------------- XP helpers ----------------
+    # ---------- helpers ----------
+    async def _g(self, guild: discord.Guild):
+        return await self.config.guild(guild).all()
+
+    async def _lin(self, guild: discord.Guild):
+        lin = await self.config.guild(guild).linear()
+        return float(lin.get("base", 83.2)), float(lin.get("inc", 100.433))
+
+    async def _remember_name(self, guild: discord.Guild, member: discord.Member) -> None:
+        # why: preserve leaderboard names for leavers
+        try:
+            names = await self.config.guild(guild).names()
+            dn = member.display_name
+            if names.get(str(member.id)) != dn:
+                names[str(member.id)] = dn
+                await self.config.guild(guild).names.set(names)
+        except Exception:
+            pass
+
     async def _get_xp(self, guild: discord.Guild, user_id: int) -> int:
         data = await self.config.guild(guild).xp()
         return int(data.get(str(user_id), 0))
@@ -118,23 +135,26 @@ class LevelPlus(redcommands.Cog):
 
     async def _add_xp(self, guild: discord.Guild, user: discord.abc.User, amount: int) -> Tuple[int, int]:
         if amount <= 0:
-            lvl = await self.current_level(guild, user.id)
+            g = await self._g(guild); base, inc = await self._lin(guild)
+            lvl = level_from_xp(await self._get_xp(guild, user.id), g["curve"], float(g["multiplier"]),
+                                int(g["max_level"]), base, inc)
             return lvl, lvl
-        gconf = await self.config.guild(guild).all()
+        gconf = await self._g(guild)
         data = gconf["xp"]
         old_xp = int(data.get(str(user.id), 0))
         new_xp = old_xp + int(amount)
         data[str(user.id)] = new_xp
         await self.config.guild(guild).xp.set(data)
-
-        old_lvl = level_from_xp(old_xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]))
-        new_lvl = level_from_xp(new_xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]))
+        base, inc = await self._lin(guild)
+        old_lvl = level_from_xp(old_xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]), base, inc)
+        new_lvl = level_from_xp(new_xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]), base, inc)
         return old_lvl, new_lvl
 
     async def current_level(self, guild: discord.Guild, user_id: int) -> int:
-        gconf = await self.config.guild(guild).all()
+        gconf = await self._g(guild)
+        base, inc = await self._lin(guild)
         xp = int(gconf["xp"].get(str(user_id), 0))
-        return level_from_xp(xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]))
+        return level_from_xp(xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]), base, inc)
 
     async def maybe_announce_levelup(self, guild: discord.Guild, member: discord.Member, old: int, new: int) -> None:
         if new <= old:
@@ -168,14 +188,16 @@ class LevelPlus(redcommands.Cog):
         except discord.Forbidden:
             pass
 
-    # ---------------- listeners: messages ----------------
+    # ---------- listeners ----------
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if not message.guild or message.author.bot:
             return
         guild = message.guild
         member = message.author
-        gconf = await self.config.guild(guild).all()
+        await self._remember_name(guild, member)
+
+        gconf = await self._g(guild)
         if not gconf["message"]["enabled"]:
             return
         if message.channel.id in set(gconf["restrictions"]["no_channels"]):
@@ -210,13 +232,12 @@ class LevelPlus(redcommands.Cog):
         old, new = await self._add_xp(guild, member, amount)
         await self.maybe_announce_levelup(guild, member, old, new)
 
-    # ---------------- listeners: reactions ----------------
-    @commands.Cog.listener()
+    @commands.Cog.listener())
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         guild = self.bot.get_guild(payload.guild_id) if payload.guild_id else None
         if not guild:
             return
-        gconf = await self.config.guild(guild).all()
+        gconf = await self._g(guild)
         if not gconf["reaction"]["enabled"]:
             return
         channel = guild.get_channel(payload.channel_id)
@@ -229,7 +250,10 @@ class LevelPlus(redcommands.Cog):
         value = random.randint(rx_min, rx_max)
 
         reactor = guild.get_member(payload.user_id)
-        if reactor and not reactor.bot:
+        if reactor and reactor.bot:
+            reactor = None
+        if reactor:
+            await self._remember_name(guild, reactor)
             key_r = (guild.id, reactor.id)
             cd = int(gconf["reaction"]["cooldown"])
             if cd and time.time() - self._last_rxn.get(key_r, 0.0) < cd:
@@ -241,7 +265,9 @@ class LevelPlus(redcommands.Cog):
         try:
             if isinstance(channel, (discord.TextChannel, discord.Thread)):
                 msg = await channel.fetch_message(payload.message_id)
-                author = msg.author if msg and msg.author and not msg.author.bot else None
+                if msg and msg.author and not msg.author.bot and isinstance(msg.author, discord.Member):
+                    author = msg.author
+                    await self._remember_name(guild, author)
         except Exception:
             author = None
 
@@ -249,7 +275,7 @@ class LevelPlus(redcommands.Cog):
         targets: List[discord.Member] = []
         if awards in ("both", "reactor") and reactor:
             targets.append(reactor)
-        if awards in ("both", "author") and author and isinstance(author, discord.Member) and author.id != payload.user_id:
+        if awards in ("both", "author") and author and author.id != payload.user_id:
             targets.append(author)
 
         for m in targets:
@@ -259,13 +285,12 @@ class LevelPlus(redcommands.Cog):
             old, new = await self._add_xp(guild, m, value)
             await self.maybe_announce_levelup(guild, m, old, new)
 
-    # ---------------- voice ticker ----------------
     @tasks.loop(seconds=20.0)
     async def voice_tick(self):
         await self.bot.wait_until_red_ready()
         for guild in list(self.bot.guilds):
             try:
-                gconf = await self.config.guild(guild).all()
+                gconf = await self._g(guild)
             except Exception:
                 continue
             vconf = gconf["voice"]
@@ -277,6 +302,7 @@ class LevelPlus(redcommands.Cog):
                 if len(members) < int(vconf["min_members"]):
                     continue
                 for m in members:
+                    await self._remember_name(guild, m)
                     if vconf["anti_afk"]:
                         vs = m.voice
                         if not vs or vs.afk or vs.self_mute or vs.mute or vs.self_deaf or vs.deaf:
@@ -294,13 +320,12 @@ class LevelPlus(redcommands.Cog):
     async def _before_voice(self):
         await self.bot.wait_until_red_ready()
 
-    # ---------------- slash (any bot) ----------------
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         if not interaction.guild or interaction.user.bot:
             return
         guild = interaction.guild
-        gconf = await self.config.guild(guild).all()
+        gconf = await self._g(guild)
         if not gconf["restrictions"]["slash_command_xp"]:
             return
         key = (guild.id, interaction.user.id)
@@ -309,19 +334,20 @@ class LevelPlus(redcommands.Cog):
             return
         self._last_msg[key] = time.time()
         val = max(1, int(gconf["message"]["min"]))
-        old, new = await self._add_xp(guild, interaction.user, val)
+        old, new = await self._add_xp(guild, interaction.user, val)  # type: ignore[arg-type]
         if isinstance(interaction.user, discord.Member):
             await self.maybe_announce_levelup(guild, interaction.user, old, new)
 
-    # ---------------- commands ----------------
+    # ---------- commands ----------
     @redcommands.group(name="level", invoke_without_command=True)
     @redcommands.guild_only()
     async def level(self, ctx: redcommands.Context):
-        g = await self.config.guild(ctx.guild).all()
+        g = await self._g(ctx.guild)
+        base, inc = await self._lin(ctx.guild)
         lu_chan = f"<#{g['levelup']['channel_id']}>" if g["levelup"]["channel_id"] else "current"
         lu_tpl = g["levelup"]["template"][:40]
         lines = [
-            f"Curve={g['curve']} Mult={g['multiplier']} MaxLevel={g['max_level'] or '∞'}",
+            f"Curve={g['curve']} Mult={g['multiplier']} MaxLevel={g['max_level'] or '∞'}  Linear(base={base:.3f}, inc={inc:.3f})",
             f"Message: enabled={g['message']['enabled']} mode={g['message']['mode']} min={g['message']['min']} max={g['message']['max']} cd={g['message']['cooldown']}s",
             f"Reaction: enabled={g['reaction']['enabled']} awards={g['reaction']['awards']} min={g['reaction']['min']} max={g['reaction']['max']} cd={g['reaction']['cooldown']}s",
             f"Voice: enabled={g['voice']['enabled']} min={g['voice']['min']} max={g['voice']['max']} tick={g['voice']['cooldown']}s min_members={g['voice']['min_members']} anti_afk={g['voice']['anti_afk']}",
@@ -333,120 +359,112 @@ class LevelPlus(redcommands.Cog):
 
     @level.command(name="help")
     async def level_help(self, ctx: redcommands.Context):
-        """Explains all commands quickly."""
         p = ctx.clean_prefix
         desc = (
-            f"**Quickstart**\n"
-            f"• Tracks messages, reactions, voice, slash. XP persists on leave.\n"
-            f"• `{p}level` → show config.  `{p}level diag` → probe perms/intents.\n\n"
-            f"**Viewing**\n"
-            f"• `{p}level show [@user]` — show XP/level\n"
-            f"• `{p}level leaderboard [N]` — top N\n\n"
-            f"**Formula**\n"
-            f"• `{p}level formula curve <linear|exponential|constant>`\n"
-            f"• `{p}level formula multiplier <0.1..10>`\n"
-            f"• `{p}level formula maxlevel <0=unlimited|N>`\n\n"
-            f"**Message XP**\n"
-            f"• `{p}level message enable [true|false]`\n"
-            f"• `{p}level message mode <perword|random|none>`\n"
-            f"• `{p}level message min <n>`  `{p}level message max <n>`  `{p}level message cooldown <sec>`\n\n"
-            f"**Reaction XP**\n"
-            f"• `{p}level reaction enable [true|false]`\n"
-            f"• `{p}level reaction awards <both|author|reactor|none>`\n"
-            f"• `{p}level reaction min <n>`  `max <n>`  `cooldown <sec>`\n\n"
-            f"**Voice XP**\n"
-            f"• `{p}level voice enable [true|false]`\n"
-            f"• `{p}level voice range <min> <max>`  `cooldown <sec>`\n"
-            f"• `{p}level voice minmembers <n>`  `antiafk [true|false]`\n\n"
-            f"**Restrictions**\n"
-            f"• `{p}level restrict nochannels add|remove|list|clear <#ch>`\n"
-            f"• `{p}level restrict noroles add|remove|list|clear <@role>`\n"
-            f"• `{p}level restrict toggles <threadxp|forumxp|textvoicexp|slashxp> [true|false]`\n\n"
-            f"**Level-up Message**\n"
-            f"• `{p}level levelup enable [true|false]`\n"
-            f"• `{p}level levelup channel [#ch|none]`\n"
-            f"• `{p}level levelup template <text with {{user.*}}>`, e.g. `{{user.mention}} L**{{user.level}}**`\n\n"
-            f"**XP Admin / Migration**\n"
-            f"• `{p}level xp set @user <amount>`  `{p}level xp add @user <amount>`\n"
-            f"• `{p}level xp exportcsv`  `{p}level xp importcsv` (attach/paste `user_id,xp`)\n\n"
-            f"**Diagnostics**\n"
-            f"• `{p}level diag` — checks perms, intents, reactions, sample awards\n"
+            f"**View** `{p}level`, `{p}level show`, `{p}level leaderboard`, `{p}level diag`\n"
+            f"**Formula** `{p}level formula preset arcane` • `{p}level formula calibrate <L1> <XP1> <L2> <XP2>`\n"
+            f"**Message** `{p}level message enable|mode|min|max|cooldown`\n"
+            f"**Reaction** `{p}level reaction enable|awards|min|max|cooldown`\n"
+            f"**Voice** `{p}level voice enable|range|cooldown|minmembers|antiafk`\n"
+            f"**Restrict** `{p}level restrict nochannels|noroles|toggles`\n"
+            f"**LevelUp** `{p}level levelup enable|channel|template`\n"
+            f"**Import/Export** `{p}level xp exportcsv` • `{p}level xp importcsv` • `{p}level xp importlines`\n"
+            f"**Leavers** `{p}level lookup <name>` • `{p}level xp setid <id> <xp>` • `{p}level name setid <id> <alias>`\n"
+            f"**Tests** `{p}level testmsg` • `{p}level testup`\n"
+            f"*Bots are ignored everywhere.*"
         )
-        embed = discord.Embed(title="LevelPlus — Help", description=desc, color=discord.Color.blurple())
-        embed.set_footer(text=f"v{__version__} • {__author__}")
         try:
-            await ctx.send(embed=embed)
+            await ctx.send(embed=discord.Embed(title="LevelPlus — Help", description=desc, color=discord.Color.blurple()))
         except discord.Forbidden:
             await ctx.send(box(desc, lang="ini"))
 
     @level.command()
     async def diag(self, ctx: redcommands.Context):
-        """Deep self-check: perms, intents, reaction probe, simulated awards."""
-        g = await self.config.guild(ctx.guild).all()
+        g = await self._g(ctx.guild); base, inc = await self._lin(ctx.guild)
         ch = ctx.channel
         perms = ch.permissions_for(ctx.guild.me) if isinstance(ch, (discord.TextChannel, discord.Thread)) else None  # type: ignore
         intents = self.bot.intents
-
-        probe_result = "skip"
+        probe = "skip"
         if isinstance(ch, (discord.TextChannel, discord.Thread)):
             try:
-                m = await ctx.send("LevelPlus diag probe…")
-                try:
-                    await m.add_reaction("✅")
-                    probe_result = "OK"
-                except Exception as e:
-                    probe_result = f"add_reaction FAIL: {type(e).__name__}"
-                try:
-                    await m.delete()
-                except Exception:
-                    pass
+                m = await ctx.send("LevelPlus diag probe…"); await m.add_reaction("✅"); probe = "OK"; await m.delete()
             except Exception as e:
-                probe_result = f"send FAIL: {type(e).__name__}"
-
-        msg_words = 12
-        if g["message"]["mode"] == "perword":
-            msg_award = msg_words * max(1, int(g["message"]["min"]))
-            if int(g["message"]["max"]) > 0:
-                msg_award = min(msg_award, int(g["message"]["max"]))
-        elif g["message"]["mode"] == "random":
-            msg_award = f"{g['message']['min']}–{max(int(g['message']['max']), int(g['message']['min']))}"
-        else:
-            msg_award = 0
-        rx_award = f"{g['reaction']['min']}–{max(int(g['reaction']['max']), int(g['reaction']['min']))}" if g["reaction"]["enabled"] else 0
-        voice_award = f"{g['voice']['min']}–{max(int(g['voice']['max']), int(g['voice']['min']))}" if g["voice"]["enabled"] else 0
-
+                probe = f"FAIL:{type(e).__name__}"
         lines = [
+            f"curve={g['curve']} mult={g['multiplier']} maxlvl={g['max_level']} linear(base={base:.3f}, inc={inc:.3f})",
             f"perms(send={getattr(perms,'send_messages',None)} embed={getattr(perms,'embed_links',None)} add_rxn={getattr(perms,'add_reactions',None)} read_hist={getattr(perms,'read_message_history',None)})",
             f"intents(voice_states={intents.voice_states} message_content={intents.message_content})",
-            f"reaction_probe={probe_result}",
-            f"sim_awards(message≈{msg_award}, reaction≈{rx_award}, voice_tick≈{voice_award})",
+            f"probe={probe}",
             "store_rw=OK" if isinstance(g["xp"], dict) else "store_rw=FAIL",
         ]
         await ctx.send(box("\n".join(lines), lang="ini"))
+
+    # ---- test/view
+    @level.command(name="testmsg")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def level_testmsg(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        m = member or ctx.author
+        conf = await self.config.guild(ctx.guild).levelup()
+        if not conf["enabled"]:
+            return await ctx.send("Level-up messages are disabled.")
+        ch: Optional[discord.TextChannel] = None
+        cid = conf.get("channel_id")
+        if cid:
+            ch = ctx.guild.get_channel(cid) if isinstance(cid, int) else ctx.guild.get_channel(int(cid))
+            if not isinstance(ch, discord.TextChannel):
+                ch = None
+        if not ch:
+            ch = ctx.channel
+        g = await self._g(ctx.guild)
+        cur = await self.current_level(ctx.guild, m.id)
+        next_level = cur + 1 if (g["max_level"] == 0 or cur < g["max_level"]) else cur
+        u = type("U", (), {"mention": m.mention, "name": m.display_name, "level": next_level, "xp": await self._get_xp(ctx.guild, m.id)})()
+        try:
+            msg = conf.get("template", "{user.mention} has reached level **{user.level}**!").format(user=u)
+        except Exception:
+            msg = f"{m.mention} has reached level **{next_level}**!"
+        await ch.send(f"[TEST] {msg}"); await ctx.tick()
+
+    @level.command(name="testup")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def level_testup(self, ctx: redcommands.Context, member: Optional[discord.Member] = None, levels: int = 1):
+        m = member or ctx.author
+        levels = max(1, levels)
+        g = await self._g(ctx.guild); base, inc = await self._lin(ctx.guild)
+        cur_xp = await self._get_xp(ctx.guild, m.id)
+        cur_lvl = level_from_xp(cur_xp, g["curve"], float(g["multiplier"]), int(g["max_level"]), base, inc)
+        target = min(cur_lvl + levels, int(g["max_level"]) if g["max_level"] > 0 else cur_lvl + levels)
+        th = level_thresholds(g["curve"], float(g["multiplier"]), max(target, cur_lvl + 1), base, inc)
+        needed = max(0, th[target] - cur_xp + 1)
+        old, new = await self._add_xp(ctx.guild, m, needed)
+        if isinstance(m, discord.Member):
+            await self.maybe_announce_levelup(ctx.guild, m, old, new)
+        await ctx.send(f"Gave {m.mention} **{needed}** XP (L{old} → L{new}).")
 
     @level.command()
     async def show(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
         m = member or ctx.author
         xp = await self._get_xp(ctx.guild, m.id)
-        g = await self.config.guild(ctx.guild).all()
-        lvl = level_from_xp(xp, g["curve"], float(g["multiplier"]), int(g["max_level"]))
+        g = await self._g(ctx.guild); base, inc = await self._lin(ctx.guild)
+        lvl = level_from_xp(xp, g["curve"], float(g["multiplier"]), int(g["max_level"]), base, inc)
         await ctx.send(f"{m.mention} — XP: **{xp}**, Level: **{lvl}**")
 
     @level.command()
     async def leaderboard(self, ctx: redcommands.Context, top: int = 10):
-        g = await self.config.guild(ctx.guild).all()
-        items = sorted(((int(uid), xp) for uid, xp in g["xp"].items()), key=lambda t: t[1], reverse=True)[:max(1, min(50, top))]
+        g = await self._g(ctx.guild); base, inc = await self._lin(ctx.guild)
+        names = g.get("names", {})
+        items = sorted(((int(uid), int(xp)) for uid, xp in g["xp"].items()), key=lambda t: t[1], reverse=True)[:max(1, min(50, top))]
         if not items:
             return await ctx.send("No XP yet.")
         lines = []
         for i, (uid, xp) in enumerate(items, start=1):
             m = ctx.guild.get_member(uid)
-            lvl = level_from_xp(xp, g["curve"], float(g["multiplier"]), int(g["max_level"]))
-            name = m.display_name if m else str(uid)
+            lvl = level_from_xp(xp, g["curve"], float(g["multiplier"]), int(g["max_level"]), base, inc)
+            name = (m.display_name if m else names.get(str(uid))) or str(uid)
             lines.append(f"{i:>2}. {name} — L{lvl} ({xp} xp)")
         await ctx.send(box("\n".join(lines), lang="ini"))
 
-    # ---- admin: formula
+    # ---- formula
     @level.group(name="formula")
     @redcommands.admin_or_permissions(manage_guild=True)
     async def formula(self, ctx: redcommands.Context): ...
@@ -465,6 +483,40 @@ class LevelPlus(redcommands.Cog):
     @formula.command(name="maxlevel")
     async def formula_maxlvl(self, ctx: redcommands.Context, level: int):
         await self.config.guild(ctx.guild).max_level.set(int(max(0, level))); await ctx.tick()
+
+    @formula.group(name="linear")
+    async def formula_linear(self, ctx: redcommands.Context): ...
+
+    @formula_linear.command(name="base")
+    async def formula_linear_base(self, ctx: redcommands.Context, value: float):
+        await self.config.guild(ctx.guild).linear.base.set(float(max(0.0, value))); await ctx.tick()
+
+    @formula_linear.command(name="inc")
+    async def formula_linear_inc(self, ctx: redcommands.Context, value: float):
+        await self.config.guild(ctx.guild).linear.inc.set(float(max(0.0, value))); await ctx.tick()
+
+    @formula.command(name="preset")
+    async def formula_preset(self, ctx: redcommands.Context, which: str):
+        which = which.lower()
+        if which != "arcane":
+            return await ctx.send("Only `arcane` preset is available.")
+        await self.config.guild(ctx.guild).linear.set({"base": 83.2, "inc": 100.433})
+        await self.config.guild(ctx.guild).curve.set("linear")
+        await ctx.send("Set curve to **linear** with Arcane-like preset (base=83.2, inc=100.433).")
+
+    @formula.command(name="calibrate")
+    async def formula_calibrate(self, ctx: redcommands.Context, L1: int, XP1: int, L2: int, XP2: int):
+        if L1 <= 0 or L2 <= 0 or L1 == L2:
+            return await ctx.send("Levels must be positive and different.")
+        a1 = 2.0 * XP1 / L1
+        a2 = 2.0 * XP2 / L2
+        d = (a1 - a2) / (L1 - L2)
+        b = (a1 - (L1 - 1) * d) / 2.0
+        if d < 0 or b < 0:
+            return await ctx.send("Calibration failed (negative base/inc). Check inputs.")
+        await self.config.guild(ctx.guild).linear.set({"base": float(b), "inc": float(d)})
+        await self.config.guild(ctx.guild).curve.set("linear")
+        await ctx.send(f"Calibrated linear curve: base=**{b:.3f}**, inc=**{d:.3f}**")
 
     # ---- admin: message xp
     @level.group(name="message")
@@ -666,33 +718,32 @@ class LevelPlus(redcommands.Cog):
 
     @xpgrp.command(name="set")
     async def xp_set(self, ctx: redcommands.Context, member: discord.Member, amount: int):
-        await self._set_xp(ctx.guild, member.id, amount)
-        await ctx.tick()
+        await self._remember_name(ctx.guild, member)
+        await self._set_xp(ctx.guild, member.id, amount); await ctx.tick()
+
+    @xpgrp.command(name="setid")
+    async def xp_setid(self, ctx: redcommands.Context, user_id: int, amount: int):
+        await self._set_xp(ctx.guild, user_id, amount); await ctx.tick()
 
     @xpgrp.command(name="add")
     async def xp_add(self, ctx: redcommands.Context, member: discord.Member, amount: int):
+        await self._remember_name(ctx.guild, member)
         old, new = await self._add_xp(ctx.guild, member, amount)
-        await self.maybe_announce_levelup(ctx.guild, member, old, new)
-        await ctx.tick()
+        await self.maybe_announce_levelup(ctx.guild, member, old, new); await ctx.tick()
 
     @xpgrp.command(name="exportcsv")
     async def xp_export(self, ctx: redcommands.Context):
-        g = await self.config.guild(ctx.guild).all()
-        buff = io.StringIO()
-        w = csv.writer(buff)
-        w.writerow(["user_id", "xp"])
+        g = await self._g(ctx.guild)
+        buff = io.StringIO(); w = csv.writer(buff)
+        w.writerow(["user_id", "xp", "alias"])
         for uid, xp in g["xp"].items():
-            w.writerow([uid, xp])
+            alias = g.get("names", {}).get(uid, "")
+            w.writerow([uid, xp, alias])
         buff.seek(0)
         await ctx.send(file=discord.File(fp=io.BytesIO(buff.getvalue().encode("utf-8")), filename=f"{ctx.guild.id}_xp_export.csv"))
 
     @xpgrp.command(name="importcsv")
     async def xp_import_csv(self, ctx: redcommands.Context, *, raw: str = ""):
-        """
-        Import total XP (e.g., from Arcane). Accepts:
-        - Attached CSV with columns: user_id,xp
-        - Pasted lines: `user_id,xp`
-        """
         content = ""
         if ctx.message.attachments:
             try:
@@ -701,38 +752,140 @@ class LevelPlus(redcommands.Cog):
                 return await ctx.send("Couldn't read attachment.")
         else:
             content = raw
-
-        parsed: List[Tuple[int, int]] = []
+        parsed: List[Tuple[int, int, Optional[str]]] = []
         for line in io.StringIO(content):
             line = line.strip()
             if not line or line.lower().startswith("user_id"):
                 continue
-            try:
-                left, right = [p.strip() for p in line.split(",", 1)]
-            except ValueError:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 2:
                 continue
-            uid = None
-            if left.isdigit():
-                uid = int(left)
-            else:
-                m = re.search(r"(\d{15,25})", left)
-                if m:
-                    uid = int(m.group(1))
-            if uid is None:
+            m = re.search(r"(\d{15,25})", parts[0])
+            if not m:
                 continue
+            uid = int(m.group(1))
             try:
-                xp = int(float(right))
+                xp = int(float(parts[1]))
             except Exception:
                 continue
-            parsed.append((uid, max(0, xp)))
-
+            alias = parts[2] if len(parts) >= 3 and parts[2] else None
+            parsed.append((uid, max(0, xp), alias))
         if not parsed:
             return await ctx.send("No rows parsed.")
-        data = await self.config.guild(ctx.guild).xp()
-        for uid, xp in parsed:
-            data[str(uid)] = xp
-        await self.config.guild(ctx.guild).xp.set(data)
+        xpmap = await self.config.guild(ctx.guild).xp(); names = await self.config.guild(ctx.guild).names()
+        for uid, xp, alias in parsed:
+            xpmap[str(uid)] = xp
+            if alias:
+                names[str(uid)] = alias[:100]
+        await self.config.guild(ctx.guild).xp.set(xpmap)
+        await self.config.guild(ctx.guild).names.set(names)
         await ctx.send(f"Imported **{len(parsed)}** user(s).")
+
+    @xpgrp.command(name="importlines")
+    async def xp_import_lines(self, ctx: redcommands.Context, *, lines: str):
+        """
+        Paste lines: `identifier,xp`
+        identifier = <id> | <@mention> | name#1234 | display/global name
+        """
+        ok, skip = 0, 0
+        xpmap = await self.config.guild(ctx.guild).xp()
+        names_map = await self.config.guild(ctx.guild).names()
+
+        def resolve_id(identifier: str) -> Optional[int]:
+            identifier = identifier.strip()
+            m = re.search(r"(\d{15,25})", identifier)
+            if m:
+                return int(m.group(1))
+            # name#1234
+            if "#" in identifier:
+                name, discrim = identifier.rsplit("#", 1)
+                for u in self.bot.users:
+                    if not getattr(u, "bot", False) and u.name == name and getattr(u, "discriminator", None) == discrim:
+                        return u.id
+            # by display/global/name in guild first
+            for mbr in ctx.guild.members:
+                if mbr.bot:
+                    continue
+                if identifier.lower() in {mbr.display_name.lower(), mbr.name.lower(), (mbr.global_name or "").lower()}:
+                    return mbr.id
+            # global cache
+            for u in self.bot.users:
+                if getattr(u, "bot", False):
+                    continue
+                if identifier.lower() in {u.name.lower(), (getattr(u, "global_name", "") or "").lower()}:
+                    return u.id
+            return None
+
+        for raw in io.StringIO(lines):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ident, xp_str = [p.strip() for p in raw.split(",", 1)]
+            except ValueError:
+                skip += 1; continue
+            uid = resolve_id(ident)
+            if uid is None:
+                skip += 1; continue
+            try:
+                xp = int(float(xp_str))
+            except Exception:
+                skip += 1; continue
+            xpmap[str(uid)] = max(0, xp)
+            mbr = ctx.guild.get_member(uid)
+            if mbr:
+                names_map[str(uid)] = mbr.display_name
+            else:
+                names_map.setdefault(str(uid), ident[:100])
+            ok += 1
+
+        await self.config.guild(ctx.guild).xp.set(xpmap)
+        await self.config.guild(ctx.guild).names.set(names_map)
+        await ctx.send(f"Imported **{ok}** row(s), skipped **{skip}**.")
+
+    # ---- lookup & aliases
+    @level.command(name="lookup")
+    async def level_lookup(self, ctx: redcommands.Context, *, query: str):
+        q = query.lower()
+        candidates: Dict[int, str] = {}
+        for m in ctx.guild.members:
+            if m.bot:
+                continue
+            names = [m.display_name, m.name, getattr(m, "global_name", None)]
+            if any(n and q in n.lower() for n in names):
+                candidates[m.id] = m.display_name
+        for u in self.bot.users:
+            if getattr(u, "bot", False):
+                continue
+            names = [u.name, getattr(u, "global_name", None)]
+            if any(n and q in n.lower() for n in names):
+                candidates[u.id] = getattr(u, "global_name", None) or u.name
+        if not candidates:
+            return await ctx.send("No matches.")
+        lines = [f"{i:>2}. {name} — `{uid}`" for i, (uid, name) in enumerate(list(candidates.items())[:20], start=1)]
+        await ctx.send(box("\n".join(lines), lang="ini"))
+
+    @level.group(name="name")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def namegrp(self, ctx: redcommands.Context): ...
+
+    @namegrp.command(name="set")
+    async def name_set(self, ctx: redcommands.Context, member: discord.Member, *, alias: str):
+        names = await self.config.guild(ctx.guild).names()
+        names[str(member.id)] = alias[:100]
+        await self.config.guild(ctx.guild).names.set(names); await ctx.tick()
+
+    @namegrp.command(name="setid")
+    async def name_setid(self, ctx: redcommands.Context, user_id: int, *, alias: str):
+        names = await self.config.guild(ctx.guild).names()
+        names[str(user_id)] = alias[:100]
+        await self.config.guild(ctx.guild).names.set(names); await ctx.tick()
+
+    @namegrp.command(name="get")
+    async def name_get(self, ctx: redcommands.Context, user_id: int):
+        names = await self.config.guild(ctx.guild).names()
+        alias = names.get(str(user_id), "none")
+        await ctx.send(f"`{user_id}` → {alias}")
 
 
 async def setup(bot: Red) -> None:
