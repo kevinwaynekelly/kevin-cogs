@@ -13,7 +13,7 @@ from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import box
 
 try:
-    import wavelink  # Expecting 3.x family; we handle API diffs at runtime
+    import wavelink  # Wavelink 3.x; we handle API diffs (NodePool vs Pool) at runtime
 except Exception as e:
     raise ImportError(
         "audioplus requires Wavelink 3.x (Lavalink v4).\n"
@@ -37,7 +37,6 @@ class LoopMode:
     ALL = "all"
 
 class MusicPlayer(wavelink.Player):
-    """Guild player with queue + loop."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.queue: wavelink.Queue[wavelink.Playable] = wavelink.Queue()
@@ -62,7 +61,7 @@ class MusicPlayer(wavelink.Player):
             pass
 
 class AudioPlus(redcommands.Cog):
-    """Lavalink v4 YouTube-only player (lyric-first), with queue/seek/repeat, autoconnect, search preview, and loud debug."""
+    """Lavalink v4 YouTube-only player (lyric-first), with queue/seek/repeat, autoconnect, rich search, and loud debug."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -77,26 +76,45 @@ class AudioPlus(redcommands.Cog):
             return
         ch_id = await self.config.guild(guild).bind_channel()
         ch = guild.get_channel(ch_id) if ch_id else getattr(guild, "system_channel", None)
-        print(f"[AudioPlus] {guild.name}: {msg}")  # console log
+        print(f"[AudioPlus] {guild.name}: {msg}")
         if isinstance(ch, (discord.TextChannel, discord.Thread)):
             try:
                 await ch.send(box(msg, lang="ini"))
             except Exception:
                 pass
 
-    # ---------- node mgmt (support multiple WL3 APIs) ----------
+    # ---------- node helpers (handle WL 3.x API variants) ----------
+    def _apis(self):
+        NP = getattr(wavelink, "NodePool", None)
+        PL = getattr(wavelink, "Pool", None)
+        return {
+            "has_NodePool": bool(NP),
+            "has_NodePool_create_node": bool(getattr(NP, "create_node", None)),
+            "has_NodePool_get_node": bool(getattr(NP, "get_node", None)),
+            "has_Pool": bool(PL),
+            "has_Pool_connect": bool(getattr(PL, "connect", None)),
+            "has_Pool_get_node": bool(getattr(PL, "get_node", None)),
+        }
+
     def _get_connected_node(self) -> Optional["wavelink.Node"]:
+        ap = self._apis()
         try:
-            # WL3 classic path
-            if hasattr(wavelink, "NodePool") and hasattr(wavelink.NodePool, "get_node"):
+            if ap["has_NodePool"] and ap["has_NodePool_get_node"]:
                 node = wavelink.NodePool.get_node()
-                return node if getattr(node, "is_connected", False) else None
+                if getattr(node, "is_connected", False):
+                    return node
         except Exception:
-            return None
+            pass
+        try:
+            if ap["has_Pool"] and ap["has_Pool_get_node"]:
+                node = wavelink.Pool.get_node()  # type: ignore[attr-defined]
+                if getattr(node, "is_connected", False):
+                    return node
+        except Exception:
+            pass
         return None
 
     async def _connect_node_any(self, guild: discord.Guild) -> Optional["wavelink.Node"]:
-        # Already connected?
         node = self._get_connected_node()
         if node:
             return node
@@ -107,49 +125,44 @@ class AudioPlus(redcommands.Cog):
         password = conf["password"]
         https = bool(conf["https"])
         ver = getattr(wavelink, "__version__", "unknown")
-        apis = {
-            "NodePool.create_node": hasattr(getattr(wavelink, "NodePool", None), "create_node"),
-            "NodePool.connect": hasattr(getattr(wavelink, "NodePool", None), "connect") and hasattr(wavelink, "Node"),
-        }
+        ap = self._apis()
+
         if not host:
-            await self._debug(guild, f"node.connect: host not set.\nwl_version={ver} apis={apis}")
+            await self._debug(guild, f"node.connect: host not set.\nwl_version={ver} apis={ap}")
             return None
 
         uri = f"http{'s' if https else ''}://{host}:{port}"
-        await self._debug(guild, f"node.connect: wl_version={ver} apis={apis}\nuri={uri}")
+        await self._debug(guild, f"node.connect: wl_version={ver} apis={ap}\nuri={uri}")
 
-        # Try WL3 classic: create_node
-        if apis["NodePool.create_node"]:
+        # 1) WL 3 classic: NodePool.create_node(bot=...) or (client=...)
+        if ap["has_NodePool"] and ap["has_NodePool_create_node"]:
             try:
-                node = await wavelink.NodePool.create_node(
-                    bot=self.bot,
-                    host=host,
-                    port=port,
-                    password=password,
-                    https=https,
-                    resume_key=conf.get("resume_key"),
-                )
+                kwargs = dict(host=host, port=port, password=password, https=https, resume_key=conf.get("resume_key"))
+                try:
+                    node = await wavelink.NodePool.create_node(bot=self.bot, **kwargs)  # type: ignore[arg-type]
+                except TypeError:
+                    node = await wavelink.NodePool.create_node(client=self.bot, **kwargs)  # type: ignore[arg-type]
                 self._node_ready = True
-                await self._debug(guild, "node.connect: SUCCESS via create_node")
+                await self._debug(guild, "node.connect: SUCCESS via NodePool.create_node")
                 return node
             except Exception as e:
-                self._last_node_error = f"create_node {type(e).__name__}: {e!s}"
+                self._last_node_error = f"NodePool.create_node {type(e).__name__}: {e!s}"
                 await self._debug(guild, f"node.connect: ERROR {self._last_node_error}")
 
-        # Try WL3 alt: NodePool.connect(Node(...))
-        if apis["NodePool.connect"]:
+        # 2) WL 3 alt: Pool.connect(client=..., nodes=[Node(uri=..., password=...)])
+        if ap["has_Pool"] and ap["has_Pool_connect"]:
             try:
                 node_obj = wavelink.Node(uri=uri, password=password)
-                await wavelink.NodePool.connect(client=self.bot, nodes=[node_obj])
+                await wavelink.Pool.connect(client=self.bot, nodes=[node_obj])  # type: ignore[attr-defined]
                 node = self._get_connected_node()
                 self._node_ready = bool(node)
-                await self._debug(guild, f"node.connect: {'SUCCESS' if node else 'FAIL'} via NodePool.connect")
+                await self._debug(guild, f"node.connect: {'SUCCESS' if node else 'FAIL'} via Pool.connect")
                 return node
             except Exception as e:
-                self._last_node_error = f"connect {type(e).__name__}: {e!s}"
+                self._last_node_error = f"Pool.connect {type(e).__name__}: {e!s}"
                 await self._debug(guild, f"node.connect: ERROR {self._last_node_error}")
 
-        self._last_node_error = self._last_node_error or "Unsupported wavelink version/APIs; need 3.x"
+        self._last_node_error = self._last_node_error or f"Incompatible Wavelink APIs (detected={ap}); need WL 3.x."
         return None
 
     async def _ensure_autoconnect(self):
@@ -162,7 +175,6 @@ class AudioPlus(redcommands.Cog):
                 continue
 
     def cog_unload(self):
-        # why: try to avoid unclosed aiohttp sessions by disconnecting gracefully
         self.bot.loop.create_task(self._cleanup())
 
     async def _cleanup(self):
@@ -173,10 +185,16 @@ class AudioPlus(redcommands.Cog):
                         await vc.disconnect(force=True)
                     except Exception:
                         pass
-            # Best-effort node cleanup (APIs can differ)
-            np = getattr(wavelink, "NodePool", None)
-            if np and hasattr(np, "nodes"):
-                for node in list(np.nodes.values()):  # type: ignore[attr-defined]
+            NP = getattr(wavelink, "NodePool", None)
+            if NP and hasattr(NP, "nodes"):
+                for node in list(NP.nodes.values()):  # type: ignore[attr-defined]
+                    try:
+                        await node.disconnect()
+                    except Exception:
+                        pass
+            PL = getattr(wavelink, "Pool", None)
+            if PL and hasattr(PL, "nodes"):
+                for node in list(PL.nodes.values()):  # type: ignore[attr-defined]
                     try:
                         await node.disconnect()
                     except Exception:
@@ -247,8 +265,7 @@ class AudioPlus(redcommands.Cog):
                 if prefer_lyrics:
                     def score(t: wavelink.Playable) -> Tuple[int, int]:
                         title = (getattr(t, "title", "") or "").lower()
-                        has = 0 if ("lyric" in title or "lyrics" in title) else 1  # why: prefer lyric videos
-                        return (has, len(title))
+                        return (0 if ("lyric" in title or "lyrics" in title) else 1, len(title))
                     items.sort(key=score)
                 t = items[0]
                 debug_lines.append(f"search.pick: title='{getattr(t, 'title', 'Unknown')}' length={getattr(t, 'length', 0)}")
@@ -257,10 +274,9 @@ class AudioPlus(redcommands.Cog):
         debug_lines.append("search: NO_RESULTS (Check Lavalink v4 + YouTube cipher plugin)")
         return None, "\n".join(debug_lines)
 
-    # ---------- events (node + tracks) ----------
+    # ---------- events ----------
     @commands.Cog.listener()
     async def on_ready(self):
-        # why: autoconnect silently on bot ready
         await self._ensure_autoconnect()
 
     @commands.Cog.listener()
@@ -277,7 +293,6 @@ class AudioPlus(redcommands.Cog):
         self._last_node_error = f"closed: code={getattr(payload,'code','?')} reason={getattr(payload,'reason','?')}"
         for g in self.bot.guilds:
             await self._debug(g, f"node.closed: uri={getattr(node,'uri','unknown')} code={getattr(payload,'code','?')} reason={getattr(payload,'reason','?')}")
-            # try reconnect if autoconnect
             if await self.config.guild(g).autoconnect():
                 async def _recon():
                     await asyncio.sleep(5)
@@ -331,7 +346,6 @@ class AudioPlus(redcommands.Cog):
 
     @music.command()
     async def help(self, ctx: redcommands.Context):
-        """Full command list."""
         await self._help_full(ctx)
 
     async def _help_full(self, ctx: redcommands.Context):
@@ -349,7 +363,7 @@ class AudioPlus(redcommands.Cog):
             f"• `pause` • `resume` • `skip` • `stop` • `seek <mm:ss|hh:mm:ss|sec|+/-sec>` • `volume <0-150>` • `now`\n\n"
             f"**Queue**\n"
             f"• `queue` • `remove <index>` • `clear` • `shuffle` • `repeat <off|one|all>`\n\n"
-            f"*Requires Lavalink **v4** with YouTube cipher plugin server-side.*"
+            f"*Server must be Lavalink **v4** with a YouTube cipher plugin.*"
         )
         try:
             await ctx.send(embed=discord.Embed(title="AudioPlus — Full Help", description=desc, color=discord.Color.blurple()))
@@ -389,14 +403,16 @@ class AudioPlus(redcommands.Cog):
     async def node_connect(self, ctx: redcommands.Context):
         await ctx.send("Attempting node connect…")
         node = await self._connect_node_any(ctx.guild)
+        ap = self._apis()
         if node:
-            await ctx.send(box(f"connected=True uri={getattr(node, 'uri', 'unknown')}", lang="ini"))
+            await ctx.send(box(f"connected=True uri={getattr(node, 'uri', 'unknown')}\napis={ap}", lang="ini"))
         else:
             ver = getattr(wavelink, "__version__", "unknown")
             await ctx.send(box(
                 "connected=False\n"
                 f"wavelink_version={ver}\n"
-                f"hint=Use Wavelink 3.x; check Lavalink v4, password/port, HTTPS flag, and cipher plugin.\n"
+                f"apis={ap}\n"
+                f"hint=Check Lavalink v4, password/port, HTTPS flag, and YouTube cipher plugin.\n"
                 f"last_error={self._last_node_error or 'n/a'}", lang="ini"))
 
     @nodegrp.command(name="status")
@@ -404,17 +420,14 @@ class AudioPlus(redcommands.Cog):
         conf = await self.config.guild(ctx.guild).node()
         node = self._get_connected_node()
         ver = getattr(wavelink, "__version__", "unknown")
-        pool_nodes = len(getattr(getattr(wavelink, "NodePool", None), "nodes", {}) or {}) if hasattr(getattr(wavelink, "NodePool", None), "nodes") else "n/a"
+        ap = self._apis()
         uri = f"http{'s' if conf['https'] else ''}://{conf['host']}:{conf['port']}" if conf["host"] else "not set"
         players = getattr(getattr(node, "stats", None), "players", None) if node else None
-        apis = {
-            "NodePool.create_node": hasattr(getattr(wavelink, "NodePool", None), "create_node"),
-            "NodePool.connect": hasattr(getattr(wavelink, "NodePool", None), "connect") and hasattr(wavelink, "Node"),
-        }
         lines = [
             f"configured_uri={uri}",
-            f"connected={bool(node)} pool_nodes={pool_nodes}",
-            f"wavelink_version={ver} apis={apis}",
+            f"connected={bool(node)}",
+            f"wavelink_version={ver}",
+            f"apis={ap}",
             f"players={players if players is not None else 'n/a'}",
             f"last_error={self._last_node_error or 'none'}",
         ]
@@ -529,8 +542,8 @@ class AudioPlus(redcommands.Cog):
             for q in qlist:
                 res = await wavelink.Playable.search(f"ytsearch:{q}")
                 dbg.append(f"q='{q}' -> {len(res) if res else 0}")
-                if res:  # type: ignore[truthy-function]
-                    results = list(res)  # pick first non-empty bucket
+                if res:
+                    results = list(res)
                     break
         except Exception as e:
             dbg.append(f"ERROR {type(e).__name__}")
@@ -545,7 +558,6 @@ class AudioPlus(redcommands.Cog):
             h, m = divmod(m, 60)
             return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
-        # Prefer lyric titles at the top if configured
         if prefer_lyrics:
             def score(t: wavelink.Playable) -> Tuple[int, int]:
                 title = (getattr(t, "title", "") or "").lower()
