@@ -802,7 +802,7 @@ class CommunityPlus(redcommands.Cog):
             await self._seen_mark(member, kind="join")
             await self.config.member(member).ever_seen.set(True)
 
-    @commands.Cog.listener())
+    @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
         g = await self.config.guild(member.guild).all()
         # snapshot sticky roles
