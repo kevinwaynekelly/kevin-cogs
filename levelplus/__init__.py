@@ -232,7 +232,7 @@ class LevelPlus(redcommands.Cog):
         old, new = await self._add_xp(guild, member, amount)
         await self.maybe_announce_levelup(guild, member, old, new)
 
-    @commands.Cog.listener())
+    @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         guild = self.bot.get_guild(payload.guild_id) if payload.guild_id else None
         if not guild:
