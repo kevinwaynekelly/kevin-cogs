@@ -14,49 +14,51 @@ from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import box
 
 __red_end_user_data_statement__ = (
-    "This cog stores per-guild preferences for webhook-based message transformation, including enable flags, "
-    "channel selection, a 1-in-N probability, cooldown seconds, per-user overrides, and exemption lists. "
-    "It does not store message contents."
+    "This cog stores per-guild preferences for webhook-based message transformation (enable flags, channel scope, "
+    "1-in-N owo probability, cooldown seconds, per-user overrides, and exemption lists). It does not store message contents."
 )
 
 DEFAULTS_GUILD = {
     "enabled": False,
     "channels": [],            # empty => all text channels
-    "one_in": 1000,            # probability is 1 in N (e.g., 1000, 10000)
+    "one_in": 1000,            # owo chance = 1 / N  (e.g., 1000, 10000)
     "cooldown_seconds": 5,     # per-user cooldown
     "user_probs": {},          # {user_id(str): one_in(int)}
     "exempt_roles": [],
     "exempt_users": [],
 }
 
+NOW_REGEX = re.compile(r"\b(now)\b", re.IGNORECASE)
 OWO_FACES = ["uwu", "owo", ">w<", "^w^", "x3", "~", "nya~", "(⁄˘⁄⁄ ω⁄ ⁄˘⁄)♡"]
 
 class Meowifier(redcommands.Cog):
     """
     Webhook-only meow/owo replacer:
-      • Always replace whole-word “now”→“meow”.
-      • With probability 1/N (default 1/1000), rewrite to egirl owo.
-      • Sends via webhook (mimic user), then deletes original.
+      • Always replace whole-word “now” → “meow” (case-preserving).
+      • With probability 1/N (default 1/1000), owo-ify the whole message.
+      • Send via webhook (mimic user), then delete the original on success.
     """
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
         self.config: Config = Config.get_conf(self, identifier=0x5E0F1A, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
-        self._cooldown: Dict[int, float] = {}            # user_id -> last_ts (why: anti-spam)
-        self._wh_cache: Dict[int, discord.Webhook] = {}  # channel_id -> webhook
+        self._cooldown: Dict[int, float] = {}           # user_id -> last_ts (why: anti-spam)
+        self._wh_cache: Dict[int, discord.Webhook] = {} # base_channel_id -> webhook
 
     # ---------- transforms ----------
     @staticmethod
     def _case_like(src: str, repl: str) -> str:
-        if src.isupper(): return repl.upper()
-        if src[0].isupper(): return repl.capitalize()
+        if src.isupper():
+            return repl.upper()
+        if src[0].isupper():
+            return repl.capitalize()
         return repl
 
     @staticmethod
     def _meow_replace(text: str) -> str:
-        pat = re.compile(r"\b(now)\b", re.IGNORECASE)
-        return pat.sub(lambda m: Meowifier._case_like(m.group(1), "meow"), text)
+        # always replace, whole word, keep original case
+        return NOW_REGEX.sub(lambda m: Meowifier._case_like(m.group(1), "meow"), text)
 
     @staticmethod
     def _split_code_segments(text: str) -> List[Tuple[str, bool]]:
@@ -64,10 +66,12 @@ class Meowifier(redcommands.Cog):
         pat = re.compile(r"(```[\s\S]*?```|`[^`]*?`)", re.MULTILINE)
         i = 0
         for m in pat.finditer(text):
-            if m.start() > i: segs.append((text[i:m.start()], False))
+            if m.start() > i:
+                segs.append((text[i:m.start()], False))
             segs.append((m.group(0), True))
             i = m.end()
-        if i < len(text): segs.append((text[i:], False))
+        if i < len(text):
+            segs.append((text[i:], False))
         return segs
 
     @staticmethod
@@ -87,35 +91,45 @@ class Meowifier(redcommands.Cog):
             s = re.sub(r"([.!?])", lambda m: f"{m.group(1)} {random.choice(OWO_FACES)}", s)
             s = re.sub(r"!+", lambda m: m.group(0) + "~", s)
             try:
-                if len(s) > 1: s = s[0].lower() + s[1:]
+                if len(s) > 1:
+                    s = s[0].lower() + s[1:]
             except Exception:
                 pass
             return s
+        # don't touch code blocks/backticks
         return "".join(seg if is_code else tr(seg) for seg, is_code in Meowifier._split_code_segments(text))
 
     # ---------- gating ----------
     @staticmethod
     def _starts_with_prefixes(text: str, prefixes: List[str]) -> bool:
         for p in prefixes:
-            if p and text.startswith(p): return True
+            if p and text.startswith(p):
+                return True
         return False
 
     async def _should_process(self, message: discord.Message) -> bool:
-        if not message.guild or message.author.bot or message.webhook_id: return False
+        if not message.guild or message.author.bot or message.webhook_id:
+            return False
         conf = await self.config.guild(message.guild).all()
-        if not conf["enabled"]: return False
+        if not conf["enabled"]:
+            return False
         chs: List[int] = conf["channels"]
-        if chs and message.channel.id not in chs: return False
-        if message.author.id in set(conf["exempt_users"]): return False
-        user_roles = {r.id for r in getattr(message.author, "roles", [])}
-        if user_roles.intersection(set(conf["exempt_roles"])): return False
+        if chs and message.channel.id not in chs:
+            return False
+        if message.author.id in set(conf["exempt_users"]):
+            return False
+        role_ids = {r.id for r in getattr(message.author, "roles", [])}
+        if role_ids.intersection(set(conf["exempt_roles"])):
+            return False
         try:
             prefixes = await self.bot.get_valid_prefixes(message.guild)
         except Exception:
             prefixes = []
-        if self._starts_with_prefixes(message.content or "", prefixes): return False
+        if self._starts_with_prefixes(message.content or "", prefixes):
+            return False
         cd = max(0, int(conf.get("cooldown_seconds", 0)))
-        if cd and (time.time() - self._cooldown.get(message.author.id, 0.0)) < cd: return False
+        if cd and (time.time() - self._cooldown.get(message.author.id, 0.0)) < cd:
+            return False
         return True
 
     def _one_in(self, member: discord.Member, conf: dict) -> int:
@@ -126,8 +140,9 @@ class Meowifier(redcommands.Cog):
         except Exception:
             return max(1, int(conf["one_in"]))
 
-    # ---------- webhooks ----------
+    # ---------- webhook helpers (exact method from working cog) ----------
     async def _ensure_webhook(self, channel: discord.abc.Messageable) -> Optional[discord.Webhook]:
+        # why: reuse the simple pattern that works in your other cog
         base_ch: Optional[discord.TextChannel] = None
         if isinstance(channel, discord.Thread):
             base_ch = channel.parent if isinstance(channel.parent, discord.TextChannel) else None
@@ -135,21 +150,24 @@ class Meowifier(redcommands.Cog):
             base_ch = channel
         else:
             return None
-        if not base_ch: return None
-        hook = self._wh_cache.get(base_ch.id)
-        if hook: return hook
+        if not base_ch:
+            return None
+
+        if base_ch.id in self._wh_cache:
+            return self._wh_cache[base_ch.id]
+
+        perms = base_ch.permissions_for(base_ch.guild.me)  # type: ignore
+        if not perms.manage_webhooks:
+            return None
+
         try:
             hooks = await base_ch.webhooks()
-            hook = discord.utils.find(
-                lambda w: (w.user and w.user.id == base_ch.guild.me.id) or w.name == "Meowifier",  # type: ignore
-                hooks,
-            )
-            if hook is None:
-                hook = await base_ch.create_webhook(name="Meowifier", reason="Meowifier webhook mode")
+            hook = hooks[0] if hooks else await base_ch.create_webhook(name="Meowifier", reason="Meowifier")
         except discord.Forbidden:
             return None
         except Exception:
             return None
+
         self._wh_cache[base_ch.id] = hook
         return hook
 
@@ -173,43 +191,27 @@ class Meowifier(redcommands.Cog):
         p = ctx.clean_prefix
         sections = {
             "quickstart": (
-                f"1) Grant **Manage Messages** + **Manage Webhooks**.\n"
+                f"1) Give bot **Manage Messages** + **Manage Webhooks**.\n"
                 f"2) `{p}meow enable` (or `{p}meow enable #channel`).\n"
-                f"3) `{p}meow onein 1000` (rarity). `now`→`meow` is always on.\n"
-                f"4) Type a normal message, then `{p}meow test`."
+                f"3) `{p}meow onein 1000` (owo rarity). `now`→`meow` is always on.\n"
+                f"4) Type a message, then `{p}meow test`."
             ),
             "channels": (
-                f"`{p}meow channels add [#channel]`\n"
-                f"`{p}meow channels remove [#channel]`\n"
-                f"`{p}meow channels list`\n"
-                f"`{p}meow channels clear`  (empty list = all)"
+                f"`{p}meow channels add [#channel]` • remove • list • clear (empty list = all)"
             ),
             "config": (
-                f"`{p}meow` • `{p}meow enable/disable [#channel]`\n"
-                f"`{p}meow onein <N>` • `{p}meow cooldown <seconds>`\n"
-                f"`{p}meow prob add @user <N>` • `remove` • `list`\n"
-                f"`{p}meow exempt role|user add/remove/list`\n"
-                f"`{p}meow preview <text>` • `{p}meow diag` • `{p}meow test`"
-            ),
-            "notes": (
-                "• Webhook send first; delete original only after success.\n"
-                "• Skips bots, webhooks, commands; respects cooldown/exempts.\n"
-                "• Owoify ignores code blocks/backticks."
+                f"`{p}meow onein <N>` • `{p}meow cooldown <sec>` • `prob add/remove/list` • `exempt role|user add/remove/list`"
             ),
         }
-        if section and section.lower() in sections:
-            e = discord.Embed(title=f"Meowifier — {section.title()}", description=sections[section.lower()], color=discord.Color.blurple())
-            return await ctx.send(embed=e)
         e = discord.Embed(title="Meowifier — Help", color=discord.Color.blurple())
         e.add_field(name="Quickstart", value=sections["quickstart"], inline=False)
         e.add_field(name="Channels", value=sections["channels"], inline=False)
         e.add_field(name="Config", value=sections["config"], inline=False)
-        e.add_field(name="Notes", value=sections["notes"], inline=False)
         await ctx.send(embed=e)
 
+    # channels helper
     @meow.group(name="channels")
-    async def meow_channels(self, ctx: redcommands.Context) -> None:
-        pass
+    async def meow_channels(self, ctx: redcommands.Context) -> None: pass
 
     @meow_channels.command(name="add")
     async def meow_channels_add(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
@@ -218,33 +220,33 @@ class Meowifier(redcommands.Cog):
         data = await self.config.guild(ctx.guild).channels()
         if ch.id in data: return await ctx.send(f"{ch.mention} already in the list.")
         data.append(ch.id); await self.config.guild(ctx.guild).channels.set(data)
-        await ctx.send(f"Added {ch.mention}. Target list now: {', '.join(f'<#{c}>' for c in data)}")
+        await ctx.send(f"Added {ch.mention}.")
 
     @meow_channels.command(name="remove")
     async def meow_channels_remove(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
         ch = channel or (ctx.channel if isinstance(ctx.channel, discord.TextChannel) else None)
         if not isinstance(ch, discord.TextChannel): return await ctx.send("Pick a text channel.")
         data = await self.config.guild(ctx.guild).channels()
-        if ch.id not in data: return await ctx.send(f"{ch.mention} was not in the list.")
+        if ch.id not in data: return await ctx.send(f"{ch.mention} not in the list.")
         data = [c for c in data if c != ch.id]; await self.config.guild(ctx.guild).channels.set(data)
-        await ctx.send(f"Removed {ch.mention}. Target list now: {('all channels' if not data else ', '.join(f'<#{c}>' for c in data))}")
+        await ctx.send(f"Removed {ch.mention}.")
 
     @meow_channels.command(name="clear")
     async def meow_channels_clear(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).channels.set([])
-        await ctx.send("Cleared channel list — now active in **all channels**.")
+        await ctx.send("Cleared list — active in **all channels**.")
 
     @meow_channels.command(name="list")
     async def meow_channels_list(self, ctx: redcommands.Context) -> None:
         data = await self.config.guild(ctx.guild).channels()
-        if not data: return await ctx.send("Channels: **all**")
-        await ctx.send("Channels: " + ", ".join(f"<#{c}>" for c in data))
+        await ctx.send("Channels: " + ("**all**" if not data else ", ".join(f"<#{c}>" for c in data)))
 
+    # basics
     @meow.command(name="enable")
     async def meow_enable(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
         if channel is None:
             await self.config.guild(ctx.guild).enabled.set(True)
-            await ctx.send("Meowifier: **enabled** guild-wide.")
+            await ctx.send("Meowifier: **enabled** (guild-wide).")
         else:
             data = await self.config.guild(ctx.guild).channels()
             if channel.id not in data:
@@ -257,7 +259,7 @@ class Meowifier(redcommands.Cog):
     async def meow_disable(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
         if channel is None:
             await self.config.guild(ctx.guild).enabled.set(False)
-            await ctx.send("Meowifier: **disabled** guild-wide.")
+            await ctx.send("Meowifier: **disabled** (guild-wide).")
         else:
             data = await self.config.guild(ctx.guild).channels()
             data = [c for c in data if c != channel.id]
@@ -266,7 +268,7 @@ class Meowifier(redcommands.Cog):
 
     @meow.command(name="onein")
     async def meow_onein(self, ctx: redcommands.Context, n: int) -> None:
-        if n < 1 or n > 1_000_000: return await ctx.send("Provide N in 1..1,000,000 (probability = 1/N).")
+        if n < 1 or n > 1_000_000: return await ctx.send("Use 1..1,000,000 (probability = 1/N).")
         await self.config.guild(ctx.guild).one_in.set(int(n)); await ctx.tick()
 
     @meow.command(name="cooldown")
@@ -274,16 +276,14 @@ class Meowifier(redcommands.Cog):
         if seconds < 0 or seconds > 3600: return await ctx.send("Cooldown must be 0–3600s.")
         await self.config.guild(ctx.guild).cooldown_seconds.set(int(seconds)); await ctx.tick()
 
+    # overrides
     @meow.group(name="prob")
-    async def meow_prob(self, ctx: redcommands.Context) -> None:
-        """Per-user 1-in-N overrides."""
-        pass
+    async def meow_prob(self, ctx: redcommands.Context) -> None: pass
 
     @meow_prob.command(name="add")
     async def meow_prob_add(self, ctx: redcommands.Context, member: discord.Member, n: int) -> None:
-        if n < 1 or n > 1_000_000: return await ctx.send("Provide N in 1..1,000,000 (probability = 1/N).")
-        data = await self.config.guild(ctx.guild).user_probs()
-        data[str(member.id)] = int(n)
+        if n < 1 or n > 1_000_000: return await ctx.send("Use 1..1,000,000 (probability = 1/N).")
+        data = await self.config.guild(ctx.guild).user_probs(); data[str(member.id)] = int(n)
         await self.config.guild(ctx.guild).user_probs.set(data); await ctx.tick()
 
     @meow_prob.command(name="remove")
@@ -297,19 +297,18 @@ class Meowifier(redcommands.Cog):
     async def meow_prob_list(self, ctx: redcommands.Context) -> None:
         data = await self.config.guild(ctx.guild).user_probs()
         if not data: return await ctx.send("No overrides.")
-        parts = []
+        out = []
         for uid, n in data.items():
             m = ctx.guild.get_member(int(uid))
-            parts.append(f"- {(m.mention if m else uid)}: 1/{n}")
-        await ctx.send(box("\n".join(parts), lang="ini"))
+            out.append(f"- {(m.mention if m else uid)}: 1/{n}")
+        await ctx.send(box("\n".join(out), lang="ini"))
 
+    # exempts
     @meow.group(name="exempt")
-    async def meow_exempt(self, ctx: redcommands.Context) -> None:
-        pass
+    async def meow_exempt(self, ctx: redcommands.Context) -> None: pass
 
     @meow_exempt.group(name="role")
-    async def meow_exempt_role(self, ctx: redcommands.Context) -> None:
-        pass
+    async def meow_exempt_role(self, ctx: redcommands.Context) -> None: pass
 
     @meow_exempt_role.command(name="add")
     async def meow_exempt_role_add(self, ctx: redcommands.Context, role: discord.Role) -> None:
@@ -330,8 +329,7 @@ class Meowifier(redcommands.Cog):
         await ctx.send("Exempt roles: " + ", ".join(roles))
 
     @meow_exempt.group(name="user")
-    async def meow_exempt_user(self, ctx: redcommands.Context) -> None:
-        pass
+    async def meow_exempt_user(self, ctx: redcommands.Context) -> None: pass
 
     @meow_exempt_user.command(name="add")
     async def meow_exempt_user_add(self, ctx: redcommands.Context, member: discord.Member) -> None:
@@ -353,27 +351,25 @@ class Meowifier(redcommands.Cog):
 
     @meow.command(name="preview")
     async def meow_preview(self, ctx: redcommands.Context, *, text: str) -> None:
-        s = self._meow_replace(text)            # always meow
-        s2 = self._owoify(s)                     # sample owo
-        await ctx.send(box(f"MEOW: {s}\nOWO:  {s2}", lang="ini"))
+        s = self._meow_replace(text)
+        await ctx.send(box(f"MEOW: {s}\nOWO:  {self._owoify(s)}", lang="ini"))
 
     @meow.command(name="diag")
     async def meow_diag(self, ctx: redcommands.Context) -> None:
         g = await self.config.guild(ctx.guild).all()
-        perms = ctx.guild.me.guild_permissions  # type: ignore
-        chs = g["channels"]
+        perms = ctx.channel.permissions_for(ctx.guild.me) if isinstance(ctx.channel, (discord.TextChannel, discord.Thread)) else None  # type: ignore
         lines = [
             f"enabled={g['enabled']} one_in=1/{g['one_in']} cooldown={g['cooldown_seconds']}s",
-            f"channels={'all' if not chs else ', '.join(f'<#{c}>' for c in chs)}",
-            f"perm.manage_messages={'OK' if perms.manage_messages else 'MISSING'}  perm.manage_webhooks={'OK' if perms.manage_webhooks else 'MISSING'}",
-            f"user overrides={len(g['user_probs'])}  exempts: users={len(g['exempt_users'])} roles={len(g['exempt_roles'])}",
-            "note: always-meow=True; owo is chanced.",
+            f"channels={'all' if not g['channels'] else ', '.join(f'<#{c}>' for c in g['channels'])}",
+            f"here perms: view={getattr(perms,'view_channel',None)} send={getattr(perms,'send_messages',None)} manage_messages={getattr(perms,'manage_messages',None)} manage_webhooks={getattr(perms,'manage_webhooks',None)}",
+            f"overrides={len(g['user_probs'])} exempts: users={len(g['exempt_users'])} roles={len(g['exempt_roles'])}",
         ]
         await ctx.send(box("\n".join(lines), lang="ini"))
 
     @meow.command(name="test")
     async def meow_test(self, ctx: redcommands.Context) -> None:
-        """Force-owoify your last message here via webhook (sanity check)."""
+        """Force-owoify your last message here via webhook and print concise debug."""
+        # find your last eligible message
         try:
             prefixes = await self.bot.get_valid_prefixes(ctx.guild)
         except Exception:
@@ -383,61 +379,128 @@ class Meowifier(redcommands.Cog):
             if m.author.id == ctx.author.id and not m.author.bot and not m.webhook_id and not self._starts_with_prefixes(m.content or "", prefixes):
                 last = m
                 break
-        if not last: return await ctx.send("No recent message of yours found here to test.")
-        hook = await self._ensure_webhook(ctx.channel)
-        if not hook: return await ctx.send("Missing webhook permissions in this channel.")
-        content = self._owoify(self._meow_replace(last.content or ""))  # always meow, force owo
+
+        ch = ctx.channel
+        perms = ch.permissions_for(ctx.guild.me) if isinstance(ch, (discord.TextChannel, discord.Thread)) else None  # type: ignore
+        lines = [
+            f"channel={getattr(ch, 'id', None)} type={ch.__class__.__name__}",
+            f"perms: send={getattr(perms,'send_messages',None)} manage_messages={getattr(perms,'manage_messages',None)} manage_webhooks={getattr(perms,'manage_webhooks',None)} attach_files={getattr(perms,'attach_files',None)}",
+            f"last_msg={'found' if last else 'not found'}",
+        ]
+        if not last:
+            return await ctx.send(box("\n".join(lines), lang="ini"))
+
+        # ensure webhook using known-good method
+        hook = await self._ensure_webhook(ch)
+        if not hook:
+            lines.append("hook: none (missing Manage Webhooks?)")
+            return await ctx.send(box("\n".join(lines), lang="ini"))
+
+        # transform: always meow + force owo
+        content = self._owoify(self._meow_replace(last.content or ""))
+
+        # carry attachments
         files: List[discord.File] = []
         for a in last.attachments[:5]:
-            try: files.append(await a.to_file())
-            except Exception: pass
-        allowed = discord.AllowedMentions.none()
+            try:
+                files.append(await a.to_file())
+            except Exception as e:
+                lines.append(f"attach_fail:{a.id}:{type(e).__name__}")
+
+        # try send first
         try:
-            if isinstance(ctx.channel, discord.Thread):
-                await hook.send(content or "(meow)", username=last.author.display_name[:80], avatar_url=last.author.display_avatar.url, thread=ctx.channel, files=files or None, allowed_mentions=allowed, wait=False)
+            if isinstance(ch, discord.Thread):
+                await hook.send(
+                    content or "(meow)",
+                    username=last.author.display_name[:80],
+                    avatar_url=last.author.display_avatar.url,
+                    thread=ch,
+                    files=files or None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                    wait=False,
+                )
             else:
-                await hook.send(content or "(meow)", username=last.author.display_name[:80], avatar_url=last.author.display_avatar.url, files=files or None, allowed_mentions=allowed, wait=False)
-        except Exception:
-            return await ctx.send("Webhook send failed. Check permissions.")
+                await hook.send(
+                    content or "(meow)",
+                    username=last.author.display_name[:80],
+                    avatar_url=last.author.display_avatar.url,
+                    files=files or None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                    wait=False,
+                )
+            lines.append("send: OK")
+        except Exception as e:
+            lines.append(f"send: FAIL {type(e).__name__}: {e}")
+            return await ctx.send(box("\n".join(lines), lang="ini"))
+
+        # then delete original if allowed
         try:
             await last.delete()
+            lines.append("delete: OK")
         except discord.Forbidden:
-            return await ctx.send("Sent via webhook, but couldn't delete your original message (need Manage Messages).")
-        await ctx.tick()
+            lines.append("delete: Forbidden (need Manage Messages)")
+        except Exception as e:
+            lines.append(f"delete: FAIL {type(e).__name__}:{e}")
+
+        await ctx.send(box("\n".join(lines), lang="ini"))
 
     # ---------- listener ----------
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        if not await self._should_process(message): return
+        if not await self._should_process(message):
+            return
         conf = await self.config.guild(message.guild).all()
         cd = max(0, int(conf.get("cooldown_seconds", 0)))
-        if cd: self._cooldown[message.author.id] = time.time()
+        if cd:
+            self._cooldown[message.author.id] = time.time()
 
-        # Always meow; owo is chanced
+        # always meow; owo is chanced
         content = self._meow_replace(message.content or "")
         n = self._one_in(message.author, conf)
         if n <= 1 or random.randrange(n) == 0:
             content = self._owoify(content)
 
-        if (content.strip() == (message.content or "").strip()) and not message.attachments: return
+        # skip if no change and no files
+        if (content.strip() == (message.content or "").strip()) and not message.attachments:
+            return
 
         hook = await self._ensure_webhook(message.channel)
-        if not hook: return
+        if not hook:
+            return  # why: no Manage Webhooks, keep original
 
         files: List[discord.File] = []
         for a in message.attachments[:5]:
-            try: files.append(await a.to_file())
-            except Exception: pass
+            try:
+                files.append(await a.to_file())
+            except Exception:
+                pass
 
-        allowed = discord.AllowedMentions.none()
         try:
             if isinstance(message.channel, discord.Thread):
-                await hook.send(content or "(meow)", username=message.author.display_name[:80], avatar_url=message.author.display_avatar.url, thread=message.channel, files=files or None, allowed_mentions=allowed, wait=False)
+                await hook.send(
+                    content or "(meow)",
+                    username=message.author.display_name[:80],
+                    avatar_url=message.author.display_avatar.url,
+                    thread=message.channel,
+                    files=files or None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                    wait=False,
+                )
             else:
-                await hook.send(content or "(meow)", username=message.author.display_name[:80], avatar_url=message.author.display_avatar.url, files=files or None, allowed_mentions=allowed, wait=False)
+                await hook.send(
+                    content or "(meow)",
+                    username=message.author.display_name[:80],
+                    avatar_url=message.author.display_avatar.url,
+                    files=files or None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                    wait=False,
+                )
         except Exception:
+            # keep original if send fails
             self._wh_cache.pop(getattr(message.channel, "id", 0), None)  # refresh next time
             return
+
+        # only delete after successful webhook send
         try:
             await message.delete()
         except discord.Forbidden:
