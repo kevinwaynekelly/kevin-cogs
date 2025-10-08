@@ -12,12 +12,11 @@ from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import box
 
 try:
-    import wavelink  # Requires Wavelink 3.x (compatible with Lavalink v4)
+    import wavelink  # Requires Wavelink 3.x (Lavalink v4)
 except Exception as e:
     raise ImportError(
         "audioplus requires Wavelink 3.x (Lavalink v4).\n"
-        "Install with your Red venv: pip install -U 'wavelink>=3,<4'\n"
-        "or via Red: [p]pipinstall wavelink==3.*"
+        "Install: pip install -U 'wavelink>=3,<4'  (or [p]pipinstall wavelink==3.*)"
     ) from e
 
 YOUTUBE_URL_RE = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
@@ -27,6 +26,7 @@ DEFAULTS_GUILD = {
     "bind_channel": None,
     "default_volume": 60,
     "prefer_lyrics": True,
+    "debug": True,  # default verbose so you can see what's wrong immediately
 }
 
 class LoopMode:
@@ -35,7 +35,7 @@ class LoopMode:
     ALL = "all"
 
 class MusicPlayer(wavelink.Player):
-    """Guild-scoped player with queue/loop state."""
+    """Guild player with queue + loop."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.queue: wavelink.Queue[wavelink.Playable] = wavelink.Queue()
@@ -60,46 +60,63 @@ class MusicPlayer(wavelink.Player):
             pass
 
 class AudioPlus(redcommands.Cog):
-    """Lavalink v4 YouTube-only player (lyric-first) with queue/seek/repeat, help/diag, and probe."""
+    """Lavalink v4 YouTube-only player (lyric-first), with queue/seek/repeat, help/diag, probe, and loud debug."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
-        # FIX: use a valid hex literal (A–F, 0–9). 0xA71D01 is arbitrary but stable.
         self.config: Config = Config.get_conf(self, identifier=0xA71D01, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self._node_ready: bool = False
+        self._last_node_error: Optional[str] = None
 
-    # ---------- node mgmt ----------
-    async def _connect_node(self, guild: Optional[discord.Guild] = None) -> Optional[wavelink.Node]:
-        """Return a connected node if available; otherwise try to create one from guild config."""
-        try:
-            if wavelink.NodePool.nodes:
-                node = wavelink.NodePool.get_node()
-                if node and node.is_connected:
-                    self._node_ready = True
-                    return node
-        except Exception:
-            pass
-
-        targets = [guild] if guild else list(self.bot.guilds)
-        for g in targets:
-            conf = await self.config.guild(g).node()
-            if not conf["host"]:
-                continue
+    # ---------- internal debug ----------
+    async def _debug(self, guild: discord.Guild, msg: str):
+        if not await self.config.guild(guild).debug():
+            return
+        ch_id = await self.config.guild(guild).bind_channel()
+        ch = guild.get_channel(ch_id) if ch_id else getattr(guild, "system_channel", None)
+        print(f"[AudioPlus] {guild.name}: {msg}")  # console
+        if isinstance(ch, (discord.TextChannel, discord.Thread)):
             try:
-                node = await wavelink.NodePool.create_node(
-                    bot=self.bot,
-                    host=conf["host"],
-                    port=int(conf["port"]),
-                    password=conf["password"],
-                    https=bool(conf["https"]),
-                    resume_key=conf.get("resume_key"),
-                )
-                self._node_ready = True
-                return node
+                await ch.send(box(msg, lang="ini"))
             except Exception:
-                continue
-        return None
+                pass
+
+    # ---------- node mgmt (Wavelink 3 style) ----------
+    async def _connected_node(self) -> Optional[wavelink.Node]:
+        try:
+            node = wavelink.NodePool.get_node()
+            return node if node and node.is_connected else None
+        except Exception:
+            return None
+
+    async def _connect_node_v3(self, guild: discord.Guild) -> Optional[wavelink.Node]:
+        node = await self._connected_node()
+        if node:
+            return node
+
+        conf = await self.config.guild(guild).node()
+        host = (conf["host"] or "").strip()
+        port = int(conf["port"])
+        password = conf["password"]
+        https = bool(conf["https"])
+        if not host:
+            await self._debug(guild, "node.connect: host not set (use `music node set <host> <port> <password> [https?]`).")
+            return None
+
+        uri = f"http{'s' if https else ''}://{host}:{port}"
+        await self._debug(guild, f"node.connect: building node uri={uri}")
+        try:
+            node_obj = wavelink.Node(uri=uri, password=password)
+            await wavelink.NodePool.connect(client=self.bot, nodes=[node_obj])
+            node = await self._connected_node()
+            self._node_ready = bool(node)
+            await self._debug(guild, f"node.connect: connected={bool(node)}")
+            return node
+        except Exception as e:
+            self._last_node_error = f"{type(e).__name__}: {e!s}"
+            await self._debug(guild, f"node.connect: ERROR={self._last_node_error}")
+            return None
 
     # ---------- helpers ----------
     async def _get_player(self, ctx: redcommands.Context, *, connect: bool = True) -> MusicPlayer:
@@ -108,13 +125,22 @@ class AudioPlus(redcommands.Cog):
             return player
         if not connect:
             raise redcommands.UserFeedbackCheckFailure("Not connected.")
+
         if not ctx.author.voice or not ctx.author.voice.channel:
             raise redcommands.UserFeedbackCheckFailure("Join a voice channel first.")
-        node = await self._connect_node(ctx.guild)
+
+        node = await self._connect_node_v3(ctx.guild)
         if not node:
-            raise redcommands.UserFeedbackCheckFailure("Node not configured/connected. Run `music node set` then `music diag`.")
+            raise redcommands.UserFeedbackCheckFailure("Node not connected. Run `music node connect` then `music diag`.")
+
         channel = ctx.author.voice.channel
-        player = await channel.connect(cls=MusicPlayer)  # type: ignore[arg-type]
+        try:
+            player = await channel.connect(cls=MusicPlayer)  # type: ignore[arg-type]
+        except discord.Forbidden:
+            raise redcommands.UserFeedbackCheckFailure("Missing Connect permission for that voice channel.")
+        except Exception as e:
+            raise redcommands.UserFeedbackCheckFailure(f"VC connect failed: {type(e).__name__}")
+
         bind_id = await self.config.guild(ctx.guild).bind_channel()
         player.text_channel_id = bind_id or ctx.channel.id
         vol = await self.config.guild(ctx.guild).default_volume()
@@ -122,52 +148,68 @@ class AudioPlus(redcommands.Cog):
             await player.set_volume(int(max(0, min(150, vol))))
         except Exception:
             pass
+        await self._debug(ctx.guild, f"player.init: text_channel_id={player.text_channel_id} volume={vol}")
         return player
 
     def _ensure_same_vc(self, ctx: redcommands.Context, player: MusicPlayer):
         if not ctx.author.voice or not ctx.author.voice.channel or ctx.author.voice.channel != player.channel:
             raise redcommands.UserFeedbackCheckFailure("You must be in my voice channel.")
 
-    async def _search_youtube(self, guild: discord.Guild, query: str) -> Optional[wavelink.Playable]:
-        """YouTube-only search; prefer lyric videos by title."""
+    async def _search_youtube(self, guild: discord.Guild, query: str) -> Tuple[Optional[wavelink.Playable], str]:
         prefer_lyrics = await self.config.guild(guild).prefer_lyrics()
+        debug_lines: List[str] = [f"search: prefer_lyrics={prefer_lyrics} raw='{query}'"]
 
         async def _search(q: str) -> List[wavelink.Playable]:
             try:
                 res = await wavelink.Playable.search(f"ytsearch:{q}")
                 return list(res) if res else []
-            except Exception:
+            except Exception as e:
+                debug_lines.append(f"search: FAIL {type(e).__name__}")
                 return []
 
-        # URL path: only accept YouTube URLs
         if YOUTUBE_URL_RE.search(query):
             try:
                 res = await wavelink.Playable.search(query)
-                return res[0] if res else None
-            except Exception:
-                return None
+                track = res[0] if res else None
+                debug_lines.append(f"search.url: results={len(res) if res else 0}")
+                return track, "\n".join(debug_lines)
+            except Exception as e:
+                debug_lines.append(f"search.url: ERROR {type(e).__name__}")
+                return None, "\n".join(debug_lines)
 
-        # Query path: try lyric-first, then plain
         queries = [f"{query} lyrics", f"{query} lyric video", query] if prefer_lyrics else [query]
-        candidates: List[wavelink.Playable] = []
         for q in queries:
             items = await _search(q)
+            debug_lines.append(f"search.q: '{q}' -> {len(items)}")
             if items:
-                candidates.extend(items)
-                break
-        if not candidates:
-            return None
+                if prefer_lyrics:
+                    def score(t: wavelink.Playable) -> Tuple[int, int]:
+                        title = (getattr(t, "title", "") or "").lower()
+                        has = 0 if ("lyric" in title or "lyrics" in title) else 1  # why: prefer lyric videos
+                        return (has, len(title))
+                    items.sort(key=score)
+                t = items[0]
+                debug_lines.append(f"search.pick: title='{getattr(t, 'title', 'Unknown')}' length={getattr(t, 'length', 0)}")
+                return t, "\n".join(debug_lines)
 
-        if prefer_lyrics:
-            def score(t: wavelink.Playable) -> Tuple[int, int]:
-                title = (getattr(t, "title", "") or "").lower()
-                has = 0 if ("lyric" in title or "lyrics" in title) else 1  # why: prefer lyric videos
-                return (has, len(title))
-            candidates.sort(key=score)
-
-        return candidates[0]
+        debug_lines.append("search: NO_RESULTS (Check Lavalink v4 + YouTube cipher plugin)")
+        return None, "\n".join(debug_lines)
 
     # ---------- wavelink events ----------
+    @commands.Cog.listener()
+    async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
+        node = payload.node
+        for g in self.bot.guilds:
+            await self._debug(g, f"node.ready: connected uri={getattr(node, 'uri', 'unknown')} session={payload.session_id}")
+
+    @commands.Cog.listener()
+    async def on_wavelink_node_connection_closed(self, payload: wavelink.NodeConnectionClosedPayload):
+        node = payload.node
+        self._node_ready = False
+        self._last_node_error = f"closed: code={payload.code} reason={payload.reason}"
+        for g in self.bot.guilds:
+            await self._debug(g, f"node.closed: uri={getattr(node, 'uri', 'unknown')} code={payload.code} reason={payload.reason}")
+
     @commands.Cog.listener()
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
         player: MusicPlayer = payload.player  # type: ignore[assignment]
@@ -188,8 +230,8 @@ class AudioPlus(redcommands.Cog):
                 await player.announce(f"▶️ Now playing: **{getattr(nxt, 'title', 'Unknown')}**")
             else:
                 await player.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            await self._debug(player.guild, f"track_end: ERROR {type(e).__name__}")
 
     @commands.Cog.listener()
     async def on_wavelink_track_stuck(self, payload: wavelink.TrackStuckEventPayload):
@@ -218,7 +260,6 @@ class AudioPlus(redcommands.Cog):
 
     @music.command()
     async def help(self, ctx: redcommands.Context):
-        """Full command list."""
         await self._help_full(ctx)
 
     async def _help_full(self, ctx: redcommands.Context):
@@ -227,16 +268,11 @@ class AudioPlus(redcommands.Cog):
             f"**AudioPlus (Lavalink v4 / YouTube-only)**\n\n"
             f"**Setup**\n"
             f"• `{p}music node set <host> <port> <password> [https?]`\n"
-            f"• `{p}music node show` • `{p}music diag` • `{p}music probe [voice-channel]`\n"
-            f"• `{p}music bind [#channel]` • `{p}music preferlyrics [true|false]` • `{p}music defaultvolume <0-150>`\n\n"
-            f"**Voice**\n"
-            f"• `{p}join [voice-channel]` • `{p}leave`\n\n"
-            f"**Playback**\n"
-            f"• `{p}play <query|youtube-url>` (alias: `{p}p`) — prefers lyric videos\n"
-            f"• `{p}pause` • `{p}resume` • `{p}skip` • `{p}stop`\n"
-            f"• `{p}seek <mm:ss|hh:mm:ss|seconds|+/-seconds>` • `{p}volume <0-150>` • `{p}now`\n\n"
-            f"**Queue**\n"
-            f"• `{p}queue` • `{p}remove <index>` • `{p}clear` • `{p}shuffle` • `{p}repeat <off|one|all>`\n\n"
+            f"• `{p}music node connect` • `{p}music node status` • `{p}music diag` • `{p}music probe [voice-channel]`\n"
+            f"• `{p}music bind [#channel]` • `{p}music preferlyrics [true|false]` • `{p}music defaultvolume <0-150>` • `{p}music debug [true|false]`\n\n"
+            f"**Voice** — `{p}join [voice-channel]` • `{p}leave`\n"
+            f"**Playback** — `{p}play <query|youtube-url>` (`{p}p`) • `pause` • `resume` • `skip` • `stop` • `seek` • `volume` • `now`\n"
+            f"**Queue** — `queue` • `remove` • `clear` • `shuffle` • `repeat <off|one|all>`\n\n"
             f"*Node must be Lavalink **v4** with a YouTube cipher plugin (server-side).*"
         )
         try:
@@ -244,103 +280,16 @@ class AudioPlus(redcommands.Cog):
         except discord.Forbidden:
             await ctx.send(box(desc, lang="ini"))
 
-    @music.command()
-    async def diag(self, ctx: redcommands.Context):
-        """Run a non-intrusive system check."""
-        g = ctx.guild
-        me = g.me
-        node = await self._connect_node(g)
-        node_ok = bool(node and node.is_connected)
+    # ----- debug toggle -----
+    @music.command(name="debug")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def debug_cmd(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+        if enabled is None:
+            enabled = not (await self.config.guild(ctx.guild).debug())
+        await self.config.guild(ctx.guild).debug.set(bool(enabled))
+        await ctx.send(f"debug = **{bool(enabled)}**")
 
-        players = getattr(getattr(node, "stats", None), "players", None) if node_ok else None
-        mem = getattr(getattr(getattr(node, "stats", None), "memory", None), "used", None) if node_ok else None
-        cpu = getattr(getattr(getattr(node, "stats", None), "cpu", None), "system_load", None) if node_ok else None
-        ver = None
-        for attr in ("version", "client_version"):
-            ver = ver or getattr(node, attr, None)
-
-        ch = ctx.channel
-        tperm = ch.permissions_for(me) if isinstance(ch, (discord.TextChannel, discord.Thread)) else None
-        author_vc = getattr(ctx.author.voice, "channel", None)
-        vc_perms = author_vc.permissions_for(me) if author_vc else None
-
-        search_probe = "skip"
-        if node_ok:
-            try:
-                res = await wavelink.Playable.search("ytsearch:lofi hip hop lyrics")
-                search_probe = "OK" if res else "EMPTY"
-            except Exception as e:
-                search_probe = f"FAIL:{type(e).__name__}"
-
-        hints = []
-        if not node_ok:
-            hints.append("Node not connected: run `music node set` then retry.")
-        if isinstance(ch, (discord.TextChannel, discord.Thread)):
-            if not tperm.send_messages:
-                hints.append("Missing Send Messages here.")
-            if not tperm.embed_links:
-                hints.append("Missing Embed Links here.")
-        if author_vc and vc_perms:
-            if not vc_perms.connect:
-                hints.append(f"Missing Connect in {author_vc.name}.")
-            if not vc_perms.speak:
-                hints.append(f"Missing Speak in {author_vc.name}.")
-        if not author_vc:
-            hints.append("Join a voice channel to fully validate VC perms.")
-
-        lines = [
-            f"node_connected={node_ok}  version={ver or 'unknown'}",
-            f"stats(players={players if players is not None else 'n/a'}, mem_used={mem if mem is not None else 'n/a'}, cpu_load={cpu if cpu is not None else 'n/a'})",
-            f"text_perms(send={getattr(tperm,'send_messages',None)}, embed={getattr(tperm,'embed_links',None)})",
-            f"author_vc={getattr(author_vc,'name',None)}  vc_perms(connect={getattr(vc_perms,'connect',None)}, speak={getattr(vc_perms,'speak',None)})",
-            f"search_probe={search_probe}",
-        ]
-        if hints:
-            lines.append("hints=" + " | ".join(hints))
-        await ctx.send(box("\n".join(lines), lang="ini"))
-
-    @music.command()
-    async def probe(self, ctx: redcommands.Context, channel: Optional[discord.VoiceChannel] = None):
-        """Silent VC connect → validate perms → disconnect. No audio is played."""
-        node = await self._connect_node(ctx.guild)
-        if not node:
-            return await ctx.send("Node not configured/connected. Run `music node set` then `music diag`.")
-        target = channel or (ctx.author.voice.channel if ctx.author.voice else None)
-        if not target:
-            return await ctx.send("Join a voice channel or specify one.")
-
-        me = ctx.guild.me
-        vperm = target.permissions_for(me)
-        pre_connected = isinstance(ctx.voice_client, MusicPlayer)
-        created = False
-
-        if not pre_connected:
-            try:
-                player: MusicPlayer = await target.connect(cls=MusicPlayer)  # type: ignore[arg-type]
-                bind_id = await self.config.guild(ctx.guild).bind_channel()
-                player.text_channel_id = bind_id or ctx.channel.id
-                vol = await self.config.guild(ctx.guild).default_volume()
-                try:
-                    await player.set_volume(int(max(0, min(150, vol))))
-                except Exception:
-                    pass
-                created = True
-            except Exception as e:
-                return await ctx.send(f"Connect failed: `{type(e).__name__}`")
-
-        lines = [
-            f"target={target.name}",
-            f"bot_perms(connect={vperm.connect}, speak={vperm.speak}, move_members={vperm.move_members})",
-            f"connected={'yes' if (created or pre_connected) else 'no'}",
-        ]
-        if created:
-            try:
-                await ctx.voice_client.disconnect()  # type: ignore[union-attr]
-            except Exception:
-                pass
-        await ctx.send(box("\n".join(lines), lang="ini"))
-
-    # ---------- node config & binding ----------
+    # ----- node config / control -----
     @music.group(name="node")
     @redcommands.admin_or_permissions(manage_guild=True)
     async def nodegrp(self, ctx: redcommands.Context): ...
@@ -352,12 +301,40 @@ class AudioPlus(redcommands.Cog):
         })
         self._node_ready = False
         await ctx.tick()
+        await ctx.send(box(f"host={host}\nport={port}\nhttps={bool(https)}", lang="ini"))
+
+    @nodegrp.command(name="status")
+    async def node_status(self, ctx: redcommands.Context):
+        conf = await self.config.guild(ctx.guild).node()
+        node = await self._connected_node()
+        pool_count = len(getattr(wavelink.NodePool, "nodes", {})) if hasattr(wavelink.NodePool, "nodes") else "n/a"
+        uri = f"http{'s' if conf['https'] else ''}://{conf['host']}:{conf['port']}" if conf["host"] else "not set"
+        ver = getattr(node, "version", None) if node else None
+        players = getattr(getattr(node, "stats", None), "players", None) if node else None
+        lines = [
+            f"configured_uri={uri}",
+            f"pool_nodes={pool_count}",
+            f"connected={bool(node)}",
+            f"version={ver or 'unknown'} players={players if players is not None else 'n/a'}",
+            f"last_error={self._last_node_error or 'none'}",
+        ]
+        await ctx.send(box("\n".join(lines), lang="ini"))
+
+    @nodegrp.command(name="connect")
+    async def node_connect(self, ctx: redcommands.Context):
+        await ctx.send("Attempting node connect…")
+        node = await self._connect_node_v3(ctx.guild)
+        if node:
+            await ctx.send(box(f"connected=True uri={getattr(node, 'uri', 'unknown')}", lang="ini"))
+        else:
+            await ctx.send(box(f"connected=False hint=Check Lavalink v4 is running, port open, password correct, HTTPS flag matches.\nlast_error={self._last_node_error or 'n/a'}", lang="ini"))
 
     @nodegrp.command(name="show")
     async def node_show(self, ctx: redcommands.Context):
         node = await self.config.guild(ctx.guild).node()
-        await ctx.send(box(f"host={node['host'] or 'not set'}\nport={node['port']}\nhttps={node['https']}", lang="ini"))
+        await ctx.send(box(f"host={node['host'] or 'not set'}\nport={node['port']}\nhttps={node['https']}\npassword_set={'yes' if node['password'] else 'no'}", lang="ini"))
 
+    # ----- binding / prefs -----
     @music.command()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def bind(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None):
@@ -390,12 +367,12 @@ class AudioPlus(redcommands.Cog):
                 pass
         await ctx.send(f"default_volume = **{value}%**")
 
-    # ---------- voice ----------
+    # ----- voice -----
     @music.command()
     async def join(self, ctx: redcommands.Context, channel: Optional[discord.VoiceChannel] = None):
-        node = await self._connect_node(ctx.guild)
+        node = await self._connect_node_v3(ctx.guild)
         if not node:
-            return await ctx.send("Node not configured/connected. Run `music node set` then `music diag`.")
+            return await ctx.send("Node not connected. Run `music node connect`.")
         target = channel or (ctx.author.voice.channel if ctx.author.voice else None)
         if not target:
             return await ctx.send("Join a voice channel or specify one.")
@@ -423,22 +400,33 @@ class AudioPlus(redcommands.Cog):
         await player.disconnect()
         await ctx.tick()
 
-    # ---------- playback ----------
+    # ----- playback -----
     @music.command(aliases=["p"])
     async def play(self, ctx: redcommands.Context, *, query: str):
-        player = await self._get_player(ctx, connect=True)
-        # Only YouTube is allowed; free-form queries are searched on YT
-        track = await self._search_youtube(ctx.guild, query)
-        if not track:
-            return await ctx.send("No YouTube results.")
-        player.requester_id = ctx.author.id
+        # Node + player
+        try:
+            player = await self._get_player(ctx, connect=True)
+        except redcommands.UserFeedbackCheckFailure as e:
+            return await ctx.send(f"Setup failed: {e}")
 
-        if not player.playing and not player.paused:
-            await player.play(track)
-            await player.announce(f"▶️ Now playing: **{getattr(track, 'title', 'Unknown')}**")
-        else:
-            player.queue.put(track)
-            await ctx.send(f"➕ Queued: **{getattr(track, 'title', 'Unknown')}**")
+        # Search
+        track, dbg = await self._search_youtube(ctx.guild, query)
+        await self._debug(ctx.guild, dbg)
+        if not track:
+            hint = "Ensure Lavalink v4 is up, port open, password correct, and YouTube cipher plugin installed/enabled."
+            return await ctx.send(box(f"Play failed: no results for query.\n{dbg}\nhint={hint}", lang="ini"))
+
+        # Queue / play
+        try:
+            player.requester_id = ctx.author.id
+            if not player.playing and not player.paused:
+                await player.play(track)
+                await player.announce(f"▶️ Now playing: **{getattr(track, 'title', 'Unknown')}**")
+            else:
+                player.queue.put(track)
+                await ctx.send(f"➕ Queued: **{getattr(track, 'title', 'Unknown')}**")
+        except Exception as e:
+            return await ctx.send(box(f"Play failed: {type(e).__name__}\nstate=playing:{player.playing} paused:{player.paused}\ntrack='{getattr(track,'title','?')}'", lang="ini"))
 
     @music.command()
     async def pause(self, ctx: redcommands.Context):
@@ -523,15 +511,13 @@ class AudioPlus(redcommands.Cog):
             return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
         await ctx.send(f"🎵 **{getattr(track, 'title', 'Unknown')}** [{fmt(pos)}/{fmt(dur)}]")
 
-    # ---------- queue ----------
+    # ----- queue -----
     @music.command()
     async def queue(self, ctx: redcommands.Context):
         player = await self._get_player(ctx, connect=False)
         if player.queue.is_empty:
             return await ctx.send("Queue is empty.")
-        lines = []
-        for i, t in enumerate(list(player.queue)[:15], start=1):
-            lines.append(f"{i:>2}. {getattr(t, 'title', 'Unknown')}")
+        lines = [f"{i:>2}. {getattr(t, 'title', 'Unknown')}" for i, t in enumerate(list(player.queue)[:15], start=1)]
         more = len(player.queue) - 15
         if more > 0:
             lines.append(f"... and {more} more")
