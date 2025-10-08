@@ -338,11 +338,11 @@ class LogPlus(redcommands.Cog):
     async def ex_list(self, ctx):
         m = await self.config.guild(ctx.guild).message.exempt_channels()
         s = await self.config.guild(ctx.guild).server.exempt_channels()
-        lines = [
-            "Message exempt:", *(f"- <#{i}>" for i in m) or ["- none"],
-            "",
-            "Server exempt:", *(f"- <#{i}>" for i in s) or ["- none"],
-        ]
+        lines = ["Message exempt:"]
+        lines.extend([f"- <#{i}>" for i in m] if m else ["- none"])
+        lines.append("")
+        lines.append("Server exempt:")
+        lines.extend([f"- <#{i}>" for i in s] if s else ["- none"])
         await ctx.send(box("\n".join(lines), lang="ini"))
 
     # overrides mgmt
