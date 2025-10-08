@@ -21,6 +21,9 @@ __red_end_user_data_statement__ = (
     "Admins may export or erase specific users via commands."
 )
 
+__author__ = "Code Copilot"
+__version__ = "0.2.1"
+
 DEFAULTS_GUILD = {
     "curve": "linear",
     "multiplier": 1.0,
@@ -82,7 +85,7 @@ def level_from_xp(xp: int, curve: str, mult: float, max_level: int) -> int:
 
 
 class LevelPlus(redcommands.Cog):
-    """Arcane-style leveling with messages/reactions/voice/slash XP, leaderboards, and CSV import."""
+    """Arcane-style leveling with messages/reactions/voice/slash XP, leaderboards, CSV import, and rich help."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -97,6 +100,11 @@ class LevelPlus(redcommands.Cog):
 
     def cog_unload(self) -> None:
         self.voice_tick.cancel()
+
+    # Help override so `[p]help LevelPlus` shows meta
+    def format_help_for_context(self, ctx: redcommands.Context) -> str:
+        base = super().format_help_for_context(ctx)
+        return f"{base}\nCog Version: {__version__} • Author: {__author__}"
 
     # ---------------- XP helpers ----------------
     async def _get_xp(self, guild: discord.Guild, user_id: int) -> int:
@@ -322,6 +330,54 @@ class LevelPlus(redcommands.Cog):
             f"Users tracked: {len(g['xp'])}",
         ]
         await ctx.send(box("\n".join(lines), lang="ini"))
+
+    @level.command(name="help")
+    async def level_help(self, ctx: redcommands.Context):
+        """Explains all commands quickly."""
+        p = ctx.clean_prefix
+        desc = (
+            f"**Quickstart**\n"
+            f"• Tracks messages, reactions, voice, slash. XP persists on leave.\n"
+            f"• `{p}level` → show config.  `{p}level diag` → probe perms/intents.\n\n"
+            f"**Viewing**\n"
+            f"• `{p}level show [@user]` — show XP/level\n"
+            f"• `{p}level leaderboard [N]` — top N\n\n"
+            f"**Formula**\n"
+            f"• `{p}level formula curve <linear|exponential|constant>`\n"
+            f"• `{p}level formula multiplier <0.1..10>`\n"
+            f"• `{p}level formula maxlevel <0=unlimited|N>`\n\n"
+            f"**Message XP**\n"
+            f"• `{p}level message enable [true|false]`\n"
+            f"• `{p}level message mode <perword|random|none>`\n"
+            f"• `{p}level message min <n>`  `{p}level message max <n>`  `{p}level message cooldown <sec>`\n\n"
+            f"**Reaction XP**\n"
+            f"• `{p}level reaction enable [true|false]`\n"
+            f"• `{p}level reaction awards <both|author|reactor|none>`\n"
+            f"• `{p}level reaction min <n>`  `max <n>`  `cooldown <sec>`\n\n"
+            f"**Voice XP**\n"
+            f"• `{p}level voice enable [true|false]`\n"
+            f"• `{p}level voice range <min> <max>`  `cooldown <sec>`\n"
+            f"• `{p}level voice minmembers <n>`  `antiafk [true|false]`\n\n"
+            f"**Restrictions**\n"
+            f"• `{p}level restrict nochannels add|remove|list|clear <#ch>`\n"
+            f"• `{p}level restrict noroles add|remove|list|clear <@role>`\n"
+            f"• `{p}level restrict toggles <threadxp|forumxp|textvoicexp|slashxp> [true|false]`\n\n"
+            f"**Level-up Message**\n"
+            f"• `{p}level levelup enable [true|false]`\n"
+            f"• `{p}level levelup channel [#ch|none]`\n"
+            f"• `{p}level levelup template <text with {{user.*}}>`, e.g. `{{user.mention}} L**{{user.level}}**`\n\n"
+            f"**XP Admin / Migration**\n"
+            f"• `{p}level xp set @user <amount>`  `{p}level xp add @user <amount>`\n"
+            f"• `{p}level xp exportcsv`  `{p}level xp importcsv` (attach/paste `user_id,xp`)\n\n"
+            f"**Diagnostics**\n"
+            f"• `{p}level diag` — checks perms, intents, reactions, sample awards\n"
+        )
+        embed = discord.Embed(title="LevelPlus — Help", description=desc, color=discord.Color.blurple())
+        embed.set_footer(text=f"v{__version__} • {__author__}")
+        try:
+            await ctx.send(embed=embed)
+        except discord.Forbidden:
+            await ctx.send(box(desc, lang="ini"))
 
     @level.command()
     async def diag(self, ctx: redcommands.Context):
