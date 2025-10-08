@@ -1,6 +1,7 @@
 # path: cogs/meowifier/__init__.py
 from __future__ import annotations
 
+import difflib
 import random
 import re
 import time
@@ -28,14 +29,17 @@ DEFAULTS_GUILD = {
     "exempt_users": [],
 }
 
-NOW_REGEX = re.compile(r"\b(now)\b", re.IGNORECASE)
+NOW_WORD = re.compile(r"\b(now)\b", re.IGNORECASE)
+MEOW_WORD = re.compile(r"\b(meow)\b", re.IGNORECASE)
+CODE_SPLIT = re.compile(r"(```[\s\S]*?```|`[^`]*?`)", re.MULTILINE)
+
 OWO_FACES = ["uwu", "owo", ">w<", "^w^", "x3", "~", "nya~", "(⁄˘⁄⁄ ω⁄ ⁄˘⁄)♡"]
 
 class Meowifier(redcommands.Cog):
     """
     Webhook-only meow/owo replacer:
-      • Always replace whole-word “now” → “meow” (case-preserving).
-      • With probability 1/N (default 1/1000), owo-ify the message.
+      • Always replace whole-word “now” → *meow* (case-preserving).
+      • With probability 1/N (default 1/1000), owo-ify; only changed parts are italicized.
       • Send via webhook (mimic user), then delete the original on success.
     """
 
@@ -43,10 +47,10 @@ class Meowifier(redcommands.Cog):
         self.bot: Red = bot
         self.config: Config = Config.get_conf(self, identifier=0x5E0F1A, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
-        self._cooldown: Dict[int, float] = {}           # user_id -> last_ts
-        self._wh_cache: Dict[int, discord.Webhook] = {} # base_channel_id -> webhook
+        self._cooldown: Dict[int, float] = {}            # user_id -> last_ts
+        self._wh_cache: Dict[int, discord.Webhook] = {}  # base_channel_id -> webhook
 
-    # ---------- transforms ----------
+    # ---------- transforms & marking ----------
     @staticmethod
     def _case_like(src: str, repl: str) -> str:
         if src.isupper():
@@ -56,15 +60,46 @@ class Meowifier(redcommands.Cog):
         return repl
 
     @staticmethod
-    def _meow_replace(text: str) -> str:
-        return NOW_REGEX.sub(lambda m: Meowifier._case_like(m.group(1), "meow"), text)
+    def _replace_now(text: str, italic: bool) -> str:
+        def repl(m: re.Match) -> str:
+            s = Meowifier._case_like(m.group(1), "meow")
+            return f"*{s}*" if italic else s
+        return NOW_WORD.sub(repl, text)
+
+    @staticmethod
+    def _ensure_meow_italic(text: str) -> str:
+        # Only wrap bare 'meow' not already surrounded by *
+        def repl(m: re.Match) -> str:
+            start, end = m.span(1)
+            before = text[start - 1] if start - 1 >= 0 else ""
+            after = text[end] if end < len(text) else ""
+            if before == "*" and after == "*":
+                return m.group(0)  # already italic
+            return f"*{Meowifier._case_like(m.group(1), 'meow')}*"
+        # Run using a callable that peeks; re.sub can't change the same string in-place reliably,
+        # so we build incrementally with SequenceMatcher to be safe.
+        parts: List[str] = []
+        i = 0
+        for m in MEOW_WORD.finditer(text):
+            start, end = m.span()
+            parts.append(text[i:start])
+            # same logic as above:
+            s_start, s_end = m.span(1)
+            before = text[s_start - 1] if s_start - 1 >= 0 else ""
+            after = text[s_end] if s_end < len(text) else ""
+            if before == "*" and after == "*":
+                parts.append(m.group(0))
+            else:
+                parts.append(f"*{Meowifier._case_like(m.group(1), 'meow')}*")
+            i = end
+        parts.append(text[i:])
+        return "".join(parts)
 
     @staticmethod
     def _split_code_segments(text: str) -> List[Tuple[str, bool]]:
         segs: List[Tuple[str, bool]] = []
-        pat = re.compile(r"(```[\s\S]*?```|`[^`]*?`)", re.MULTILINE)
         i = 0
-        for m in pat.finditer(text):
+        for m in CODE_SPLIT.finditer(text):
             if m.start() > i:
                 segs.append((text[i:m.start()], False))
             segs.append((m.group(0), True))
@@ -78,7 +113,8 @@ class Meowifier(redcommands.Cog):
         return f"{word[0]}-{word}" if len(word) > 2 and word[0].isalpha() else word
 
     @staticmethod
-    def _owoify(text: str) -> str:
+    def _owoify_plain(text: str) -> str:
+        # identical to before, but without italics logic
         def tr(s: str) -> str:
             s = re.sub(r"[rl]", "w", s)
             s = re.sub(r"[RL]", "W", s)
@@ -96,6 +132,39 @@ class Meowifier(redcommands.Cog):
                 pass
             return s
         return "".join(seg if is_code else tr(seg) for seg, is_code in Meowifier._split_code_segments(text))
+
+    @staticmethod
+    def _italicize_changes(original: str, transformed: str) -> str:
+        """Mark only changed spans with *…* using a char-level diff (outside code blocks)."""
+        out: List[str] = []
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
+            if tag == "equal":
+                out.append(transformed[j1:j2])
+            else:  # replace/insert/delete
+                # Only transformed text is visible; delete shows as nothing on output
+                seg = transformed[j1:j2]
+                if seg:
+                    out.append(f"*{seg}*")
+        return "".join(out)
+
+    def _render_message(self, raw: str, apply_owo: bool) -> str:
+        """Process text with per-segment handling and italics on changes."""
+        result: List[str] = []
+        for seg, is_code in self._split_code_segments(raw):
+            if is_code:
+                result.append(seg)
+                continue
+            if not apply_owo:
+                # just now->*meow*
+                result.append(self._replace_now(seg, italic=True))
+                continue
+            # owo path: compute meow-plain, then diff italics, then ensure meow italic
+            meow_plain = self._replace_now(seg, italic=False)
+            owo = self._owoify_plain(meow_plain)
+            marked = self._italicize_changes(meow_plain, owo)
+            marked = self._ensure_meow_italic(marked)
+            result.append(marked)
+        return "".join(result)
 
     # ---------- gating ----------
     @staticmethod
@@ -137,7 +206,7 @@ class Meowifier(redcommands.Cog):
         except Exception:
             return max(1, int(conf["one_in"]))
 
-    # ---------- webhooks ----------
+    # ---------- webhook helpers ----------
     async def _ensure_webhook(self, channel: discord.abc.Messageable) -> Optional[discord.Webhook]:
         base_ch: Optional[discord.TextChannel] = None
         if isinstance(channel, discord.Thread):
@@ -177,7 +246,6 @@ class Meowifier(redcommands.Cog):
         files: List[discord.File],
         wait: bool,
     ):
-        """Why: avoid passing files=None on some discord.py builds that explode."""
         kwargs = {
             "content": content or "(meow)",
             "username": author.display_name[:80],
@@ -187,7 +255,7 @@ class Meowifier(redcommands.Cog):
         }
         if isinstance(channel, discord.Thread):
             kwargs["thread"] = channel
-        if files:  # crucial fix
+        if files:  # crucial: don't pass None
             kwargs["files"] = files
         return await hook.send(**kwargs)
 
@@ -202,7 +270,7 @@ class Meowifier(redcommands.Cog):
             f"enabled={g['enabled']} one_in=1/{g['one_in']} cooldown={g['cooldown_seconds']}s",
             f"channels={'all' if not chs else ', '.join(f'<#{c}>' for c in chs)}",
             f"exempt_users={len(g['exempt_users'])} exempt_roles={len(g['exempt_roles'])} user_overrides={len(g['user_probs'])}",
-            "mode=webhook-only • always-meow=True",
+            "mode=webhook-only • now→*meow* always • owo=chanced",
         ]
         await ctx.send(box("\n".join(lines), lang="ini"))
 
@@ -213,9 +281,9 @@ class Meowifier(redcommands.Cog):
         e.add_field(
             name="Quickstart",
             value=(
-                f"1) Grant **Manage Messages** + **Manage Webhooks**.\n"
+                f"1) Needs **Manage Messages** + **Manage Webhooks**.\n"
                 f"2) `{p}meow enable` (or `{p}meow enable #channel`).\n"
-                f"3) `{p}meow onein 1000` (owo rarity). `now`→`meow` is always on.\n"
+                f"3) `{p}meow onein 1000` (owo rarity). `now`→`*meow*` is always on.\n"
                 f"4) Type a message, then `{p}meow test`."
             ),
             inline=False,
@@ -370,8 +438,9 @@ class Meowifier(redcommands.Cog):
 
     @meow.command(name="preview")
     async def meow_preview(self, ctx: redcommands.Context, *, text: str) -> None:
-        s = self._meow_replace(text)
-        await ctx.send(box(f"MEOW: {s}\nOWO:  {self._owoify(s)}", lang="ini"))
+        meow_only = self._render_message(text, apply_owo=False)
+        meow_owo = self._render_message(text, apply_owo=True)
+        await ctx.send(box(f"MEOW: {meow_only}\nOWO:  {meow_owo}", lang="ini"))
 
     @meow.command(name="diag")
     async def meow_diag(self, ctx: redcommands.Context) -> None:
@@ -387,8 +456,7 @@ class Meowifier(redcommands.Cog):
 
     @meow.command(name="test")
     async def meow_test(self, ctx: redcommands.Context) -> None:
-        """Force-owoify your last message here via webhook and print concise debug."""
-        # find your last eligible message
+        """Force-owoify your last message here via webhook; changed parts are italicized."""
         try:
             prefixes = await self.bot.get_valid_prefixes(ctx.guild)
         except Exception:
@@ -403,7 +471,7 @@ class Meowifier(redcommands.Cog):
         perms = ch.permissions_for(ctx.guild.me) if isinstance(ch, (discord.TextChannel, discord.Thread)) else None  # type: ignore
         lines = [
             f"channel={getattr(ch, 'id', None)} type={ch.__class__.__name__}",
-            f"perms: send={getattr(perms,'send_messages',None)} manage_messages={getattr(perms,'manage_messages',None)} manage_webhooks={getattr(perms,'manage_webhooks',None)} attach_files={getattr(perms,'attach_files',None)}",
+            f"perms: send={getattr(perms,'send_messages',None)} manage_messages={getattr(perms,'manage_messages',None)} manage_webhooks={getattr(perms,'manage_webhooks',None)}",
             f"last_msg={'found' if last else 'not found'}",
         ]
         if not last:
@@ -415,7 +483,8 @@ class Meowifier(redcommands.Cog):
             return await ctx.send(box("\n".join(lines), lang="ini"))
         lines.append(f"hook: {hook.id}:{hook.name}")
 
-        content = self._owoify(self._meow_replace(last.content or ""))
+        # Always meow; force owo in test to visualize italics for changes
+        content = self._render_message(last.content or "", apply_owo=True)
 
         files: List[discord.File] = []
         for a in last.attachments[:5]:
@@ -424,7 +493,6 @@ class Meowifier(redcommands.Cog):
             except Exception as e:
                 lines.append(f"attach_fail:{a.id}:{type(e).__name__}")
 
-        # send (wait=True to surface HTTP errors)
         try:
             await self._send_via_webhook(hook, channel=ch, author=last.author, content=content, files=files, wait=True)
             lines.append("send: OK")
@@ -452,10 +520,10 @@ class Meowifier(redcommands.Cog):
         if cd:
             self._cooldown[message.author.id] = time.time()
 
-        content = self._meow_replace(message.content or "")
+        # Always meow; owo probabilistic, with italics on changed parts
         n = self._one_in(message.author, conf)
-        if n <= 1 or random.randrange(n) == 0:
-            content = self._owoify(content)
+        apply_owo = (n <= 1) or (random.randrange(n) == 0)
+        content = self._render_message(message.content or "", apply_owo=apply_owo)
 
         if (content.strip() == (message.content or "").strip()) and not message.attachments:
             return
@@ -474,7 +542,7 @@ class Meowifier(redcommands.Cog):
         try:
             await self._send_via_webhook(hook, channel=message.channel, author=message.author, content=content, files=files, wait=False)
         except Exception:
-            self._wh_cache.pop(getattr(message.channel, "id", 0), None)  # refresh next time
+            self._wh_cache.pop(getattr(message.channel, "id", 0), None)
             return
 
         try:
