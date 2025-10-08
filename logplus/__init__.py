@@ -172,8 +172,7 @@ class LogPlus(redcommands.Cog):
             f"Voice: join={g['voice']['join']} move={g['voice']['move']} leave={g['voice']['leave']} mute={g['voice']['mute']} deaf={g['voice']['deaf']} video={g['voice']['video']} stream={g['voice']['stream']}",
             f"Sched: create={g['sched']['create']} update={g['sched']['update']} delete={g['sched']['delete']} user_add={g['sched']['user_add']} user_remove={g['sched']['user_remove']}"
         ]
-        await ctx.send(box("
-".join(lines), lang="ini"))
+        await ctx.send(box("\n".join(lines), lang="ini"))
 
     @logplus.command()
     async def channel(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None):
