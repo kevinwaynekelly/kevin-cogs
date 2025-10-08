@@ -15,7 +15,7 @@ from discord.ext import commands, tasks
 from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
-from redbot.core.utils.chat_formatting import box, humanize_list
+from redbot.core.utils.chat_formatting import box
 
 __red_end_user_data_statement__ = (
     "This cog stores per-guild leveling settings and per-user XP totals. "
@@ -25,52 +25,27 @@ __red_end_user_data_statement__ = (
 
 # ---------------------------- defaults ----------------------------
 DEFAULTS_GUILD = {
-    "curve": "linear",          # linear | exponential | constant
-    "multiplier": 1.0,          # scales thresholds
-    "max_level": 0,             # 0 => unlimited
-    # Message XP
-    "message": {
-        "enabled": True,
-        "mode": "perword",      # none|random|perword
-        "min": 1,
-        "max": 1,
-        "cooldown": 60
-    },
-    # Reaction XP
-    "reaction": {
-        "enabled": True,
-        "awards": "both",       # none|both|author|reactor
-        "min": 25,
-        "max": 25,
-        "cooldown": 300
-    },
-    # Voice XP
-    "voice": {
-        "enabled": True,
-        "min": 15,
-        "max": 40,
-        "cooldown": 180,        # tick seconds
-        "min_members": 1,
-        "anti_afk": False       # skip muted/deaf/self_video off doesn't matter
-    },
-    # Restrictions / toggles
+    "curve": "linear",
+    "multiplier": 1.0,
+    "max_level": 0,  # 0 => unlimited
+    "message": {"enabled": True, "mode": "perword", "min": 1, "max": 1, "cooldown": 60},
+    "reaction": {"enabled": True, "awards": "both", "min": 25, "max": 25, "cooldown": 300},
+    "voice": {"enabled": True, "min": 15, "max": 40, "cooldown": 180, "min_members": 1, "anti_afk": False},
     "restrictions": {
-        "no_channels": [],      # channel IDs
-        "no_roles": [],         # role IDs
+        "no_channels": [],
+        "no_roles": [],
         "thread_xp": True,
         "forum_xp": True,
         "text_in_voice_xp": True,
-        "slash_command_xp": True
+        "slash_command_xp": True,
     },
-    # Level-up message
     "levelup": {
         "enabled": True,
-        "channel_id": None,     # default: current channel
+        "channel_id": None,
         "template": "{user.mention} has reached level **{user.level}**! GG!",
-        "image": False
+        "image": False,
     },
-    # Persistent XP store
-    "xp": {}                    # {user_id(str): int}
+    "xp": {},  # {user_id(str): int}
 }
 
 WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
@@ -78,25 +53,17 @@ WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
 
 # ---------------------------- util: math ----------------------------
 def level_thresholds(curve: str, mult: float, max_level: int) -> List[int]:
-    """Cumulative XP required to reach each level (index = level). Index 0 = 0."""
     curve = (curve or "linear").lower()
-    # per-level cost function
+
     def per_level_cost(lvl: int) -> float:
         if curve == "constant":
-            base = 100.0
-            return base * mult
+            return 100.0 * mult
         if curve == "exponential":
-            base = 100.0
-            factor = 1.25
-            return base * (factor ** (lvl - 1)) * mult
-        # linear (increasing)
-        base = 100.0
-        step = 20.0
-        return (base + step * (lvl - 1)) * mult
+            return 100.0 * (1.25 ** (lvl - 1)) * mult
+        return (100.0 + 20.0 * (lvl - 1)) * mult  # linear
 
-    cap = max(1, max_level) if max_level > 0 else 200  # sensible upper precompute
-    out = [0]
-    total = 0.0
+    cap = max(1, max_level) if max_level > 0 else 200
+    out, total = [0], 0.0
     for lvl in range(1, cap + 1):
         total += per_level_cost(lvl)
         out.append(int(round(total)))
@@ -105,7 +72,6 @@ def level_thresholds(curve: str, mult: float, max_level: int) -> List[int]:
 
 def level_from_xp(xp: int, curve: str, mult: float, max_level: int) -> int:
     th = level_thresholds(curve, mult, max_level)
-    # binary search
     lo, hi = 0, len(th) - 1
     while lo <= hi:
         mid = (lo + hi) // 2
@@ -113,10 +79,10 @@ def level_from_xp(xp: int, curve: str, mult: float, max_level: int) -> int:
             lo = mid + 1
         else:
             hi = mid - 1
-    level = max(0, hi)
+    lvl = max(0, hi)
     if max_level > 0:
-        level = min(level, max_level)
-    return level
+        lvl = min(lvl, max_level)
+    return lvl
 
 
 # ---------------------------- cog ----------------------------
@@ -125,15 +91,14 @@ class LevelPlus(redcommands.Cog):
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
-        self.config: Config = Config.get_conf(self, identifier=0xL3V3LPL, force_registration=True)
+        # fixed: use a real hex literal
+        self.config: Config = Config.get_conf(self, identifier=0x1EAF01, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
 
-        # cooldown caches: (guild_id, user_id) -> last_ts
         self._last_msg: Dict[Tuple[int, int], float] = {}
         self._last_rxn: Dict[Tuple[int, int], float] = {}
         self._last_voice: Dict[Tuple[int, int], float] = {}
 
-        # voice ticker
         self.voice_tick.start()
 
     def cog_unload(self) -> None:
@@ -150,9 +115,9 @@ class LevelPlus(redcommands.Cog):
         await self.config.guild(guild).xp.set(data)
 
     async def _add_xp(self, guild: discord.Guild, user: discord.abc.User, amount: int) -> Tuple[int, int]:
-        """Add XP and return (old_level, new_level)."""
         if amount <= 0:
-            return (await self.current_level(guild, user.id), await self.current_level(guild, user.id))
+            lvl = await self.current_level(guild, user.id)
+            return lvl, lvl
         gconf = await self.config.guild(guild).all()
         data = gconf["xp"]
         old_xp = int(data.get(str(user.id), 0))
@@ -182,34 +147,24 @@ class LevelPlus(redcommands.Cog):
             if not isinstance(ch, discord.TextChannel):
                 ch = None
         if not ch:
-            # best effort: user's current text channel isn't directly known; skip unless in recent context
-            # We'll try system channel else silently ignore.
             ch = guild.system_channel
         if not ch:
             return
         template = conf.get("template", "{user.mention} leveled up to **{user.level}**!")
-        user_level = await self.current_level(guild, member.id)
+        u = type("U", (), {
+            "mention": member.mention,
+            "name": member.display_name,
+            "level": await self.current_level(guild, member.id),
+            "xp": await self._get_xp(guild, member.id),
+        })()
         try:
-            msg = template.format(
-                user=type("U", (), {
-                    "mention": member.mention,
-                    "name": member.display_name,
-                    "level": user_level,
-                    "xp": await self._get_xp(guild, member.id),
-                })()
-            )
+            msg = template.format(user=u)
         except Exception:
-            msg = f"{member.mention} has reached level **{user_level}**!"
+            msg = f"{member.mention} has reached level **{u.level}**!"
         try:
             await ch.send(msg)
         except discord.Forbidden:
             pass
-
-    def _blocked(self, guild: discord.Guild, member: discord.Member, channel: discord.abc.GuildChannel) -> bool:
-        """Restrictions check."""
-        r = self.config.guild(guild).restrictions
-        # NOTE: ConfigProxy; we need to await to access values. This helper is not async, so we only use IDs cached in handlers.
-        return False  # only used in async paths
 
     # ---------------------- listeners: message ----------------------
     @commands.Cog.listener()
@@ -221,8 +176,6 @@ class LevelPlus(redcommands.Cog):
         gconf = await self.config.guild(guild).all()
         if not gconf["message"]["enabled"]:
             return
-
-        # restrictions
         if message.channel.id in set(gconf["restrictions"]["no_channels"]):
             return
         role_ids = {r.id for r in getattr(member, "roles", [])}
@@ -232,10 +185,7 @@ class LevelPlus(redcommands.Cog):
             return
         if getattr(message.channel, "is_forum", False) and not gconf["restrictions"]["forum_xp"]:
             return
-        if hasattr(message.channel, "type") and str(message.channel.type) == "text_in_voice" and not gconf["restrictions"]["text_in_voice_xp"]:
-            return
 
-        # cooldown
         key = (guild.id, member.id)
         cd = int(gconf["message"]["cooldown"])
         last = self._last_msg.get(key, 0.0)
@@ -246,12 +196,11 @@ class LevelPlus(redcommands.Cog):
         mode = (gconf["message"]["mode"] or "perword").lower()
         msg_min = int(gconf["message"]["min"])
         msg_max = max(int(gconf["message"]["max"]), msg_min)
-        amount = 0
         if mode == "none":
             return
         elif mode == "random":
             amount = random.randint(msg_min, msg_max)
-        else:  # perword
+        else:
             words = len(WORD_RE.findall(message.content or ""))
             per = max(1, msg_min)
             amount = min(words * per, msg_max if msg_max > 0 else words * per)
@@ -260,7 +209,7 @@ class LevelPlus(redcommands.Cog):
         await self.maybe_announce_levelup(guild, member, old, new)
 
     # ---------------------- listeners: reactions ----------------------
-    @commands.Cog.listener()
+    @commands.Cog.listener())
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         guild = self.bot.get_guild(payload.guild_id) if payload.guild_id else None
         if not guild:
@@ -273,11 +222,9 @@ class LevelPlus(redcommands.Cog):
             if channel.id in set(gconf["restrictions"]["no_channels"]):
                 return
 
-        # base award value
         rx_min = int(gconf["reaction"]["min"]); rx_max = max(int(gconf["reaction"]["max"]), rx_min)
         value = random.randint(rx_min, rx_max)
 
-        # reactor cooldown
         reactor = guild.get_member(payload.user_id)
         if reactor and not reactor.bot:
             key_r = (guild.id, reactor.id)
@@ -287,7 +234,6 @@ class LevelPlus(redcommands.Cog):
             else:
                 self._last_rxn[key_r] = time.time()
 
-        # fetch message to get author if needed
         author = None
         try:
             if isinstance(channel, (discord.TextChannel, discord.Thread)):
@@ -304,7 +250,6 @@ class LevelPlus(redcommands.Cog):
             targets.append(author)
 
         for m in targets:
-            # skip blocked roles
             role_ids = {r.id for r in getattr(m, "roles", [])}
             if role_ids.intersection(set(gconf["restrictions"]["no_roles"])):
                 continue
@@ -314,7 +259,6 @@ class LevelPlus(redcommands.Cog):
     # ---------------------- voice ticker ----------------------
     @tasks.loop(seconds=20.0)
     async def voice_tick(self):
-        """Runs frequently and awards on each member's configured cooldown boundary."""
         await self.bot.wait_until_red_ready()
         for guild in list(self.bot.guilds):
             try:
@@ -325,13 +269,11 @@ class LevelPlus(redcommands.Cog):
             if not vconf["enabled"]:
                 continue
             tick = max(15, int(vconf["cooldown"]))
-            # Iterate voice channels
             for vc in guild.voice_channels:
                 members = [m for m in vc.members if not m.bot]
                 if len(members) < int(vconf["min_members"]):
                     continue
                 for m in members:
-                    # anti AFK
                     if vconf["anti_afk"]:
                         vs = m.voice
                         if not vs or vs.afk or vs.self_mute or vs.mute or vs.self_deaf or vs.deaf:
@@ -358,7 +300,6 @@ class LevelPlus(redcommands.Cog):
         gconf = await self.config.guild(guild).all()
         if not gconf["restrictions"]["slash_command_xp"]:
             return
-        # give small flat amount, cooldown reuse message cooldown
         key = (guild.id, interaction.user.id)
         cd = int(gconf["message"]["cooldown"])
         if cd and time.time() - self._last_msg.get(key, 0.0) < cd:
@@ -387,17 +328,46 @@ class LevelPlus(redcommands.Cog):
 
     @level.command()
     async def diag(self, ctx: redcommands.Context):
-        """Quick self-check."""
-        perms = ctx.channel.permissions_for(ctx.guild.me)  # type: ignore
+        """Deep self-check: perms, intents, reaction probe, simulated awards."""
+        g = await self.config.guild(ctx.guild).all()
+        ch = ctx.channel
+        perms = ch.permissions_for(ctx.guild.me) if isinstance(ch, (discord.TextChannel, discord.Thread)) else None  # type: ignore
+        intents = self.bot.intents
+
+        # reaction probe
+        probe_result = "skip"
+        if isinstance(ch, (discord.TextChannel, discord.Thread)):
+            try:
+                m = await ctx.send("LevelPlus diag probe…")
+                try:
+                    await m.add_reaction("✅")
+                    probe_result = "OK"
+                except Exception as e:
+                    probe_result = f"add_reaction FAIL: {type(e).__name__}"
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+            except Exception as e:
+                probe_result = f"send FAIL: {type(e).__name__}"
+
+        # simulate awards (no state change)
+        msg_words = 12
+        msg_award = (msg_words * max(1, int(g["message"]["min"]))) if g["message"]["mode"] == "perword" else random.randint(int(g["message"]["min"]), max(int(g["message"]["max"]), int(g["message"]["min"]))) if g["message"]["mode"] == "random" else 0
+        rx_award = random.randint(int(g["reaction"]["min"]), max(int(g["reaction"]["max"]), int(g["reaction"]["min"]))) if g["reaction"]["enabled"] else 0
+        voice_award = random.randint(int(g["voice"]["min"]), max(int(g["voice"]["max"]), int(g["voice"]["min"]))) if g["voice"]["enabled"] else 0
+
         lines = [
-            f"perms: send={perms.send_messages} attach={perms.attach_files} embed={perms.embed_links} add_reactions={perms.add_reactions}",
-            "OK"
+            f"perms(send={getattr(perms,'send_messages',None)} embed={getattr(perms,'embed_links',None)} add_rxn={getattr(perms,'add_reactions',None)} read_hist={getattr(perms,'read_message_history',None)})",
+            f"intents(voice_states={intents.voice_states} message_content={intents.message_content})",
+            f"reaction_probe={probe_result}",
+            f"sim_awards(message≈{msg_award}, reaction≈{rx_award}, voice_tick≈{voice_award})",
+            "store_rw=OK" if isinstance(g["xp"], dict) else "store_rw=FAIL",
         ]
         await ctx.send(box("\n".join(lines), lang="ini"))
 
     @level.command()
     async def show(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
-        """Show a user's XP/level."""
         m = member or ctx.author
         xp = await self._get_xp(ctx.guild, m.id)
         g = await self.config.guild(ctx.guild).all()
@@ -406,7 +376,6 @@ class LevelPlus(redcommands.Cog):
 
     @level.command()
     async def leaderboard(self, ctx: redcommands.Context, top: int = 10):
-        """Top members by XP."""
         g = await self.config.guild(ctx.guild).all()
         items = sorted(((int(uid), xp) for uid, xp in g["xp"].items()), key=lambda t: t[1], reverse=True)[:max(1, min(50, top))]
         if not items:
@@ -421,8 +390,7 @@ class LevelPlus(redcommands.Cog):
     # ---- admin: formula
     @level.group(name="formula")
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def formula(self, ctx: redcommands.Context):
-        """Configure leveling curve."""
+    async def formula(self, ctx: redcommands.Context): ...
 
     @formula.command(name="curve")
     async def formula_curve(self, ctx: redcommands.Context, curve: str):
@@ -642,10 +610,9 @@ class LevelPlus(redcommands.Cog):
     @xpgrp.command(name="importcsv")
     async def xp_import_csv(self, ctx: redcommands.Context, *, raw: str = ""):
         """
-        Import total XP from Arcane (or any source).
-        Usage:
-          - Attach a CSV (columns: user_id,xp), or
-          - Paste lines: `user_id,xp` (one per line).
+        Import total XP (e.g., from Arcane). Accepts:
+        - Attached CSV with columns: user_id,xp
+        - Pasted lines: `user_id,xp`
         """
         content = ""
         if ctx.message.attachments:
@@ -659,9 +626,8 @@ class LevelPlus(redcommands.Cog):
         parsed: List[Tuple[int, int]] = []
         for line in io.StringIO(content):
             line = line.strip()
-            if not line or line.lower().startswith("user_id"):  # header
+            if not line or line.lower().startswith("user_id"):
                 continue
-            # allow "mention,xp" or "id,xp"
             try:
                 left, right = [p.strip() for p in line.split(",", 1)]
             except ValueError:
