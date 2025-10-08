@@ -376,8 +376,7 @@ class LogPlus(redcommands.Cog):
         if not data:
             return await ctx.send("No overrides set.")
         lines = [f"<#{k}> → <#{v}>" for k, v in data.items()]
-        await ctx.send(box("
-".join(lines)))
+        await ctx.send(box("\n".join(lines), lang="ini"))
 
     # ---------- listeners ----------
     # messages
