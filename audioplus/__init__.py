@@ -56,7 +56,7 @@ class AudioPlus(commands.Cog):
     """Lavalink v4 music using Wavelink. Set node: `[p]audio setnode`."""
 
     default_global = {
-        "host": "127.0.0.1",
+        "host": "10.10.1.200",
         "port": 2333,
         "password": "youshallnotpass",
         "secure": False,
@@ -65,7 +65,7 @@ class AudioPlus(commands.Cog):
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
-        self.config: Config = Config.get_conf(self, identifier=0xAUDIOFAB, force_registration=True)
+        self.config: Config = Config.get_conf(self, identifier=0xA10DEFAB, force_registration=True)
         self.config.register_global(**self.default_global)
 
     # ---- lifecycle ----
