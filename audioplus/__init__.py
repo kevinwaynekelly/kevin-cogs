@@ -43,7 +43,6 @@ class LoopMode:
 
 
 class MusicPlayer(wavelink.Player):
-    """Simple queueing player with loop modes."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.queue: wavelink.Queue[wavelink.Playable] = wavelink.Queue()
@@ -78,7 +77,7 @@ class AudioPlus(redcommands.Cog):
         self._wl_api: str = "unset"
         self._last_error: Optional[str] = None
         self._autoconnect_task: Optional[asyncio.Task] = None
-        self._did_global_connect: bool = False  # WHY: only one Lavalink node for the entire process.
+        self._did_global_connect: bool = False  # single node per process
 
     # ---------- debug ----------
     async def _debug(self, guild: discord.Guild, msg: str):
@@ -99,7 +98,6 @@ class AudioPlus(redcommands.Cog):
             await self.bot.wait_until_ready()
             if self._did_global_connect:
                 return
-            # Find one guild to source node settings; connect ONCE.
             for guild in self.bot.guilds:
                 g = await self.config.guild(guild).all()
                 if g["node"]["autoconnect"] and g["node"]["host"]:
@@ -137,11 +135,10 @@ class AudioPlus(redcommands.Cog):
 
     @staticmethod
     def _node_connected(node: "wavelink.Node") -> bool:
-        # WHY: WL 3.4.x exposes `connected`; some snippets still use `is_connected`.
+        # WHY: WL 3.4.x uses `connected`; older code sometimes checked `is_connected`.
         return bool(getattr(node, "connected", False) or getattr(node, "is_connected", False))
 
     def _iter_nodes(self) -> Iterable["wavelink.Node"]:
-        # Merge Pool/NodePool and dedupe by stable key (uri or object id).
         seen: set[Any] = set()
         ap = self._apis()
 
@@ -153,10 +150,7 @@ class AudioPlus(redcommands.Cog):
             else:
                 return
             for n in it:
-                try:
-                    key = getattr(n, "uri", None) or getattr(n, "rest_uri", None) or id(n)
-                except Exception:
-                    key = id(n)
+                key = getattr(n, "uri", None) or getattr(n, "rest_uri", None) or id(n)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -183,7 +177,6 @@ class AudioPlus(redcommands.Cog):
         return None
 
     async def _close_all_nodes(self) -> int:
-        # Best-effort close + clear both WL storages.
         count = 0
         for n in list(self._iter_nodes()):
             try:
@@ -195,34 +188,41 @@ class AudioPlus(redcommands.Cog):
                 count += 1
             except Exception:
                 pass
-        # Clear containers (WL keeps class-level registries).
         for obj_name in ("Pool", "NodePool"):
             try:
                 cls = getattr(wavelink, obj_name, None)
                 store = getattr(cls, "nodes", None)
                 if isinstance(store, dict):
                     store.clear()
-                elif isinstance(store, list):
-                    store.clear()
-                elif isinstance(store, set):
+                elif isinstance(store, (list, set)):
                     store.clear()
             except Exception:
                 pass
         return count
 
     async def _connect_node(self, guild: discord.Guild) -> str:
-        # Singleton: if any node exists, never create more.
         nodes_existing = list(self._iter_nodes())
-        if nodes_existing:
-            if any(self._node_connected(n) for n in nodes_existing):
-                self._wl_api = self._wl_api or "already-connected"
-                self._last_error = None
-                return self._wl_api
-            # Nodes exist but disconnected; don't pile more on top.
-            await self._debug(guild, f"node.exists count={len(nodes_existing)} connected=False; not creating duplicates")
-            self._wl_api = self._wl_api or "existing-nodes"
+        if nodes_existing and any(self._node_connected(n) for n in nodes_existing):
+            self._wl_api = self._wl_api or "already-connected"
+            self._last_error = None
             return self._wl_api
 
+        # If nodes exist but none are connected → actively connect them (no duplicates).
+        if nodes_existing and not any(self._node_connected(n) for n in nodes_existing):
+            ap = self._apis()
+            try:
+                if ap["has_Pool"] and ap["has_Pool_connect"]:
+                    await self._debug(guild, f"node.reconnect existing={len(nodes_existing)} via Pool.connect")
+                    await wavelink.Pool.connect(client=self.bot, nodes=list(nodes_existing))  # type: ignore[attr-defined]
+                    self._wl_api = "Pool.connect(existing)"
+                    self._last_error = None
+                    return self._wl_api
+            except Exception as e:
+                await self._debug(guild, f"Pool.connect(existing) failed: {type(e).__name__}: {e}. Purging nodes.")
+                await self._close_all_nodes()
+                nodes_existing = []
+
+        # Fresh connect path (single node).
         g = await self.config.guild(guild).all()
         host, port, pw, https = g["node"]["host"], g["node"]["port"], g["node"]["password"], g["node"]["https"]
         if not host:
@@ -450,7 +450,6 @@ class AudioPlus(redcommands.Cog):
 
     @nodegrp.command(name="reset")
     async def node_reset(self, ctx: redcommands.Context, reconnect: Optional[bool] = True):
-        # WHY: purge duplicates across pools; optionally reconnect once.
         n = await self._close_all_nodes()
         self._wl_api = "unset"
         self._last_error = None
