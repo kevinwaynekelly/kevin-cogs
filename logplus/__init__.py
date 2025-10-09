@@ -1155,7 +1155,7 @@ class LogPlus(redcommands.Cog):
         await self._send(guild, e, payload.channel_id)
 
     # server structure (also snapshotting)
-    @commands.Cog.listener())
+    @commands.Cog.listener()
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
         g = await self.config.guild(channel.guild).all()
         if g["server"]["channel_create"] and not await self._is_exempt(channel.guild, channel.id, "server"):
