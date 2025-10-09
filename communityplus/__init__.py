@@ -125,7 +125,6 @@ class CommunityPlus(redcommands.Cog):
             parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
         if minutes or not parts:
             parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}" if minutes else "less than a minute")
-        # keep it compact; at most two largest units
         return " ".join(parts[:2])
 
     # ------------------------ embeds ------------------------
@@ -141,6 +140,57 @@ class CommunityPlus(redcommands.Cog):
         e = discord.Embed(title=title, description=desc, color=color, timestamp=self._utcnow())
         if footer:
             e.set_footer(text=footer)
+        return e)
+
+    # ---------- status ----------
+    async def _status_embed(self, guild: discord.Guild) -> discord.Embed:
+        g = await self.config.guild(guild).all()
+        ar = guild.get_role(g["autorole"]["role_id"]).mention if g["autorole"]["role_id"] and guild.get_role(g["autorole"]["role_id"]) else "not set"
+        sticky_ign = [guild.get_role(r).mention for r in g["sticky"]["ignore"] if guild.get_role(r)] or ["none"]
+        welcome_ch = guild.get_channel(g["welcome"]["channel_id"]).mention if g["welcome"]["channel_id"] and guild.get_channel(g["welcome"]["channel_id"]) else "not set"
+        cya_ch = guild.get_channel(g["cya"]["channel_id"]).mention if g["cya"]["channel_id"] and guild.get_channel(g["cya"]["channel_id"]) else "not set"
+
+        e = discord.Embed(title="CommunityPlus — Status", color=discord.Color.blurple(), timestamp=self._utcnow())
+        e.add_field(
+            name="Core",
+            value=box(
+                f"embeds.compact = {g['embeds']['compact']}\n"
+                f"seen.enabled   = {g['seen']['enabled']}",
+                lang="ini",
+            ),
+            inline=False,
+        )
+        e.add_field(
+            name="Autorole",
+            value=box(f"enabled = {g['autorole']['enabled']}\nrole    = {ar}", lang="ini"),
+            inline=True,
+        )
+        e.add_field(
+            name="Sticky Roles",
+            value=box(f"enabled = {g['sticky']['enabled']}\nignore  = {', '.join(sticky_ign)}", lang="ini"),
+            inline=True,
+        )
+        e.add_field(
+            name="Welcome",
+            value=box(f"enabled = {g['welcome']['enabled']}\nchannel = {welcome_ch}", lang="ini"),
+            inline=True,
+        )
+        e.add_field(
+            name="Cya",
+            value=box(f"enabled = {g['cya']['enabled']}\nchannel = {cya_ch}", lang="ini"),
+            inline=True,
+        )
+        e.add_field(
+            name="Solo VC",
+            value=box(
+                f"enabled = {g['vcsolo']['enabled']}\n"
+                f"idle    = {g['vcsolo']['idle_seconds']}s\n"
+                f"dm_notify = {g['vcsolo']['dm_notify']}",
+                lang="ini",
+            ),
+            inline=False,
+        )
+        e.set_footer(text="Use [p]com help for commands.")
         return e
 
     @staticmethod
@@ -272,44 +322,57 @@ class CommunityPlus(redcommands.Cog):
         await self.config.member(after).seen.set(data)
 
     # ------------------------ commands root ------------------------
-    @redcommands.group(name="cs", invoke_without_command=True)
+    @redcommands.group(name="com", invoke_without_command=True)
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def cs(self, ctx: redcommands.Context) -> None:
-        g = await self.config.guild(ctx.guild).all()
-        ar = ctx.guild.get_role(g["autorole"]["role_id"]).mention if g["autorole"]["role_id"] and ctx.guild.get_role(g["autorole"]["role_id"]) else "not set"
-        ig = [ctx.guild.get_role(r).mention for r in g["sticky"]["ignore"] if ctx.guild.get_role(r)] or ["none"]
-        lines = [
-            f"Embeds: compact={g['embeds']['compact']}",
-            f"Autorole: enabled={g['autorole']['enabled']} role={ar}",
-            f"Sticky: enabled={g['sticky']['enabled']} ignore={', '.join(ig)}",
-            f"Welcome: enabled={g['welcome']['enabled']} channel_id={g['welcome']['channel_id'] or 'not set'}",
-            f"Cya: enabled={g['cya']['enabled']} channel_id={g['cya']['channel_id'] or 'not set'}",
-            f"Solo VC: enabled={g['vcsolo']['enabled']} idle={g['vcsolo']['idle_seconds']}s dm_notify={g['vcsolo']['dm_notify']}",
-            f"Seen: enabled={g['seen']['enabled']} (presence requires Presence Intent)",
-        ]
-        await ctx.send(box("\n".join(lines), lang="ini"))
+    async def com(self, ctx: redcommands.Context) -> None:
+        await ctx.send(embed=await self._status_embed(ctx.guild))
 
-    # ---- HELP (simple, not subdivided) ----
-    @cs.command(name="help", aliases=["commands", "?"])
-    async def cs_help(self, ctx: redcommands.Context) -> None:
+    # ---- HELP (grouped) ----
+    @com.command(name="help", aliases=["commands", "?"])
+    async def com_help(self, ctx: redcommands.Context) -> None:
         p = ctx.clean_prefix
-        lines = [
-            "**CommunityPlus — Commands**",
-            f"{p}cs autorole set @Role | clear | enable | disable | show",
-            f"{p}cs sticky enable | disable | ignore add|remove @Role | list | purge @User",
-            f"{p}cs welcome channel #ch|none | message <text> | enable | disable | preview [@User]",
-            f"{p}cs cya channel #ch|none | message <text> | enable | disable | preview [@User]",
-            f"{p}cs vcsolo enable | disable | idle <seconds≥60>",
-            f"{p}cs seen [@User] | seendetail [@User] | stats [@User] | seenlist [N] | seenlistcsv",
-            f"{p}cs embeds [true|false] • {p}cs diag",
-        ]
-        e = await self._mk_embed(ctx.guild, "CommunityPlus — Help", kind="info", desc="\n".join(lines))
+        e = discord.Embed(title="CommunityPlus — Commands", color=discord.Color.blurple())
+        e.add_field(
+            name="Autorole",
+            value=f"• `{p}com autorole set @Role|clear|enable|disable|show`",
+            inline=False,
+        )
+        e.add_field(
+            name="Sticky Roles",
+            value=f"• `{p}com sticky enable|disable`  •  `{p}com sticky ignore add|remove @Role`  •  `{p}com sticky ignore list`  •  `{p}com sticky purge @User`",
+            inline=False,
+        )
+        e.add_field(
+            name="Welcome",
+            value=f"• `{p}com welcome channel #ch|none`  •  `{p}com welcome message <text>`  •  `{p}com welcome enable|disable|preview [@User]`",
+            inline=False,
+        )
+        e.add_field(
+            name="Cya",
+            value=f"• `{p}com cya channel #ch|none`  •  `{p}com cya message <text>`  •  `{p}com cya enable|disable|preview [@User]`",
+            inline=False,
+        )
+        e.add_field(
+            name="Solo Voice",
+            value=f"• `{p}com vcsolo enable|disable`  •  `{p}com vcsolo idle <seconds≥60>`",
+            inline=False,
+        )
+        e.add_field(
+            name="Seen & Stats",
+            value=f"• `{p}com seen [@User]`  •  `{p}com seendetail [@User]`  •  `{p}com stats [@User]`  •  `{p}com seenlist [N]`  •  `{p}com seenlistcsv`",
+            inline=False,
+        )
+        e.add_field(
+            name="Embeds & Diagnostics",
+            value=f"• `{p}com embeds [true|false]`  •  `{p}com diag`",
+            inline=False,
+        )
         await ctx.send(embed=e)
 
     # ------------------------ DIAG ------------------------
-    @cs.command(name="diag")
-    async def cs_diag(self, ctx: redcommands.Context) -> None:
+    @com.command(name="diag")
+    async def com_diag(self, ctx: redcommands.Context) -> None:
         """Self-check: intents, permissions, channels/roles, config sanity."""
         g = ctx.guild
         me: discord.Member = g.me  # type: ignore
@@ -443,77 +506,73 @@ class CommunityPlus(redcommands.Cog):
             inline=False,
         )
 
-        # hints
         hints: List[str] = []
-        p = ctx.clean_prefix
         if conf["autorole"]["enabled"] and not role_id:
-            hints.append(f"Set autorole: `{p}cs autorole set @Role`")
+            hints.append(f"Set autorole: `{ctx.clean_prefix}com autorole set @Role`")
         if not w_ok and conf["welcome"]["enabled"]:
-            hints.append(f"Pick welcome channel: `{p}cs welcome channel #welcome`")
+            hints.append(f"Pick welcome channel: `{ctx.clean_prefix}com welcome channel #welcome`")
         if not c_ok and conf["cya"]["enabled"]:
-            hints.append(f"Pick cya channel: `{p}cs cya channel #goodbye`")
+            hints.append(f"Pick cya channel: `{ctx.clean_prefix}com cya channel #goodbye`")
         if conf["vcsolo"]["enabled"] and idle < 60:
-            hints.append(f"Increase solo idle: `{p}cs vcsolo idle 900`")
+            hints.append(f"Increase solo idle: `{ctx.clean_prefix}com vcsolo idle 900`")
         if not i_pres and conf["seen"]["enabled"]:
-            hints.append("Enable Presence Intent in Dev Portal and run `{}set intents presences true`".format(p))
-
+            hints.append("Enable Presence Intent in Dev Portal and run `{}set intents presences true`".format(ctx.clean_prefix))
         if hints:
             e.add_field(name="Fix Hints", value="\n".join(f"- {h}" for h in hints), inline=False)
 
         await ctx.send(embed=e)
 
     # ------------------------ autorole ------------------------
-    @cs.group(name="autorole")
-    async def cs_autorole(self, ctx: redcommands.Context) -> None:
-        pass
+    @com.group(name="autorole")
+    async def com_autorole(self, ctx: redcommands.Context) -> None: pass
 
-    @cs_autorole.command(name="set")
-    async def cs_autorole_set(self, ctx: redcommands.Context, role: discord.Role) -> None:
+    @com_autorole.command(name="set")
+    async def com_autorole_set(self, ctx: redcommands.Context, role: discord.Role) -> None:
         await self.config.guild(ctx.guild).autorole.role_id.set(role.id)
         await ctx.tick()
 
-    @cs_autorole.command(name="clear")
-    async def cs_autorole_clear(self, ctx: redcommands.Context) -> None:
+    @com_autorole.command(name="clear")
+    async def com_autorole_clear(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).autorole.role_id.set(None)
         await ctx.tick()
 
-    @cs_autorole.command(name="enable")
-    async def cs_autorole_enable(self, ctx: redcommands.Context) -> None:
+    @com_autorole.command(name="enable")
+    async def com_autorole_enable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).autorole.enabled.set(True)
         await ctx.tick()
 
-    @cs_autorole.command(name="disable")
-    async def cs_autorole_disable(self, ctx: redcommands.Context) -> None:
+    @com_autorole.command(name="disable")
+    async def com_autorole_disable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).autorole.enabled.set(False)
         await ctx.tick()
 
-    @cs_autorole.command(name="show")
-    async def cs_autorole_show(self, ctx: redcommands.Context) -> None:
+    @com_autorole.command(name="show")
+    async def com_autorole_show(self, ctx: redcommands.Context) -> None:
         g = await self.config.guild(ctx.guild).autorole()
         role = ctx.guild.get_role(g["role_id"])
-        await ctx.send(f"Autorole: **{'enabled' if g['enabled'] else 'disabled'}**, role: {role.mention if role else 'not set'}")
+        e = await self._mk_embed(ctx.guild, "Autorole", kind="info",
+                                 desc=f"**{'enabled' if g['enabled'] else 'disabled'}**, role: {role.mention if role else 'not set'}")
+        await ctx.send(embed=e)
 
     # ------------------------ sticky ------------------------
-    @cs.group(name="sticky")
-    async def cs_sticky(self, ctx: redcommands.Context) -> None:
-        pass
+    @com.group(name="sticky")
+    async def com_sticky(self, ctx: redcommands.Context) -> None: pass
 
-    @cs_sticky.command(name="enable")
-    async def cs_sticky_enable(self, ctx: redcommands.Context) -> None:
+    @com_sticky.command(name="enable")
+    async def com_sticky_enable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).sticky.enabled.set(True)
         await ctx.tick()
 
-    @cs_sticky.command(name="disable")
-    async def cs_sticky_disable(self, ctx: redcommands.Context) -> None:
+    @com_sticky.command(name="disable")
+    async def com_sticky_disable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).sticky.enabled.set(False)
         await ctx.tick()
 
-    @cs_sticky.group(name="ignore")
-    async def cs_sticky_ignore(self, ctx: redcommands.Context) -> None:
-        pass
+    @com_sticky.group(name="ignore")
+    async def com_sticky_ignore(self, ctx: redcommands.Context) -> None: pass
 
-    @cs_sticky_ignore.command(name="add")
-    async def cs_sticky_ignore_add(self, ctx: redcommands.Context, role: discord.Role) -> None:
+    @com_sticky_ignore.command(name="add")
+    async def com_sticky_ignore_add(self, ctx: redcommands.Context, role: discord.Role) -> None:
         data = await self.config.guild(ctx.guild).sticky.ignore()
         if role.id in data:
             return await ctx.send("Already ignored.")
@@ -521,8 +580,8 @@ class CommunityPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).sticky.ignore.set(data)
         await ctx.tick()
 
-    @cs_sticky_ignore.command(name="remove")
-    async def cs_sticky_ignore_remove(self, ctx: redcommands.Context, role: discord.Role) -> None:
+    @com_sticky_ignore.command(name="remove")
+    async def com_sticky_ignore_remove(self, ctx: redcommands.Context, role: discord.Role) -> None:
         data = await self.config.guild(ctx.guild).sticky.ignore()
         if role.id not in data:
             return await ctx.send("Not ignored.")
@@ -530,76 +589,74 @@ class CommunityPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).sticky.ignore.set(data)
         await ctx.tick()
 
-    @cs_sticky_ignore.command(name="list")
-    async def cs_sticky_ignore_list(self, ctx: redcommands.Context) -> None:
+    @com_sticky_ignore.command(name="list")
+    async def com_sticky_ignore_list(self, ctx: redcommands.Context) -> None:
         data = await self.config.guild(ctx.guild).sticky.ignore()
         roles = [ctx.guild.get_role(r).mention for r in data if ctx.guild.get_role(r)] or ["none"]
         await ctx.send("Sticky ignored: " + ", ".join(roles))
 
-    @cs_sticky.command(name="purge")
-    async def cs_sticky_purge(self, ctx: redcommands.Context, member: discord.Member) -> None:
+    @com_sticky.command(name="purge")
+    async def com_sticky_purge(self, ctx: redcommands.Context, member: discord.Member) -> None:
         await self.config.member(member).sticky_roles.set([])
         await ctx.send(f"Cleared sticky snapshot for **{member}**.")
 
     # ------------------------ welcome & cya ------------------------
-    @cs.group(name="welcome")
-    async def cs_welcome(self, ctx: redcommands.Context) -> None:
-        pass
+    @com.group(name="welcome")
+    async def com_welcome(self, ctx: redcommands.Context) -> None: pass
 
-    @cs_welcome.command(name="enable")
-    async def cs_welcome_enable(self, ctx: redcommands.Context) -> None:
+    @com_welcome.command(name="enable")
+    async def com_welcome_enable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).welcome.enabled.set(True)
         await ctx.tick()
 
-    @cs_welcome.command(name="disable")
-    async def cs_welcome_disable(self, ctx: redcommands.Context) -> None:
+    @com_welcome.command(name="disable")
+    async def com_welcome_disable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).welcome.enabled.set(False)
         await ctx.tick()
 
-    @cs_welcome.command(name="channel")
-    async def cs_welcome_channel(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
+    @com_welcome.command(name="channel")
+    async def com_welcome_channel(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
         await self.config.guild(ctx.guild).welcome.channel_id.set(channel.id if channel else None)
         await ctx.tick()
 
-    @cs_welcome.command(name="message")
-    async def cs_welcome_message(self, ctx: redcommands.Context, *, text: str) -> None:
+    @com_welcome.command(name="message")
+    async def com_welcome_message(self, ctx: redcommands.Context, *, text: str) -> None:
         await self.config.guild(ctx.guild).welcome.message.set(text)
         await ctx.tick()
 
-    @cs_welcome.command(name="preview")
-    async def cs_welcome_preview(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
+    @com_welcome.command(name="preview")
+    async def com_welcome_preview(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
         member = member or ctx.author
         g = await self.config.guild(ctx.guild).welcome()
         text = self._format_template(g["message"], member)
         e = await self._mk_embed(ctx.guild, "Welcome", desc=text, kind="ok")
         await ctx.send(embed=e)
 
-    @cs.group(name="cya")
-    async def cs_cya(self, ctx: redcommands.Context) -> None:
-        pass
+    @com.group(name="cya")
+    async def com_cya(self, ctx: redcommands.Context) -> None: pass
 
-    @cs_cya.command(name="enable")
-    async def cs_cya_enable(self, ctx: redcommands.Context) -> None:
+    @com_cya.command(name="enable")
+    async def com_cya_enable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).cya.enabled.set(True)
         await ctx.tick()
 
-    @cs_cya.command(name="disable")
-    async def cs_cya_disable(self, ctx: redcommands.Context) -> None:
+    @com_cya.command(name="disable")
+    async def com_cya_disable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).cya.enabled.set(False)
         await ctx.tick()
 
-    @cs_cya.command(name="channel")
-    async def cs_cya_channel(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
+    @com_cya.command(name="channel")
+    async def com_cya_channel(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
         await self.config.guild(ctx.guild).cya.channel_id.set(channel.id if channel else None)
         await ctx.tick()
 
-    @cs_cya.command(name="message")
-    async def cs_cya_message(self, ctx: redcommands.Context, *, text: str) -> None:
+    @com_cya.command(name="message")
+    async def com_cya_message(self, ctx: redcommands.Context, *, text: str) -> None:
         await self.config.guild(ctx.guild).cya.message.set(text)
         await ctx.tick()
 
-    @cs_cya.command(name="preview")
-    async def cs_cya_preview(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
+    @com_cya.command(name="preview")
+    async def com_cya_preview(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
         member = member or ctx.author
         g = await self.config.guild(ctx.guild).cya()
         text = self._format_template(g["message"], member)
@@ -607,31 +664,31 @@ class CommunityPlus(redcommands.Cog):
         await ctx.send(embed=e)
 
     # ------------------------ VC SOLO COMMANDS ------------------------
-    @cs.group(name="vcsolo")
-    async def cs_vc(self, ctx: redcommands.Context) -> None:
+    @com.group(name="vcsolo")
+    async def com_vc(self, ctx: redcommands.Context) -> None:
         """Disconnects solo users after a delay."""
         pass
 
-    @cs_vc.command(name="enable")
-    async def cs_vc_enable(self, ctx: redcommands.Context) -> None:
+    @com_vc.command(name="enable")
+    async def com_vc_enable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).vcsolo.enabled.set(True)
         await ctx.tick()
 
-    @cs_vc.command(name="disable")
-    async def cs_vc_disable(self, ctx: redcommands.Context) -> None:
+    @com_vc.command(name="disable")
+    async def com_vc_disable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).vcsolo.enabled.set(False)
         await ctx.tick()
 
-    @cs_vc.command(name="idle")
-    async def cs_vc_idle(self, ctx: redcommands.Context, seconds: int) -> None:
+    @com_vc.command(name="idle")
+    async def com_vc_idle(self, ctx: redcommands.Context, seconds: int) -> None:
         if seconds < 60:
             return await ctx.send("Idle seconds must be ≥ 60.")
         await self.config.guild(ctx.guild).vcsolo.idle_seconds.set(int(seconds))
         await ctx.tick()
 
     # ------------------------ seen/stats commands ------------------------
-    @cs.command(name="seen")
-    async def cs_seen(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
+    @com.command(name="seen")
+    async def com_seen(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
         member = member or ctx.author
         data = await self.config.member(member).seen()
         if not data:
@@ -645,8 +702,8 @@ class CommunityPlus(redcommands.Cog):
         ]
         await ctx.send("\n".join([x for x in lines if x]))
 
-    @cs.command(name="seendetail")
-    async def cs_seen_detail(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
+    @com.command(name="seendetail")
+    async def com_seen_detail(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
         member = member or ctx.author
         data = await self.config.member(member).seen()
         if not data:
@@ -668,8 +725,8 @@ class CommunityPlus(redcommands.Cog):
             e.add_field(name=n, value=v, inline=False)
         await ctx.send(embed=e)
 
-    @cs.command(name="stats")
-    async def cs_stats(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
+    @com.command(name="stats")
+    async def com_stats(self, ctx: redcommands.Context, member: Optional[discord.Member] = None) -> None:
         member = member or ctx.author
         stats = await self.config.member(member).stats()
         games = await self.config.member(member).activity_names()
@@ -690,8 +747,8 @@ class CommunityPlus(redcommands.Cog):
             e.add_field(name="Top games", value="\n".join(f"{n}: {c}" for n,c in top_games), inline=False)
         await ctx.send(embed=e)
 
-    @cs.command(name="seenlist")
-    async def cs_seenlist(self, ctx: redcommands.Context, limit: Optional[int] = 25) -> None:
+    @com.command(name="seenlist")
+    async def com_seenlist(self, ctx: redcommands.Context, limit: Optional[int] = 25) -> None:
         rows: List[Tuple[discord.Member, Dict]] = []
         for m in ctx.guild.members:
             rows.append((m, await self.config.member(m).seen()))
@@ -705,8 +762,8 @@ class CommunityPlus(redcommands.Cog):
             lines.append(f"- {m} — {when} {kind} {where}".strip())
         await ctx.send("\n".join(lines))
 
-    @cs.command(name="seenlistcsv")
-    async def cs_seenlist_csv(self, ctx: redcommands.Context) -> None:
+    @com.command(name="seenlistcsv")
+    async def com_seenlist_csv(self, ctx: redcommands.Context) -> None:
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["member_id","display","last_seen_ts","last_seen_human","kind","where","status","last_online_ts","last_offline_ts"])
@@ -721,8 +778,8 @@ class CommunityPlus(redcommands.Cog):
         fp = io.BytesIO(output.getvalue().encode("utf-8"))
         await ctx.send(file=discord.File(fp, filename=f"seen_{ctx.guild.id}.csv"))
 
-    @cs.command(name="embeds")
-    async def cs_embeds(self, ctx: redcommands.Context, compact: Optional[bool] = None) -> None:
+    @com.command(name="embeds")
+    async def com_embeds(self, ctx: redcommands.Context, compact: Optional[bool] = None) -> None:
         if compact is None:
             cur = await self.config.guild(ctx.guild).embeds.compact()
             return await ctx.send(f"Embeds compact = **{cur}**.")
@@ -865,8 +922,8 @@ class CommunityPlus(redcommands.Cog):
             await self._refresh_solo_for_channel(before.channel if before else None)
             await self._refresh_solo_for_channel(after.channel if after else None)
 
-    # Presence tracking (needs Presence Intent enabled in your bot app & Red)
-    @commands.Cog.listener()
+    # Presence tracking (needs Presence Intent)
+    @commands.Cog.listener())
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
         if not await self.config.guild(after.guild).seen.enabled():
             return
