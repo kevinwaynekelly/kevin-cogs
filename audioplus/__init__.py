@@ -5,7 +5,7 @@ import asyncio
 import json
 import random
 import re
-from typing import Optional, List, Tuple, Iterable, Any
+from typing import Optional, List, Tuple, Iterable, Any, Dict
 
 import aiohttp
 import discord
@@ -22,6 +22,9 @@ DEFAULTS_GUILD = {
     "default_volume": 60,
     "prefer_lyrics": True,
     "debug": True,
+    # Optional: store cipher probe for doctor
+    "cipher_url": None,
+    "cipher_password": None,
 }
 
 def _scheme(https: bool) -> str:
@@ -33,7 +36,7 @@ def _uri(host: str, port: int, https: bool) -> str:
 try:
     import wavelink  # 3.x required
 except Exception as e:
-    raise ImportError("AudioPlus requires Wavelink 3.x. Install: pip install -U 'wavelink>=3,<4'") from e
+    raise ImportError("AudioPlus requires Wavelink 3.x. Install with: pip install -U 'wavelink>=3,<4'") from e
 
 
 class LoopMode:
@@ -43,22 +46,25 @@ class LoopMode:
 
 
 class MusicPlayer(wavelink.Player):
+    """Per-guild music player with a simple queue and loop modes."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.queue: wavelink.Queue[wavelink.Playable] = wavelink.Queue()
         self.loop: str = LoopMode.OFF
         self.text_channel_id: Optional[int] = None
-        self.requester_id: Optional[int] = None
+        self.requester_id: Optional[int] = None  # why: for future features (vote skip, etc.)
 
     @property
-    def text_channel(self) -> Optional[discord.TextChannel]:
+    def text_channel(self) -> Optional[discord.abc.Messageable]:
         if self.text_channel_id and self.guild:
             ch = self.guild.get_channel(self.text_channel_id)
-            return ch if isinstance(ch, discord.TextChannel) else None
-        return None
+            if isinstance(ch, (discord.TextChannel, discord.Thread)):
+                return ch
+        return getattr(self.guild, "system_channel", None)
 
-    async def announce(self, content: str):
-        ch = self.text_channel or getattr(self.guild, "system_channel", None)
+    async def announce(self, content: str) -> None:
+        ch = self.text_channel
         if not ch:
             return
         try:
@@ -68,7 +74,7 @@ class MusicPlayer(wavelink.Player):
 
 
 class AudioPlus(redcommands.Cog):
-    """Lavalink v4 (YouTube) music player for Red — WL 3.x client."""
+    """Lavalink v4 (YouTube) music player for Red — Wavelink 3.x client."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -77,10 +83,10 @@ class AudioPlus(redcommands.Cog):
         self._wl_api: str = "unset"
         self._last_error: Optional[str] = None
         self._autoconnect_task: Optional[asyncio.Task] = None
-        self._did_global_connect: bool = False  # single node per process
+        self._did_global_connect: bool = False  # single node connect per process
 
     # ---------- debug ----------
-    async def _debug(self, guild: discord.Guild, msg: str):
+    async def _debug(self, guild: discord.Guild, msg: str) -> None:
         if not await self.config.guild(guild).debug():
             return
         ch_id = await self.config.guild(guild).bind_channel()
@@ -119,9 +125,13 @@ class AudioPlus(redcommands.Cog):
                     await vc.disconnect(force=True)
         except Exception:
             pass
+        try:
+            await self._close_all_nodes()
+        except Exception:
+            pass
 
     # ---------- WL API helpers ----------
-    def _apis(self):
+    def _apis(self) -> dict:
         NP = getattr(wavelink, "NodePool", None)
         PL = getattr(wavelink, "Pool", None)
         return {
@@ -192,7 +202,6 @@ class AudioPlus(redcommands.Cog):
                 if isinstance(store, dict):
                     if ident:
                         store.pop(ident, None)
-                    # also prune by object equality
                     for k, v in list(store.items()):
                         if v is n:
                             store.pop(k, None)
@@ -213,9 +222,9 @@ class AudioPlus(redcommands.Cog):
         try:
             await self._debug(guild, f"node.reconnect identifier={getattr(n,'identifier','?')}")
             try:
-                await n.connect(client=self.bot)  # WL 3.4.x
+                await n.connect(client=self.bot)  # WL 3.4.x+
             except TypeError:
-                await n.connect(self.bot)         # fallback
+                await n.connect(self.bot)
             return True
         except Exception as e:
             await self._debug(guild, f"node.reconnect failed: {type(e).__name__}: {e}")
@@ -229,7 +238,6 @@ class AudioPlus(redcommands.Cog):
             return self._wl_api
 
         if nodes_existing:
-            # Try to reconnect the single stale node (no duplicates).
             ok = False
             for n in nodes_existing:
                 if not self._node_connected(n):
@@ -240,7 +248,6 @@ class AudioPlus(redcommands.Cog):
                 self._wl_api = "Node.connect(reuse)"
                 self._last_error = None
                 return self._wl_api
-            # Reconnect failed → purge and proceed to fresh connect.
             for n in nodes_existing:
                 await self._remove_node_from_registries(n)
 
@@ -296,6 +303,7 @@ class AudioPlus(redcommands.Cog):
             parts.append(f"last_error={self._last_error}")
         return " ".join(parts)
 
+    # ---------- HTTP helpers ----------
     async def _ping_http(self, host: str, port: int, https: bool, password: Optional[str] = None) -> dict:
         base = _uri(host, port, https)
         out = {"version": None, "info": None, "stats": None, "errors": []}
@@ -318,6 +326,27 @@ class AudioPlus(redcommands.Cog):
                     out["errors"].append(f"{path} {type(e).__name__}: {e}")
         return out
 
+    async def _fetch_json(self, url: str, *, password: Optional[str] = None, timeout_s: int = 6) -> Tuple[Optional[dict], Optional[str]]:
+        timeout = aiohttp.ClientTimeout(total=timeout_s)
+        headers = {"Authorization": password} if password else None
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as sess:
+                async with sess.get(url, headers=headers) as resp:
+                    if resp.status >= 400:
+                        return None, f"HTTP {resp.status}"
+                    ct = resp.headers.get("content-type", "")
+                    text = await resp.text()
+                    if "json" not in ct and not text.strip().startswith("{"):
+                        # why: lavalink may not set CT
+                        try:
+                            data = json.loads(text)
+                        except Exception:
+                            return None, "Non-JSON body"
+                        return data, None
+                    return await resp.json(content_type=None), None
+        except Exception as e:
+            return None, f"{type(e).__name__}: {e}"
+
     # ---------- search ----------
     async def _search_best(self, guild: discord.Guild, query: str) -> Tuple[Optional[wavelink.Playable], str]:
         prefer_lyrics = await self.config.guild(guild).prefer_lyrics()
@@ -326,13 +355,15 @@ class AudioPlus(redcommands.Cog):
         if YOUTUBE_URL_RE.search(query):
             try:
                 res = await wavelink.Playable.search(query)
+                n = len(res) if res else 0
+                dbg.append(f"url results={n}")
             except Exception as e:
-                dbg.append(f"url ERROR {type(e).__name__}")
+                dbg.append(f"url ERROR {type(e).__name__}: {e}")
                 return None, "\n".join(dbg)
-            return (res[0] if res else None), "\n".join(dbg + [f"url results={len(res) if res else 0}"])
+            return (res[0] if res else None), "\n".join(dbg)
 
-        queries = [f"{query} lyrics", f"{query} lyric video", query] if prefer_lyrics else [query]
-        for q in queries:
+        qlist = [f"{query} lyrics", f"{query} lyric video", query] if prefer_lyrics else [query]
+        for q in qlist:
             try:
                 res = await wavelink.Playable.search(f"ytsearch:{q}")
             except Exception as e:
@@ -374,13 +405,15 @@ class AudioPlus(redcommands.Cog):
         player: MusicPlayer = payload.player  # type: ignore[assignment]
         if not isinstance(player, MusicPlayer):
             return
+        reason = str(getattr(payload, "reason", "") or "").lower()
         try:
-            if player.loop == LoopMode.ONE and payload.reason == "finished":
+            if player.loop == LoopMode.ONE and reason == "finished":
                 await player.play(payload.track)
                 return
-            if player.loop == LoopMode.ALL and payload.reason == "finished":
+            if player.loop == LoopMode.ALL and reason == "finished":
                 try:
-                    player.queue.put(payload.track)
+                    if payload.track:
+                        player.queue.put(payload.track)
                 except Exception:
                     pass
             if not player.queue.is_empty:
@@ -391,6 +424,38 @@ class AudioPlus(redcommands.Cog):
                 await player.stop()
         except Exception:
             await player.announce("❌ Playback error; stopped.")
+
+    @commands.Cog.listener())
+    async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload):
+        player: MusicPlayer = payload.player  # type: ignore[assignment]
+        if not isinstance(player, MusicPlayer):
+            return
+        await player.announce("⚠️ Track errored; skipping.")
+        try:
+            if not player.queue.is_empty:
+                nxt = player.queue.get()
+                await player.play(nxt)
+                await player.announce(f"▶️ Now playing: **{getattr(nxt, 'title', 'Unknown')}**")
+            else:
+                await player.stop()
+        except Exception:
+            pass
+
+    @commands.Cog.listener()
+    async def on_wavelink_track_stuck(self, payload: wavelink.TrackStuckEventPayload):
+        player: MusicPlayer = payload.player  # type: ignore[assignment]
+        if not isinstance(player, MusicPlayer):
+            return
+        await player.announce("⚠️ Track stuck; skipping.")
+        try:
+            if not player.queue.is_empty:
+                nxt = player.queue.get()
+                await player.play(nxt)
+                await player.announce(f"▶️ Now playing: **{getattr(nxt, 'title', 'Unknown')}**")
+            else:
+                await player.stop()
+        except Exception:
+            pass
 
     # ---------- commands: help ----------
     @redcommands.group(name="music", invoke_without_command=True)
@@ -405,6 +470,7 @@ class AudioPlus(redcommands.Cog):
             f"`music bind [#channel]`\n"
             f"**Play**  `play <query|url>` (`p`) • `search <query>` • `pause` • `resume` • `skip` • `stop` • `seek <mm:ss|sec|+/-sec>`\n"
             f"**Queue** `queue` • `remove <index>` • `clear` • `shuffle` • `repeat <off|one|all>` • `now`\n"
+            f"**Dev**   `music doctor [cipher_url] [cipher_password]` • `music selftest [playback:false] [query:\"test audio\"]` • `music tests [verbose:false]`\n"
         )
         try:
             await ctx.send(embed=discord.Embed(title="AudioPlus — Help", description=desc, color=discord.Color.blurple()))
@@ -516,6 +582,10 @@ class AudioPlus(redcommands.Cog):
         await ctx.tick()
 
     # ---------- helpers ----------
+    def _ensure_same_vc(self, ctx: redcommands.Context, player: MusicPlayer) -> None:
+        if not ctx.author.voice or not ctx.author.voice.channel or ctx.author.voice.channel != player.channel:
+            raise redcommands.UserFeedbackCheckFailure("You must be in my voice channel.")
+
     async def _get_player(self, ctx: redcommands.Context, *, connect: bool = True) -> MusicPlayer:
         player = ctx.voice_client
         if isinstance(player, MusicPlayer):
@@ -538,10 +608,6 @@ class AudioPlus(redcommands.Cog):
         except Exception:
             pass
         return player
-
-    def _ensure_same_vc(self, ctx: redcommands.Context, player: MusicPlayer):
-        if not ctx.author.voice or not ctx.author.voice.channel or ctx.author.voice.channel != player.channel:
-            raise redcommands.UserFeedbackCheckFailure("You must be in my voice channel.")
 
     # ---------- playback ----------
     @music.command(aliases=["p"])
@@ -648,33 +714,37 @@ class AudioPlus(redcommands.Cog):
         await p.stop()
         await ctx.tick()
 
+    # ---------- seek helpers ----------
+    @staticmethod
+    def _parse_seek_string(current_ms: int, s: str) -> Optional[int]:
+        s = (s or "").strip()
+        if not s:
+            return None
+        if s.startswith(("+", "-")):
+            try:
+                return max(0, current_ms + int(s) * 1000)
+            except Exception:
+                return None
+        if ":" in s:
+            try:
+                parts = [int(x) for x in s.split(":")]
+                while len(parts) < 2:
+                    parts.insert(0, 0)
+                h, m, sec = (0, parts[-2], parts[-1]) if len(parts) == 2 else (parts[-3], parts[-2], parts[-1])
+                return max(0, (h * 3600 + m * 60 + sec) * 1000)
+            except Exception:
+                return None
+        try:
+            return max(0, int(float(s)) * 1000)
+        except Exception:
+            return None
+
     @music.command()
     async def seek(self, ctx: redcommands.Context, position: str):
         p = await self._get_player(ctx, connect=False)
         self._ensure_same_vc(ctx, p)
 
-        def parse(s: str) -> Optional[int]:
-            s = s.strip()
-            if s.startswith(("+", "-")):
-                try:
-                    return max(0, (p.position or 0) + int(s) * 1000)
-                except Exception:
-                    return None
-            if ":" in s:
-                try:
-                    parts = [int(x) for x in s.split(":")]
-                    while len(parts) < 2:
-                        parts.insert(0, 0)
-                    h, m, sec = (0, parts[-2], parts[-1]) if len(parts) == 2 else (parts[-3], parts[-2], parts[-1])
-                    return max(0, (h * 3600 + m * 60 + sec) * 1000)
-                except Exception:
-                    return None
-            try:
-                return max(0, int(float(s)) * 1000)
-            except Exception:
-                return None
-
-        ms = parse(position)
+        ms = self._parse_seek_string(p.position or 0, position)
         if ms is None:
             return await ctx.send("Use `mm:ss`, `hh:mm:ss`, or seconds (supports +/-).")
         try:
@@ -762,6 +832,226 @@ class AudioPlus(redcommands.Cog):
             return await ctx.send("Use: `repeat off|one|all`")
         p.loop = mode
         await ctx.send(f"Repeat mode: **{mode}**")
+
+    # ---------- DEV: doctor ----------
+    @music.command(name="doctor", aliases=["preflight"])
+    @redcommands.guild_only()
+    async def music_doctor(self, ctx: redcommands.Context, cipher_url: Optional[str] = None, cipher_password: Optional[str] = None):
+        g = await self.config.guild(ctx.guild).all()
+        node = g["node"]
+        if not node["host"]:
+            return await ctx.send(box("No node configured. Run: [p]music node set <host> <port> <password> <https>", lang="ini"))
+
+        base = _uri(node["host"], node["port"], node["https"])
+        info_url = f"{base}/v4/info"
+        stats_url = f"{base}/v4/stats"
+        version_url = f"{base}/version"
+        pw = node["password"]
+
+        lines: List[str] = []
+        # basic pings
+        ping = await self._ping_http(node["host"], node["port"], node["https"], password=pw)
+        lines.append(f"HTTP /version = {ping['version'] and ping['version']['status']}")
+        lines.append(f"HTTP /v4/info = {ping['info'] and ping['info']['status']}")
+        lines.append(f"HTTP /v4/stats = {ping['stats'] and ping['stats']['status']}")
+
+        # parse JSON
+        info, e1 = await self._fetch_json(info_url, password=pw)
+        stats, e2 = await self._fetch_json(stats_url, password=pw)
+        if e1:
+            lines.append(f"info.json error: {e1}")
+        if e2:
+            lines.append(f"stats.json error: {e2}")
+
+        # plugins / youtube plugin presence
+        plugin_names: List[str] = []
+        if isinstance(info, dict):
+            # try both shapes
+            plugins = info.get("plugins") or []
+            if isinstance(plugins, list):
+                for p in plugins:
+                    name = p.get("name") or p.get("artifact") or p.get("id")
+                    if name:
+                        plugin_names.append(str(name))
+        yt_present = any("youtube" in s.lower() for s in plugin_names)
+        lines.append(f"plugins: {', '.join(plugin_names) if plugin_names else 'unknown'}")
+        lines.append(f"youtube_plugin_present={yt_present}")
+
+        # wavelink connectivity + search test
+        try:
+            await self._connect_node(ctx.guild)
+            wl_ok = True
+        except Exception as e:
+            wl_ok = False
+            lines.append(f"wavelink_connect_error={type(e).__name__}: {e}")
+
+        search_ok = False
+        if wl_ok:
+            try:
+                res = await wavelink.Playable.search("ytsearch:test audio")
+                search_ok = bool(res and len(res) > 0)
+            except Exception as e:
+                lines.append(f"search_error={type(e).__name__}: {e}")
+        lines.append(f"wavelink_search_ok={search_ok}")
+
+        # cipher probe (optional)
+        if not cipher_url:
+            cipher_url = g.get("cipher_url")
+        if not cipher_password:
+            cipher_password = g.get("cipher_password")
+
+        if cipher_url:
+            try:
+                # try GET /health first, else GET /
+                health_url = cipher_url.rstrip("/") + "/health"
+                data, err = await self._fetch_json(health_url, password=cipher_password)
+                if err:
+                    # fallback to plain GET root
+                    data2, err2 = await self._fetch_json(cipher_url, password=cipher_password)
+                    if err2:
+                        lines.append(f"remote_cipher_unreachable: {err2}")
+                    else:
+                        lines.append(f"remote_cipher_ok (root)")
+                else:
+                    lines.append("remote_cipher_ok (/health)")
+            except Exception as e:
+                lines.append(f"remote_cipher_error={type(e).__name__}: {e}")
+        else:
+            lines.append("remote_cipher_skipped (no url provided)")
+
+        # stats summary
+        if isinstance(stats, dict):
+            cpu = stats.get("cpu", {})
+            mem = stats.get("memory", {})
+            pl = stats.get("players", 0)
+            pl_act = stats.get("playingPlayers", 0) or stats.get("playing_players", 0)
+            lines.append(f"stats players={pl} playing={pl_act} cpu_cores={cpu.get('cores')} mem_used={mem.get('used')}/{mem.get('allocated')}")
+
+        await ctx.send(box("\n".join(lines), lang="ini"))
+
+    # ---------- DEV: selftest ----------
+    @music.command(name="selftest")
+    @redcommands.guild_only()
+    async def music_selftest(self, ctx: redcommands.Context, playback: Optional[bool] = False, *, query: str = "test audio"):
+        out: List[str] = []
+        # node + search
+        try:
+            await self._connect_node(ctx.guild)
+            out.append("node_connect=ok")
+        except Exception as e:
+            out.append(f"node_connect=ERROR {type(e).__name__}: {e}")
+            return await ctx.send(box("\n".join(out), lang="ini"))
+        try:
+            res = await wavelink.Playable.search(f"ytsearch:{query}")
+            out.append(f"search_ok={bool(res)} count={len(res) if res else 0}")
+        except Exception as e:
+            out.append(f"search_ok=ERROR {type(e).__name__}: {e}")
+            return await ctx.send(box("\n".join(out), lang="ini"))
+
+        # optional playback
+        if playback:
+            try:
+                player = await self._get_player(ctx, connect=True)
+            except redcommands.UserFeedbackCheckFailure as e:
+                out.append(f"playback_setup=ERROR {e}")
+                return await ctx.send(box("\n".join(out), lang="ini"))
+            if not res:
+                out.append("playback_skipped=no search results")
+                return await ctx.send(box("\n".join(out), lang="ini"))
+            t = res[0]
+            ready = await self._await_voice_ready(player)
+            if not ready:
+                out.append("playback_error=voice handshake not ready")
+                return await ctx.send(box("\n".join(out), lang="ini"))
+            try:
+                await player.play(t)
+                await asyncio.sleep(2.0)  # why: verify play starts
+                await player.stop()
+                out.append(f"playback=ok track='{getattr(t,'title','Unknown')}'")
+            except Exception as e:
+                out.append(f"playback=ERROR {type(e).__name__}: {e}")
+
+        await ctx.send(box("\n".join(out), lang="ini"))
+
+    # ---------- DEV: tests (unit-like) ----------
+    @music.command(name="tests")
+    @redcommands.guild_only()
+    async def music_tests(self, ctx: redcommands.Context, verbose: Optional[bool] = False):
+        """Runs in-process unit-like checks without touching Lavalink."""
+        fails: List[str] = []
+        notes: List[str] = []
+
+        # seek parsing
+        def chk_seek(cur, s, exp):
+            got = self._parse_seek_string(cur, s)
+            if got != exp:
+                fails.append(f"seek '{s}' cur={cur} -> {got}, expected {exp}")
+
+        chk_seek(0, "90", 90000)
+        chk_seek(0, "1:30", 90000)
+        chk_seek(0, "01:02:03", (1*3600+2*60+3)*1000)
+        chk_seek(30_000, "+10", 40_000)
+        chk_seek(5_000, "-10", 0)
+
+        # queue + loop behavior (mock)
+        class MockTrack:
+            def __init__(self, title): self.title = title
+        class MockPlayer:
+            def __init__(self):
+                self.queue = wavelink.Queue()
+                self.loop = LoopMode.OFF
+                self.played: List[str] = []
+                self._current: Optional[MockTrack] = None
+                self.channel = object()
+                self.guild = type("G", (), {"me": type("M", (), {"voice": type("V", (), {"channel": object()})()})()})()
+            @property
+            def current(self): return self._current
+            async def play(self, t): 
+                self._current = t
+                self.played.append(t.title)
+            async def stop(self): self._current = None
+            async def announce(self, _): pass
+
+        mp = MockPlayer()
+        t1,t2,t3 = MockTrack("A"), MockTrack("B"), MockTrack("C")
+        mp.queue.put(t2); mp.queue.put(t3)
+        # simulate end with loop off -> plays next
+        payload = type("P", (), {"player": mp, "track": t1, "reason": "finished"})()
+        try:
+            await self.on_wavelink_track_end(payload)  # type: ignore[misc]
+            if mp.played != ["B"]:
+                fails.append(f"loop_off expected ['B'] got {mp.played}")
+        except Exception as e:
+            fails.append(f"event_loop_off raised {type(e).__name__}: {e}")
+
+        # loop all -> requeue finished
+        mp2 = MockPlayer(); mp2.loop = LoopMode.ALL
+        mp2.queue.put(t2)
+        payload2 = type("P", (), {"player": mp2, "track": t1, "reason": "finished"})()
+        try:
+            await self.on_wavelink_track_end(payload2)  # type: ignore[misc]
+            # B should play, and A requeued for later
+            if "B" not in mp2.played:
+                fails.append("loop_all did not play next")
+            if len(mp2.queue) == 0:
+                fails.append("loop_all did not requeue finished track")
+        except Exception as e:
+            fails.append(f"event_loop_all raised {type(e).__name__}: {e}")
+
+        # search scoring (pure)
+        def score_title(title: str) -> Tuple[int, int]:
+            t = title.lower()
+            return (0 if ("lyric" in t or "lyrics" in t) else 1, len(t))
+        if score_title("Song (Lyrics)") >= score_title("Song"):
+            pass
+        else:
+            fails.append("lyrics scoring order incorrect")
+
+        status = "ok" if not fails else "FAILED"
+        lines = [f"tests={status}", f"fail_count={len(fails)}"]
+        if verbose or fails:
+            lines += (["--- FAILS ---"] + fails) if fails else (["--- NOTES ---"] + notes)
+        await ctx.send(box("\n".join(lines), lang="ini"))
 
 
 async def setup(bot: Red) -> None:
