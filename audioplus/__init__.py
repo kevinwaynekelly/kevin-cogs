@@ -135,7 +135,6 @@ class AudioPlus(redcommands.Cog):
 
     @staticmethod
     def _node_connected(node: "wavelink.Node") -> bool:
-        # WHY: WL 3.4.x uses `connected`; older code sometimes checked `is_connected`.
         return bool(getattr(node, "connected", False) or getattr(node, "is_connected", False))
 
     def _iter_nodes(self) -> Iterable["wavelink.Node"]:
@@ -176,29 +175,51 @@ class AudioPlus(redcommands.Cog):
                 continue
         return None
 
-    async def _close_all_nodes(self) -> int:
-        count = 0
-        for n in list(self._iter_nodes()):
-            try:
-                close = getattr(n, "close", None) or getattr(n, "disconnect", None) or getattr(n, "destroy", None)
-                if asyncio.iscoroutinefunction(close):
-                    await close()  # type: ignore[misc]
-                elif callable(close):
-                    close()  # type: ignore[misc]
-                count += 1
-            except Exception:
-                pass
+    async def _remove_node_from_registries(self, n: "wavelink.Node") -> None:
+        try:
+            close = getattr(n, "close", None) or getattr(n, "disconnect", None) or getattr(n, "destroy", None)
+            if asyncio.iscoroutinefunction(close):
+                await close()  # type: ignore[misc]
+            elif callable(close):
+                close()  # type: ignore[misc]
+        except Exception:
+            pass
+        ident = getattr(n, "identifier", None)
         for obj_name in ("Pool", "NodePool"):
             try:
                 cls = getattr(wavelink, obj_name, None)
                 store = getattr(cls, "nodes", None)
                 if isinstance(store, dict):
-                    store.clear()
+                    if ident:
+                        store.pop(ident, None)
+                    # also prune by object equality
+                    for k, v in list(store.items()):
+                        if v is n:
+                            store.pop(k, None)
                 elif isinstance(store, (list, set)):
-                    store.clear()
+                    if n in store:
+                        store.remove(n)
             except Exception:
                 pass
-        return count
+
+    async def _close_all_nodes(self) -> int:
+        cnt = 0
+        for n in list(self._iter_nodes()):
+            await self._remove_node_from_registries(n)
+            cnt += 1
+        return cnt
+
+    async def _reconnect_node(self, guild: discord.Guild, n: "wavelink.Node") -> bool:
+        try:
+            await self._debug(guild, f"node.reconnect identifier={getattr(n,'identifier','?')}")
+            try:
+                await n.connect(client=self.bot)  # WL 3.4.x
+            except TypeError:
+                await n.connect(self.bot)         # fallback
+            return True
+        except Exception as e:
+            await self._debug(guild, f"node.reconnect failed: {type(e).__name__}: {e}")
+            return False
 
     async def _connect_node(self, guild: discord.Guild) -> str:
         nodes_existing = list(self._iter_nodes())
@@ -207,22 +228,22 @@ class AudioPlus(redcommands.Cog):
             self._last_error = None
             return self._wl_api
 
-        # If nodes exist but none are connected → actively connect them (no duplicates).
-        if nodes_existing and not any(self._node_connected(n) for n in nodes_existing):
-            ap = self._apis()
-            try:
-                if ap["has_Pool"] and ap["has_Pool_connect"]:
-                    await self._debug(guild, f"node.reconnect existing={len(nodes_existing)} via Pool.connect")
-                    await wavelink.Pool.connect(client=self.bot, nodes=list(nodes_existing))  # type: ignore[attr-defined]
-                    self._wl_api = "Pool.connect(existing)"
-                    self._last_error = None
-                    return self._wl_api
-            except Exception as e:
-                await self._debug(guild, f"Pool.connect(existing) failed: {type(e).__name__}: {e}. Purging nodes.")
-                await self._close_all_nodes()
-                nodes_existing = []
+        if nodes_existing:
+            # Try to reconnect the single stale node (no duplicates).
+            ok = False
+            for n in nodes_existing:
+                if not self._node_connected(n):
+                    ok = await self._reconnect_node(guild, n)
+                    if ok:
+                        break
+            if ok:
+                self._wl_api = "Node.connect(reuse)"
+                self._last_error = None
+                return self._wl_api
+            # Reconnect failed → purge and proceed to fresh connect.
+            for n in nodes_existing:
+                await self._remove_node_from_registries(n)
 
-        # Fresh connect path (single node).
         g = await self.config.guild(guild).all()
         host, port, pw, https = g["node"]["host"], g["node"]["port"], g["node"]["password"], g["node"]["https"]
         if not host:
