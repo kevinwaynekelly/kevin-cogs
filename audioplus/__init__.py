@@ -5,10 +5,10 @@
 # ---------- info.json ----------
 # {
 #   "author": ["Code Copilot"],
-#   "install_msg": "Installed audioplus. Configure with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` or `[p]audio connectnode`.\nPlay with `[p]audio play <query|url>`. If silent, try `[p]audio playerstate`, `[p]audio debugvc`, `[p]audio fixvoice`, or `[p]audio tone`.",
+#   "install_msg": "Installed audioplus. Configure with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` or `[p]audio connectnode`.\nPlay with `[p]audio play <query|url>`. If silent, try `[p]audio playerstate`, `[p]audio debugvc`, `[p]audio rejoin`, `[p]audio fixvoice`, or `[p]audio tone`.",
 #   "name": "audioplus",
 #   "short": "Single-file Lavalink v4 music cog using Wavelink 3.x.",
-#   "description": "Red cog for Lavalink v4 (Wavelink 3.x). Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode/connectnode/speak/undeafen/debugvc/fixvoice/playerstate/tone; owner: audio setnode/shownode.",
+#   "description": "Red cog for Lavalink v4 (Wavelink 3.x). Commands: audio join/leave/rejoin/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode/connectnode/speak/undeafen/debugvc/fixvoice/playerstate/tone.",
 #   "end_user_data_statement": "Stores Lavalink node details (host, port, password, secure) in Red's Config.",
 #   "requirements": ["wavelink>=3.4.1,<4.0.0", "aiohttp>=3.8"],
 #   "tags": ["music", "lavalink", "wavelink", "audio"],
@@ -22,7 +22,7 @@
 AudioPlus: Single-file Red cog for Lavalink v4 using Wavelink 3.x.
 
 Commands:
-  [p]audio join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle
+  [p]audio join/leave/rejoin/play/skip/stop/pause/resume/volume/queue/np/shuffle
   [p]audio pingnode | connectnode | speak | undeafen | debugvc | fixvoice | playerstate | tone
 Owner:
   [p]audio setnode <host> <port> <password> <secure>, [p]audio shownode
@@ -184,7 +184,6 @@ class AudioPlus(commands.Cog):
         return None
 
     async def _wait_ll_pos_change(self, guild_id: int, timeout: float = 6.0) -> bool:
-        # why: confirm node started sending frames; 0=>stuck voice
         start = asyncio.get_running_loop().time()
         last: Optional[int] = None
         while (asyncio.get_running_loop().time() - start) < timeout:
@@ -197,6 +196,28 @@ class AudioPlus(commands.Cog):
                     return True
             await asyncio.sleep(0.6)
         return False
+
+    async def _rebind_voice(self, guild: discord.Guild) -> bool:
+        """Leave and rejoin same channel to refresh Discord voice transport."""
+        vs = getattr(guild.me, "voice", None)
+        if not vs or not vs.channel:
+            return False
+        ch = vs.channel
+        vc = guild.voice_client
+        try:
+            if vc and isinstance(vc, wavelink.Player):
+                await vc.disconnect(force=True)
+        except Exception:
+            pass
+        await asyncio.sleep(0.8)
+        try:
+            await ch.connect(cls=wavelink.Player, timeout=45.0, self_deaf=False, self_mute=False, reconnect=True)
+        except Exception:
+            return False
+        await asyncio.sleep(0.8)
+        await self._stage_unsuppress_if_needed(guild, ch)
+        await self._force_undeafen(guild, ch)
+        return True
 
     # ---- lifecycle ----
 
@@ -425,7 +446,6 @@ class AudioPlus(commands.Cog):
     @audio.command(name="playerstate")
     @GUILD_ONLY
     async def audio_playerstate(self, ctx: commands.Context) -> None:
-        """Show raw Lavalink player REST state for this guild."""
         data = await self._fetch_player_state(ctx.guild.id)
         if not data:
             await ctx.send("No REST player state found (not connected, wrong session, or Lavalink denied).")
@@ -514,6 +534,13 @@ class AudioPlus(commands.Cog):
             lines.append(f"Lavalink: playing=`{not state.get('paused', False)}` pos=`{s.get('position', 0)}` vol=`{state.get('volume')}`")
         await ctx.send("\n".join(lines))
 
+    @audio.command(name="rejoin")
+    @GUILD_ONLY
+    async def audio_rejoin(self, ctx: commands.Context) -> None:
+        """Force leave+join of the current voice channel."""
+        ok = await self._rebind_voice(ctx.guild)
+        await ctx.send("Rejoin: " + ("**OK**" if ok else "**failed**"))
+
     @audio.command(name="tone")
     @GUILD_ONLY
     async def audio_tone(self, ctx: commands.Context) -> None:
@@ -521,7 +548,7 @@ class AudioPlus(commands.Cog):
         await self._ensure_pool_available(wait_timeout=30.0)
         player, _ = await self._fetch_or_connect_player(ctx)
 
-        url = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"  # stable direct MP3
+        url = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
         res = await wavelink.Playable.search(url)
         if not res:
             await ctx.send("Tone source unavailable.")
@@ -531,9 +558,20 @@ class AudioPlus(commands.Cog):
         if not player.playing and not player.paused:
             await self._maybe_start_queue(player)
         await ctx.send("Playing test tone…")
-        ok = await self._wait_ll_pos_change(ctx.guild.id, timeout=8.0)
-        if not ok:
-            await ctx.send("Position didn’t move. Voice may be stuck. Try `[p]audio fixvoice` or `[p]audio connectnode` and rejoin.")
+
+        if not await self._wait_ll_pos_change(ctx.guild.id, timeout=8.0):
+            # try one self-heal rebind + retry
+            await ctx.send("Position didn’t move. Rejoining voice to unstick…")
+            if await self._rebind_voice(ctx.guild):
+                await asyncio.sleep(1.0)
+                try:
+                    await player.play(track)  # retry track
+                except Exception:
+                    pass
+                if await self._wait_ll_pos_change(ctx.guild.id, timeout=8.0):
+                    await ctx.send("Playback started after rejoin ✅")
+                    return
+            await ctx.send("Still stuck. This often means **UDP to Discord voice is blocked** from your Lavalink host/container.")
 
     @audio.command(name="join", aliases=["connect", "summon"])
     @GUILD_ONLY
@@ -565,13 +603,7 @@ class AudioPlus(commands.Cog):
             await ctx.send("No results.")
             return
 
-        try:
-            first = results[0]
-        except Exception:
-            await ctx.send("No playable results.")
-            return
-
-        queued = 0
+        first = results[0]
         if hasattr(results, "__len__") and len(results) > 1 and ("list=" in query or "playlist" in query):
             queued = self._queue_put_many(player.queue, results)
         else:
@@ -585,10 +617,20 @@ class AudioPlus(commands.Cog):
         else:
             await ctx.send(f"Queued {queued} track{'s' if queued != 1 else ''}.")
 
-        # wait to verify playback actually moves
-        ok = await self._wait_ll_pos_change(ctx.guild.id, timeout=8.0)
-        if not ok:
-            await ctx.send("Position didn’t move. Voice may be stuck. Try `[p]audio fixvoice` or `[p]audio connectnode`, then re-run play.")
+        # verify playback; if stuck, self-heal once
+        if not await self._wait_ll_pos_change(ctx.guild.id, timeout=8.0):
+            await ctx.send("Position didn’t move. Rejoining voice to unstick…")
+            if await self._rebind_voice(ctx.guild):
+                await asyncio.sleep(1.0)
+                cur = getattr(player, "current", None) or first
+                try:
+                    await player.play(cur)
+                except Exception:
+                    pass
+                if await self._wait_ll_pos_change(ctx.guild.id, timeout=8.0):
+                    await ctx.send("Playback started after rejoin ✅")
+                    return
+            await ctx.send("Still stuck. Likely **UDP egress is blocked** from the Lavalink host/container (Discord voice uses UDP).")
 
     @audio.command(name="skip", aliases=["next", "s"])
     @GUILD_ONLY
