@@ -38,8 +38,8 @@ DEFAULTS_GUILD = {
         "channel_id": None,
         "message": "Cya {user} 👋",
     },
-    # Solo VC + chat inactivity (both default 15 minutes)
-    "vcsolo": {"enabled": True, "idle_seconds": 900, "chat_idle_seconds": 900, "dm_notify": True},
+    # Solo VC idle (default 15 minutes)
+    "vcsolo": {"enabled": True, "idle_seconds": 900, "dm_notify": True},
     "seen": {"enabled": True},
 }
 
@@ -85,7 +85,7 @@ EVENT_COLOR = {
 }
 
 class CommunityPlus(redcommands.Cog):
-    """Autorole (first-time), Sticky roles, Welcome/Cya, Solo-VC + Chat-Idle kick (DM), Deep Seen/Presence, Counters."""
+    """Autorole (first-time), Sticky roles, Welcome/Cya, Solo-VC kick (DM), Deep Seen/Presence, Counters."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -93,7 +93,6 @@ class CommunityPlus(redcommands.Cog):
         self.config.register_guild(**DEFAULTS_GUILD)
         self.config.register_member(**DEFAULTS_MEMBER)
         self._solo_tasks: Dict[int, asyncio.Task] = {}  # solo VC timers
-        self._idle_tasks: Dict[int, asyncio.Task] = {}  # chat-idle timers
 
     # ------------------------ time/format ------------------------
     @staticmethod
@@ -111,6 +110,23 @@ class CommunityPlus(redcommands.Cog):
     @staticmethod
     def _fmt_rel(ts: int) -> str:
         return "never" if not ts else discord.utils.format_dt(CommunityPlus._dt_from_ts(ts), style="R")
+
+    @staticmethod
+    def _humanize_duration(seconds: int) -> str:
+        """Return a short human string like '15 minutes', '1 hour 5 minutes'."""
+        s = max(0, int(seconds))
+        days, rem = divmod(s, 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, _ = divmod(rem, 60)
+        parts: List[str] = []
+        if days:
+            parts.append(f"{days} day{'s' if days != 1 else ''}")
+        if hours:
+            parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+        if minutes or not parts:
+            parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}" if minutes else "less than a minute")
+        # keep it compact; at most two largest units
+        return " ".join(parts[:2])
 
     # ------------------------ embeds ------------------------
     async def _embed_compact(self, guild: discord.Guild) -> bool:
@@ -269,60 +285,26 @@ class CommunityPlus(redcommands.Cog):
             f"Sticky: enabled={g['sticky']['enabled']} ignore={', '.join(ig)}",
             f"Welcome: enabled={g['welcome']['enabled']} channel_id={g['welcome']['channel_id'] or 'not set'}",
             f"Cya: enabled={g['cya']['enabled']} channel_id={g['cya']['channel_id'] or 'not set'}",
-            f"Solo VC: enabled={g['vcsolo']['enabled']} idle={g['vcsolo']['idle_seconds']}s chat_idle={g['vcsolo']['chat_idle_seconds']}s dm_notify={g['vcsolo']['dm_notify']}",
+            f"Solo VC: enabled={g['vcsolo']['enabled']} idle={g['vcsolo']['idle_seconds']}s dm_notify={g['vcsolo']['dm_notify']}",
             f"Seen: enabled={g['seen']['enabled']} (presence requires Presence Intent)",
         ]
         await ctx.send(box("\n".join(lines), lang="ini"))
 
-    # ---- HELP ----
-    def _help_sections(self, p: str) -> Dict[str, str]:
-        return {
-            "quickstart": (
-                f"**Quickstart**\n"
-                f"{p}cs welcome channel #welcome • {p}cs cya channel #goodbye\n"
-                f"{p}cs autorole set @Newcomer • {p}cs vcsolo idle 900 • {p}cs vcsolo chatidle 900\n"
-                f"{p}cs seen @User • {p}cs stats @User • {p}cs seenlist"
-            ),
-            "autorole": (
-                f"{p}cs autorole set @Role • clear • enable|disable • show"
-            ),
-            "sticky": (
-                f"{p}cs sticky enable|disable • {p}cs sticky ignore add|remove @Role • list • purge @User"
-            ),
-            "welcome": (
-                f"{p}cs welcome channel #ch|none • message <text> • enable|disable • preview [@User]"
-            ),
-            "cya": (
-                f"{p}cs cya channel #ch|none • message <text> • enable|disable • preview [@User]"
-            ),
-            "vcsolo": (
-                f"{p}cs vcsolo enable|disable • idle <seconds≥60> • chatidle <seconds|off>"
-            ),
-            "seen": (
-                f"{p}cs seen [@User] • seendetail [@User] • stats [@User] • seenlist [N] • seenlistcsv"
-            ),
-            "embeds": (
-                f"{p}cs embeds [true|false]"
-            ),
-            "diag": (
-                f"{p}cs diag — runs configuration & permission checks"
-            ),
-        }
-
+    # ---- HELP (simple, not subdivided) ----
     @cs.command(name="help", aliases=["commands", "?"])
-    async def cs_help(self, ctx: redcommands.Context, section: Optional[str] = None) -> None:
+    async def cs_help(self, ctx: redcommands.Context) -> None:
         p = ctx.clean_prefix
-        sec = self._help_sections(p)
-        if section:
-            key = section.lower()
-            if key not in sec:
-                return await ctx.send(f"Unknown section `{section}`. Try one of: {', '.join(sec.keys())}")
-            e = await self._mk_embed(ctx.guild, f"CommunityPlus — {key.title()}", kind="info", desc=sec[key])
-            return await ctx.send(embed=e)
-        e = await self._mk_embed(ctx.guild, "CommunityPlus — Help", kind="info")
-        e.add_field(name="Quickstart", value=sec["quickstart"], inline=False)
-        e.add_field(name="Sections", value="`autorole`, `sticky`, `welcome`, `cya`, `vcsolo`, `seen`, `embeds`, `diag`", inline=False)
-        e.add_field(name="Tip", value=f"Use `{p}cs help <section>`.", inline=False)
+        lines = [
+            "**CommunityPlus — Commands**",
+            f"{p}cs autorole set @Role | clear | enable | disable | show",
+            f"{p}cs sticky enable | disable | ignore add|remove @Role | list | purge @User",
+            f"{p}cs welcome channel #ch|none | message <text> | enable | disable | preview [@User]",
+            f"{p}cs cya channel #ch|none | message <text> | enable | disable | preview [@User]",
+            f"{p}cs vcsolo enable | disable | idle <seconds≥60>",
+            f"{p}cs seen [@User] | seendetail [@User] | stats [@User] | seenlist [N] | seenlistcsv",
+            f"{p}cs embeds [true|false] • {p}cs diag",
+        ]
+        e = await self._mk_embed(ctx.guild, "CommunityPlus — Help", kind="info", desc="\n".join(lines))
         await ctx.send(embed=e)
 
     # ------------------------ DIAG ------------------------
@@ -370,7 +352,7 @@ class CommunityPlus(redcommands.Cog):
                     role_ok = False
                     role_msgs.append("Bot's top role is not above autorole.")
         else:
-            role_ok = conf["autorole"]["enabled"] is False  # ok if not set and disabled
+            role_ok = conf["autorole"]["enabled"] is False
             if not role_ok:
                 role_msgs.append("Autorole enabled but no role set.")
 
@@ -398,10 +380,9 @@ class CommunityPlus(redcommands.Cog):
                 sticky_ok = False
                 break
 
-        # vcsolo config
+        # vcsolo config (solo only)
         idle = int(conf["vcsolo"]["idle_seconds"])
-        chat_idle = int(conf["vcsolo"]["chat_idle_seconds"])
-        vc_ok = conf["vcsolo"]["enabled"] is False or (p_move_members and idle >= 60 and (chat_idle == 0 or chat_idle >= 60))
+        vc_ok = conf["vcsolo"]["enabled"] is False or (p_move_members and idle >= 60)
 
         # seen/presence
         seen_ok = bool(conf["seen"]["enabled"])
@@ -453,7 +434,7 @@ class CommunityPlus(redcommands.Cog):
         )
         e.add_field(
             name="Solo VC",
-            value=f"{mark(conf['vcsolo']['enabled'])} enabled • idle={idle}s chat_idle={chat_idle}s • move_members: {mark(p_move_members)} • overall: {mark(vc_ok)}",
+            value=f"{mark(conf['vcsolo']['enabled'])} enabled • idle={idle}s • move_members: {mark(p_move_members)} • overall: {mark(vc_ok)}",
             inline=False,
         )
         e.add_field(
@@ -473,8 +454,6 @@ class CommunityPlus(redcommands.Cog):
             hints.append(f"Pick cya channel: `{p}cs cya channel #goodbye`")
         if conf["vcsolo"]["enabled"] and idle < 60:
             hints.append(f"Increase solo idle: `{p}cs vcsolo idle 900`")
-        if conf["vcsolo"]["enabled"] and chat_idle != 0 and chat_idle < 60:
-            hints.append(f"Increase chat idle: `{p}cs vcsolo chatidle 900`")
         if not i_pres and conf["seen"]["enabled"]:
             hints.append("Enable Presence Intent in Dev Portal and run `{}set intents presences true`".format(p))
 
@@ -630,7 +609,7 @@ class CommunityPlus(redcommands.Cog):
     # ------------------------ VC SOLO COMMANDS ------------------------
     @cs.group(name="vcsolo")
     async def cs_vc(self, ctx: redcommands.Context) -> None:
-        """Disconnects solo users after a delay, and/or if chat-idle while in VC."""
+        """Disconnects solo users after a delay."""
         pass
 
     @cs_vc.command(name="enable")
@@ -648,21 +627,6 @@ class CommunityPlus(redcommands.Cog):
         if seconds < 60:
             return await ctx.send("Idle seconds must be ≥ 60.")
         await self.config.guild(ctx.guild).vcsolo.idle_seconds.set(int(seconds))
-        await ctx.tick()
-
-    @cs_vc.command(name="chatidle")
-    async def cs_vc_chatidle(self, ctx: redcommands.Context, seconds: str) -> None:
-        s = seconds.strip().lower()
-        if s in {"off", "disable", "none", "0"}:
-            await self.config.guild(ctx.guild).vcsolo.chat_idle_seconds.set(0)
-            return await ctx.send("Chat-idle disconnect disabled.")
-        try:
-            val = int(s)
-        except ValueError:
-            return await ctx.send("Provide seconds or `off`.")
-        if val < 60:
-            return await ctx.send("Chat-idle seconds must be ≥ 60.")
-        await self.config.guild(ctx.guild).vcsolo.chat_idle_seconds.set(val)
         await ctx.tick()
 
     # ------------------------ seen/stats commands ------------------------
@@ -827,23 +791,9 @@ class CommunityPlus(redcommands.Cog):
             return
         await self._seen_mark(message.author, kind="message", where=message.channel.id)
         await self._bump_stat(message.author, "messages", 1)
-        # refresh chat-idle timer if author is in VC
-        gset = await self.config.guild(message.guild).vcsolo()
-        if not gset["enabled"]:
-            return
-        if gset.get("chat_idle_seconds", 0) <= 0:
-            return
-        mem = message.guild.get_member(message.author.id)
-        if mem and mem.voice and mem.voice.channel:
-            await self._schedule_chat_idle_disconnect(mem, int(gset["chat_idle_seconds"]))
 
     async def _cancel_task_for_member(self, member_id: int) -> None:
         t = self._solo_tasks.pop(member_id, None)
-        if t and not t.done():
-            t.cancel()
-
-    async def _cancel_idle_task(self, member_id: int) -> None:
-        t = self._idle_tasks.pop(member_id, None)
         if t and not t.done():
             t.cancel()
 
@@ -859,10 +809,13 @@ class CommunityPlus(redcommands.Cog):
                 humans = [m for m in ch.members if not m.bot]
                 if len(humans) == 1 and humans[0].id == member.id:
                     try:
-                        await member.move_to(None, reason=f"Solo in voice for {wait_s}s")
+                        reason = f"Solo in voice for {self._humanize_duration(wait_s)}"
+                        await member.move_to(None, reason=reason)
                         if await self.config.guild(member.guild).vcsolo.dm_notify():
                             try:
-                                await member.send(f"You were disconnected from **{member.guild.name}** voice: alone for {wait_s}s.")
+                                await member.send(
+                                    f"You were disconnected from **{member.guild.name}** voice: alone for {self._humanize_duration(wait_s)}."
+                                )
                             except discord.Forbidden:
                                 pass
                     except discord.Forbidden:
@@ -871,35 +824,6 @@ class CommunityPlus(redcommands.Cog):
                 return
 
         self._solo_tasks[member.id] = asyncio.create_task(_job())
-
-    async def _schedule_chat_idle_disconnect(self, member: discord.Member, wait_s: int) -> None:
-        if wait_s <= 0:
-            return
-        await self._cancel_idle_task(member.id)
-        base_msg_ts = await self._last_message_ts(member)  # snapshot to verify no new messages
-
-        async def _job():
-            try:
-                await asyncio.sleep(wait_s)
-                ch = getattr(member.voice, "channel", None)
-                if not ch:
-                    return
-                latest_msg_ts = await self._last_message_ts(member)
-                if latest_msg_ts > base_msg_ts:
-                    return  # they talked since scheduling
-                try:
-                    await member.move_to(None, reason=f"In voice but no messages for {wait_s}s")
-                    if await self.config.guild(member.guild).vcsolo.dm_notify():
-                        try:
-                            await member.send(f"You were disconnected from **{member.guild.name}** voice for inactivity: no messages for {wait_s}s.")
-                        except discord.Forbidden:
-                            pass
-                except discord.Forbidden:
-                    pass
-            except asyncio.CancelledError:
-                return
-
-        self._idle_tasks[member.id] = asyncio.create_task(_job())
 
     async def _refresh_solo_for_channel(self, channel: Optional[discord.VoiceChannel | discord.StageChannel]) -> None:
         if not channel:
@@ -935,20 +859,11 @@ class CommunityPlus(redcommands.Cog):
         if before.self_video is False and after.self_video is True:
             await self._bump_stat(member, "video_starts", 1)
 
-        # refresh solo timers for affected channels
+        # refresh solo timers for affected channels (solo-only logic)
         gset = await self.config.guild(member.guild).vcsolo()
         if gset["enabled"]:
             await self._refresh_solo_for_channel(before.channel if before else None)
             await self._refresh_solo_for_channel(after.channel if after else None)
-            chat_idle = int(gset.get("chat_idle_seconds", 0))
-            if before.channel is None and after.channel is not None:
-                if chat_idle > 0:
-                    await self._schedule_chat_idle_disconnect(member, chat_idle)
-            elif before.channel is not None and after.channel is None:
-                await self._cancel_idle_task(member.id)
-            elif before.channel and after.channel and before.channel.id != after.channel.id:
-                if chat_idle > 0:
-                    await self._schedule_chat_idle_disconnect(member, chat_idle)
 
     # Presence tracking (needs Presence Intent enabled in your bot app & Red)
     @commands.Cog.listener()
