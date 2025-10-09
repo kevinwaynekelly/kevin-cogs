@@ -23,6 +23,7 @@ DEFAULTS_GUILD = {
     "debug": True,
 }
 
+def _scheme(https: bool) -> str: return "https" if https else "http"
 def _uri(host: str, port: int, https: bool) -> str: return f"{_scheme(https)}://{host}:{port}"
 
 # Require Wavelink 3.x
