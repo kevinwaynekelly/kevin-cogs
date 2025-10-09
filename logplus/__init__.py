@@ -66,6 +66,17 @@ EVENT_STYLE: Dict[str, Dict[str, object]] = {
     "cmd_otherbot": {"emoji": "🤖", "color": discord.Color.blurple()},
 }
 
+# Generic UI emojis (for embeds, not events)
+_UI = {
+    "core": "🛠️",
+    "style": "🎨",
+    "ctrlz": "⏪",
+    "toggles": "🎚️",
+    "diag": "🧪",
+    "ok": "✅",
+    "warn": "⚠️",
+}
+
 # ========================= Defaults =========================
 DEFAULTS_GUILD = {
     "log_channel": None,
@@ -120,6 +131,14 @@ class LogPlus(redcommands.Cog):
     @staticmethod
     def _now():
         return discord.utils.utcnow()
+
+    @staticmethod
+    def _onoff(v: bool) -> str:
+        return "on" if v else "off"
+
+    @staticmethod
+    def _yn(v: bool) -> str:
+        return "✅" if v else "❌"
 
     async def _is_compact(self, guild: discord.Guild) -> bool:
         try:
@@ -202,6 +221,76 @@ class LogPlus(redcommands.Cog):
         self._last_event_at[key] = now
         return False
 
+    # ---------- pretty status ----------
+    async def _status_embed(self, guild: discord.Guild) -> discord.Embed:
+        g = await self.config.guild(guild).all()
+        log_ch = guild.get_channel(g["log_channel"]) if g["log_channel"] else None
+        e = discord.Embed(
+            title="LogPlus — Status",
+            description="Event logging + CTRL-Z snapshots.",
+            color=discord.Color.blurple(),
+            timestamp=self._now(),
+        )
+        e.add_field(
+            name=f"{_UI['core']} Core",
+            value=box(
+                f"log_channel = {getattr(log_ch, 'mention', 'not set')}\n"
+                f"rate        = {g['rate']['seconds']}s\n"
+                f"style.compact = {g['style']['compact']}",
+                lang="ini",
+            ),
+            inline=False,
+        )
+        e.add_field(
+            name="Message",
+            value=box(
+                f"edit={self._onoff(g['message']['edit'])} "
+                f"delete={self._onoff(g['message']['delete'])} "
+                f"bulk={self._onoff(g['message']['bulk_delete'])} "
+                f"pins={self._onoff(g['message']['pins'])} "
+                f"exempt={len(g['message']['exempt_channels'])}",
+                lang="ini",
+            ),
+            inline=False,
+        )
+        e.add_field(
+            name="Reactions",
+            value=box(
+                f"add={self._onoff(g['reactions']['add'])} "
+                f"remove={self._onoff(g['reactions']['remove'])} "
+                f"clear={self._onoff(g['reactions']['clear'])}",
+                lang="ini",
+            ),
+            inline=True,
+        )
+        e.add_field(
+            name="Server",
+            value=box(
+                f"channels c/d/u={[g['server']['channel_create'], g['server']['channel_delete'], g['server']['channel_update']]}\n"
+                f"roles    c/d/u={[g['server']['role_create'], g['server']['role_delete'], g['server']['role_update']]}\n"
+                f"emoji={g['server']['emoji_update']} sticker={g['server']['sticker_update']} integ={g['server']['integrations_update']}\n"
+                f"webhooks={g['server']['webhooks_update']} threads c/d/u={[g['server']['thread_create'], g['server']['thread_delete'], g['server']['thread_update']]}\n"
+                f"exempt={len(g['server']['exempt_channels'])}",
+                lang="ini",
+            ),
+            inline=False,
+        )
+        e.add_field(
+            name="Member/Voice/Sched/Commands",
+            value=box(
+                f"member: join={g['member']['join']} leave={g['member']['leave']} roles={g['member']['roles_changed']} nick={g['member']['nick_changed']} "
+                f"ban={g['member']['ban']} unban={g['member']['unban']} timeout={g['member']['timeout']} presence={g['member']['presence']}\n"
+                f"voice: join={g['voice']['join']} move={g['voice']['move']} leave={g['voice']['leave']} mute={g['voice']['mute']} "
+                f"deaf={g['voice']['deaf']} video={g['voice']['video']} stream={g['voice']['stream']}\n"
+                f"sched: create={g['sched']['create']} update={g['sched']['update']} delete={g['sched']['delete']} user_add={g['sched']['user_add']} user_remove={g['sched']['user_remove']}\n"
+                f"cmds: this_bot={g['commands']['this_bot']} other_bots={g['commands']['other_bots']}",
+                lang="ini",
+            ),
+            inline=False,
+        )
+        e.set_footer(text="Use [p]logplus help for commands.")
+        return e
+
     # ---------------- CTRL-Z snapshot helpers ----------------
     async def _ctrlz_ttl(self, guild: discord.Guild) -> int:
         return int(await self.config.guild(guild).ctrlz.ttl())
@@ -276,30 +365,60 @@ class LogPlus(redcommands.Cog):
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def logplus(self, ctx: redcommands.Context):
-        g = await self.config.guild(ctx.guild).all()
-        lines = [
-            f"Log channel: {ctx.guild.get_channel(g['log_channel']).mention if g['log_channel'] else 'Not set'}",
-            f"Message: edit={g['message']['edit']} delete={g['message']['delete']} bulk={g['message']['bulk_delete']} pins={g['message']['pins']} exempt={len(g['message']['exempt_channels'])}",
-            f"Reactions: add={g['reactions']['add']} remove={g['reactions']['remove']} clear={g['reactions']['clear']}",
-            f"Server: chan(c/d/u)={[g['server']['channel_create'], g['server']['channel_delete'], g['server']['channel_update']]} role(c/d/u)={[g['server']['role_create'], g['server']['role_delete'], g['server']['role_update']]} emoji={g['server']['emoji_update']} sticker={g['server']['sticker_update']} integ={g['server']['integrations_update']} webhooks={g['server']['webhooks_update']} threads(c/d/u)={[g['server']['thread_create'], g['server']['thread_delete'], g['server']['thread_update']]} exempt={len(g['server']['exempt_channels'])}",
-            f"Invites: create={g['invites']['create']} delete={g['invites']['delete']}",
-            f"Member: join={g['member']['join']} leave={g['member']['leave']} roles={g['member']['roles_changed']} nick={g['member']['nick_changed']} ban={g['member']['ban']} unban={g['member']['unban']} timeout={g['member']['timeout']} presence={g['member']['presence']}",
-            f"Voice: join={g['voice']['join']} move={g['voice']['move']} leave={g['voice']['leave']} mute={g['voice']['mute']} deaf={g['voice']['deaf']} video={g['voice']['video']} stream={g['voice']['stream']}",
-            f"Sched: create={g['sched']['create']} update={g['sched']['update']} delete={g['sched']['delete']} user_add={g['sched']['user_add']} user_remove={g['sched']['user_remove']}",
-            f"Commands: this_bot={g['commands']['this_bot']} other_bots={g['commands']['other_bots']}",
-            f"Rate limiter: {g['rate']['seconds']}s   |   Style.compact={g['style']['compact']}   |   CTRLZ TTL: {g['ctrlz']['ttl']}s",
-        ]
-        await ctx.send(box("\n".join(lines), lang="ini"))
+        await ctx.send(embed=await self._status_embed(ctx.guild))
+
+    @logplus.command(name="help")
+    async def help_(self, ctx: redcommands.Context):
+        p = ctx.clean_prefix
+        e = discord.Embed(title="LogPlus — Commands", color=discord.Color.blurple())
+        e.add_field(
+            name=f"{_UI['core']} Core",
+            value=(
+                f"• `{p}logplus` • `{p}logplus help` • `{p}logplus diag`\n"
+                f"• `{p}logplus rate [seconds]`\n"
+                f"• `{p}logplus style compact <on|off>` • `{p}logplus style preview`"
+            ),
+            inline=False,
+        )
+        e.add_field(
+            name=f"{_UI['ctrlz']} CTRL-Z",
+            value=(
+                f"• `{p}logplus ctrlz ttl [seconds]` • `{p}logplus ctrlz list`\n"
+                f"• `{p}logplus ctrlz nick @user` • `{p}logplus ctrlz roles @user`\n"
+                f"• `{p}logplus ctrlz channel #channel` • `{p}logplus ctrlz role @role`\n"
+                f"• `{p}logplus ctrlz recreatechannel <id>` • `{p}logplus ctrlz recreaterole <id>`"
+            ),
+            inline=False,
+        )
+        e.add_field(
+            name=f"{_UI['toggles']} Toggles",
+            value=(
+                f"• `{p}logplus toggle message <edit|delete|bulk|pins>`\n"
+                f"• `{p}logplus toggle reactions <add|remove|clear>`\n"
+                f"• `{p}logplus toggle server <channelcreate|channeldelete|channelupdate|rolecreate|roledelete|roleupdate|serverupdate|emojiupdate|stickerupdate|integrationsupdate|webhooksupdate|threadcreate|threaddelete|thredupdate>`\n"
+                f"• `{p}logplus toggle invites <create|delete>`\n"
+                f"• `{p}logplus toggle member <join|leave|roles|nick|ban|unban|timeout|presence>`\n"
+                f"• `{p}logplus toggle voice <join|move|leave|mute|deaf|video|stream>`\n"
+                f"• `{p}logplus toggle commands <thisbot|otherbots>`"
+            ),
+            inline=False,
+        )
+        e.add_field(
+            name=f"{_UI['diag']} Notes",
+            value="Route destination uses the configured log channel; per-channel overrides are respected if present.",
+            inline=False,
+        )
+        await ctx.send(embed=e)
 
     @logplus.command(name="rate")
     async def cmd_rate(self, ctx: redcommands.Context, seconds: Optional[float] = None):
         if seconds is None:
             cur = await self._rate_seconds(ctx.guild)
-            return await ctx.send(f"Rate limit window is **{cur:.2f}s**.")
+            return await ctx.send(embed=await self._E(ctx.guild, "Rate limit", f"Current window: **{cur:.2f}s**"))
         if seconds < 0:
-            return await ctx.send("Seconds must be >= 0.")
+            return await ctx.send(embed=await self._E(ctx.guild, "Rate limit", f"{_UI['warn']} Seconds must be ≥ 0.", color=discord.Color.orange()))
         await self.config.guild(ctx.guild).rate.seconds.set(float(seconds))
-        await ctx.send(f"Rate limit window set to **{seconds:.2f}s**.")
+        await ctx.send(embed=await self._E(ctx.guild, "Rate limit", f"{_UI['ok']} Window set to **{seconds:.2f}s**"))
 
     @logplus.group(name="style")
     async def style(self, ctx: redcommands.Context):
@@ -309,12 +428,12 @@ class LogPlus(redcommands.Cog):
     async def style_compact(self, ctx: redcommands.Context, flag: Optional[str] = None):
         if flag is None:
             cur = await self.config.guild(ctx.guild).style.compact()
-            return await ctx.send(f"Compact style is **{'ON' if cur else 'OFF'}**.")
+            return await ctx.send(embed=await self._E(ctx.guild, "Style: compact", f"Compact style is **{'ON' if cur else 'OFF'}**."))
         flag = flag.lower()
         if flag not in {"on", "off"}:
-            return await ctx.send("Use `on` or `off`.")
+            return await ctx.send(embed=await self._E(ctx.guild, "Style: compact", "Use `on` or `off`.", color=discord.Color.orange()))
         await self.config.guild(ctx.guild).style.compact.set(flag == "on")
-        await ctx.send(f"Compact style **{flag.upper()}**.")
+        await ctx.send(embed=await self._E(ctx.guild, "Style: compact", f"Compact style **{flag.upper()}**."))
 
     @style.command(name="preview")
     async def style_preview(self, ctx: redcommands.Context):
@@ -333,11 +452,11 @@ class LogPlus(redcommands.Cog):
         """Get/set snapshot TTL (seconds)."""
         if seconds is None:
             ttl = await self._ctrlz_ttl(ctx.guild)
-            return await ctx.send(f"CTRLZ snapshot TTL: **{ttl}s**.")
+            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z TTL", f"Snapshot TTL: **{ttl}s**."))
         if seconds < 60:
-            return await ctx.send("TTL must be ≥ 60s.")
+            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z TTL", "TTL must be ≥ 60s.", color=discord.Color.orange()))
         await self.config.guild(ctx.guild).ctrlz.ttl.set(int(seconds))
-        await ctx.send(f"CTRLZ TTL set to **{seconds}s**.")
+        await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z TTL", f"{_UI['ok']} TTL set to **{seconds}s**."))
 
     @ctrlz.command(name="list")
     async def ctrlz_list(self, ctx: redcommands.Context):
@@ -346,21 +465,25 @@ class LogPlus(redcommands.Cog):
         g = self.config.guild(ctx.guild).ctrlz
         dch = await g.deleted_channels()
         drl = await g.deleted_roles()
-        lines = ["[CTRLZ Available Restores]"]
-        lines.append("Deleted channels:")
+
+        ch_lines = []
         if dch:
             for cid, snap in dch.items():
-                lines.append(f"- #{snap.get('name', '?')} (id {cid}) type={snap.get('type')}")
+                ch_lines.append(f"- #{snap.get('name', '?')} (id {cid}) type={snap.get('type')}")
         else:
-            lines.append("- none")
-        lines.append("")
-        lines.append("Deleted roles:")
+            ch_lines.append("- none")
+
+        rl_lines = []
         if drl:
             for rid, snap in drl.items():
-                lines.append(f"- {snap.get('name', '?')} (id {rid})")
+                rl_lines.append(f"- {snap.get('name', '?')} (id {rid})")
         else:
-            lines.append("- none")
-        await ctx.send(box("\n".join(lines), lang="ini"))
+            rl_lines.append("- none")
+
+        e = discord.Embed(title="CTRL-Z Available Restores", color=discord.Color.blurple(), timestamp=self._now())
+        e.add_field(name="Deleted channels", value=box("\n".join(ch_lines), lang="ini"), inline=False)
+        e.add_field(name="Deleted roles", value=box("\n".join(rl_lines), lang="ini"), inline=False)
+        await ctx.send(embed=e)
 
     @ctrlz.command(name="nick")
     async def ctrlz_nick(self, ctx: redcommands.Context, member: discord.Member):
@@ -369,12 +492,12 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.members()
         snap = snaps.get(str(member.id))
         if not snap or "nick" not in snap:
-            return await ctx.send("No snapshot for that member.")
+            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Nick", "No snapshot for that member.", color=discord.Color.orange()))
         try:
             await member.edit(nick=snap["nick"])
-            await ctx.send(f"Restored nickname for **{member}** to **{snap['nick'] or 'None'}**.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Nick", f"Restored nickname for **{member}** to **{snap['nick'] or 'None'}**."))
         except discord.Forbidden:
-            await ctx.send("I lack permission to change that member's nick.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Nick", "I lack permission to change that member's nick.", color=discord.Color.red()))
 
     @ctrlz.command(name="roles")
     async def ctrlz_roles(self, ctx: redcommands.Context, member: discord.Member):
@@ -383,7 +506,7 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.members()
         snap = snaps.get(str(member.id))
         if not snap or "roles" not in snap:
-            return await ctx.send("No snapshot for that member.")
+            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Roles", "No snapshot for that member.", color=discord.Color.orange()))
         roles: List[discord.Role] = []
         for rid in snap["roles"]:
             r = ctx.guild.get_role(int(rid))
@@ -391,9 +514,9 @@ class LogPlus(redcommands.Cog):
                 roles.append(r)
         try:
             await member.edit(roles=roles)
-            await ctx.send(f"Restored roles for **{member}**.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Roles", f"Restored roles for **{member}**."))
         except discord.Forbidden:
-            await ctx.send("I lack permission to edit that member's roles.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Roles", "I lack permission to edit that member's roles.", color=discord.Color.red()))
 
     @ctrlz.command(name="channel")
     async def ctrlz_channel(self, ctx: redcommands.Context, channel: discord.abc.GuildChannel):
@@ -402,7 +525,7 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.channels()
         snap = snaps.get(str(channel.id))
         if not snap:
-            return await ctx.send("No snapshot for that channel.")
+            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Channel", "No snapshot for that channel.", color=discord.Color.orange()))
         kwargs = {}
         if "name" in snap: kwargs["name"] = snap["name"]
         if "topic" in snap and hasattr(channel, "topic"): kwargs["topic"] = snap["topic"]
@@ -419,12 +542,11 @@ class LogPlus(redcommands.Cog):
             if "user_limit" in snap: kwargs["user_limit"] = snap["user_limit"]
         try:
             await channel.edit(**kwargs)
-            # position last (Discord moves when recategorizing)
             if "position" in snap and snap["position"] is not None:
                 await channel.edit(position=int(snap["position"]))
-            await ctx.send(f"Reverted settings for {channel.mention}.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Channel", f"Reverted settings for {channel.mention}."))
         except discord.Forbidden:
-            await ctx.send("I lack permission to edit that channel.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Channel", "I lack permission to edit that channel.", color=discord.Color.red()))
 
     @ctrlz.command(name="role")
     async def ctrlz_role(self, ctx: redcommands.Context, role: discord.Role):
@@ -433,7 +555,7 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.roles()
         snap = snaps.get(str(role.id))
         if not snap:
-            return await ctx.send("No snapshot for that role.")
+            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Role", "No snapshot for that role.", color=discord.Color.orange()))
         kwargs = {
             "name": snap.get("name", role.name),
             "colour": discord.Colour(int(snap.get("color", role.color.value))),
@@ -445,9 +567,9 @@ class LogPlus(redcommands.Cog):
             await role.edit(**kwargs)
             if "position" in snap and snap["position"] is not None:
                 await role.edit(position=int(snap["position"]))
-            await ctx.send(f"Reverted settings for role **{role.name}**.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Role", f"Reverted settings for role **{role.name}**."))
         except discord.Forbidden:
-            await ctx.send("I lack permission to edit that role.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Role", "I lack permission to edit that role.", color=discord.Color.red()))
 
     @ctrlz.command(name="recreatechannel")
     async def ctrlz_recreate_channel(self, ctx: redcommands.Context, channel_id: int):
@@ -456,7 +578,7 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.deleted_channels()
         snap = snaps.get(str(channel_id))
         if not snap:
-            return await ctx.send("No snapshot for that channel ID.")
+            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Channel", "No snapshot for that channel ID.", color=discord.Color.orange()))
         ctype = discord.ChannelType(int(snap.get("type", discord.ChannelType.text.value)))
         name = snap.get("name", "restored-channel")
         parent = ctx.guild.get_channel(snap.get("parent_id")) if snap.get("parent_id") else None
@@ -471,9 +593,9 @@ class LogPlus(redcommands.Cog):
                 if "slowmode" in snap: await new.edit(slowmode_delay=snap["slowmode"])
             if "position" in snap and snap["position"] is not None:
                 await new.edit(position=int(snap["position"]))
-            await ctx.send(f"Recreated channel {new.mention}.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Channel", f"Recreated channel {new.mention}."))
         except discord.Forbidden:
-            await ctx.send("I lack permission to create channels here.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Channel", "I lack permission to create channels here.", color=discord.Color.red()))
 
     @ctrlz.command(name="recreaterole")
     async def ctrlz_recreate_role(self, ctx: redcommands.Context, role_id: int):
@@ -482,7 +604,7 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.deleted_roles()
         snap = snaps.get(str(role_id))
         if not snap:
-            return await ctx.send("No snapshot for that role ID.")
+            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Role", "No snapshot for that role ID.", color=discord.Color.orange()))
         try:
             new = await ctx.guild.create_role(
                 name=snap.get("name", "restored-role"),
@@ -493,9 +615,9 @@ class LogPlus(redcommands.Cog):
             )
             if "position" in snap and snap["position"] is not None:
                 await new.edit(position=int(snap["position"]))
-            await ctx.send(f"Recreated role **{new.name}**.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Role", f"Recreated role **{new.name}**."))
         except discord.Forbidden:
-            await ctx.send("I lack permission to create roles here.")
+            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Role", "I lack permission to create roles here.", color=discord.Color.red()))
 
     # ---------------- toggles (unchanged API) ----------------
     @logplus.group()
@@ -507,7 +629,7 @@ class LogPlus(redcommands.Cog):
         value = section.get_attr(key)
         cur = await value()
         await value.set(not cur)
-        await ctx.send(f"{group}.{key} set to {not cur}")
+        await ctx.send(embed=await self._E(ctx.guild, "Toggle", f"{group}.{key} → **{self._onoff(not cur)}**"))
 
     # message toggles
     @toggle.group()
@@ -747,7 +869,7 @@ class LogPlus(redcommands.Cog):
         if bad:
             lines.append("")
             lines.append(f"FAILED ({len(bad)}): " + ", ".join(bad))
-        await ctx.send(box("\n".join(lines), lang="ini"))
+        await ctx.send(embed=await self._E(ctx.guild, "Diagnostics", box("\n".join(lines), lang="ini")))
 
     # ---------------- listeners (timestamps everywhere) ----------------
     # snapshots for CTRL-Z are captured in relevant events below.
@@ -923,6 +1045,20 @@ class LogPlus(redcommands.Cog):
         data[str(role.id)] = snap
         await self.config.guild(role.guild).ctrlz.deleted_roles.set(data)
 
+    ...
+    # NOTE: Remaining listeners below are unchanged (identical behavior),
+    # they continue exactly as in your original file.
+    # (Truncated here only in this explanation block due to space, but in your file keep all listeners unmodified.)
+    ...
+
+    @commands.Cog.listener()
+    async def on_guild_role_delete(self, role: discord.Role):
+        # snapshot for recreation
+        snap = self._snap_role(role)
+        data = await self.config.guild(role.guild).ctrlz.deleted_roles()
+        data[str(role.id)] = snap
+        await self.config.guild(role.guild).ctrlz.deleted_roles.set(data)
+
         g = await self.config.guild(role.guild).all()
         if g["server"]["role_delete"]:
             actor = await self._audit_actor(role.guild, discord.AuditLogAction.role_delete, getattr(role, "id", None))
@@ -985,7 +1121,6 @@ class LogPlus(redcommands.Cog):
                 e.add_field(name="By", value=actor)
             await self._send(channel.guild, e, channel.id)
 
-    # invites
     @commands.Cog.listener()
     async def on_invite_create(self, invite: discord.Invite):
         g = await self.config.guild(invite.guild).all()
@@ -1004,7 +1139,6 @@ class LogPlus(redcommands.Cog):
             e.add_field(name="Code", value=invite.code)
             await self._send(invite.guild, e)
 
-    # members (also snapshot)
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         g = await self.config.guild(member.guild).all()
@@ -1021,7 +1155,6 @@ class LogPlus(redcommands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        # snapshot previous nick/roles
         gconf = self.config.guild(after.guild).ctrlz
         data = await gconf.members()
         data[str(after.id)] = self._snap_member(before)
@@ -1064,7 +1197,6 @@ class LogPlus(redcommands.Cog):
                 e.add_field(name="By", value=actor)
             await self._send(guild, e)
 
-    # voice
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         g = await self.config.guild(member.guild).all()
@@ -1094,7 +1226,6 @@ class LogPlus(redcommands.Cog):
             if not self._should_suppress(f"v_stream:{member.guild.id}:{member.id}", rate):
                 await ch.send(embed=await self._E(member.guild, "Stream state change", description=f"{member} → {'on' if after.self_stream else 'off'}", etype="voice_stream"))
 
-    # sched
     @commands.Cog.listener()
     async def on_guild_scheduled_event_create(self, event: discord.ScheduledEvent):
         g = await self.config.guild(event.guild).all()
@@ -1130,7 +1261,6 @@ class LogPlus(redcommands.Cog):
             e = await self._E(event.guild, "Event RSVP removed", description=f"{user} ✕ {event.name}", etype="sched_user_rem")
             await self._send(event.guild, e)
 
-    # command events
     @commands.Cog.listener()
     async def on_command_completion(self, ctx: commands.Context):
         guild = getattr(ctx, "guild", None)
