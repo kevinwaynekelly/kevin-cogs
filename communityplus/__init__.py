@@ -923,7 +923,7 @@ class CommunityPlus(redcommands.Cog):
             await self._refresh_solo_for_channel(after.channel if after else None)
 
     # Presence tracking (needs Presence Intent)
-    @commands.Cog.listener())
+    @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
         if not await self.config.guild(after.guild).seen.enabled():
             return
