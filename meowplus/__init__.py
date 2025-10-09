@@ -1,4 +1,4 @@
-# path: cogs/meowifier/__init__.py
+# path: cogs/meowplus/__init__.py
 from __future__ import annotations
 
 import difflib
