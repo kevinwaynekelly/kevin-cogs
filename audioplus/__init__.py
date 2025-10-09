@@ -24,11 +24,14 @@ DEFAULTS_GUILD = {
     "debug": True,
 }
 
+
 def _scheme(https: bool) -> str:
     return "https" if https else "http"
 
+
 def _uri(host: str, port: int, https: bool) -> str:
     return f"{_scheme(https)}://{host}:{port}"
+
 
 try:
     import wavelink  # 3.x required
@@ -96,6 +99,7 @@ class AudioPlus(redcommands.Cog):
     async def cog_load(self) -> None:
         async def _maybe():
             await self.bot.wait_until_ready()
+            # WHY: autoconnect once; with fixed connection check we won't spawn duplicates.
             for guild in self.bot.guilds:
                 g = await self.config.guild(guild).all()
                 if g["node"]["autoconnect"]:
@@ -128,6 +132,11 @@ class AudioPlus(redcommands.Cog):
             "has_Pool_nodes": hasattr(PL, "nodes"),
         }
 
+    @staticmethod
+    def _node_connected(node: "wavelink.Node") -> bool:
+        # WHY: Wavelink 3.4.x exposes `connected`; earlier code looked at `is_connected`.
+        return bool(getattr(node, "connected", False) or getattr(node, "is_connected", False))
+
     def _iter_nodes(self) -> Iterable["wavelink.Node"]:
         ap = self._apis()
         if ap["has_Pool"] and ap["has_Pool_nodes"]:
@@ -152,16 +161,25 @@ class AudioPlus(redcommands.Cog):
     def _get_connected_node(self) -> Optional["wavelink.Node"]:
         for n in self._iter_nodes():
             try:
-                if getattr(n, "is_connected", False):
+                if self._node_connected(n):
                     return n
             except Exception:
                 continue
         return None
 
     async def _connect_node(self, guild: discord.Guild) -> str:
-        if self._get_connected_node():
+        # If we already have a connected node, don't create more.
+        n_connected = self._get_connected_node()
+        if n_connected:
             self._wl_api = self._wl_api or "already-connected"
             self._last_error = None
+            return self._wl_api
+
+        # If nodes exist but aren't connected, don't keep piling up duplicates.
+        existing_nodes = list(self._iter_nodes())
+        if existing_nodes:
+            await self._debug(guild, f"node.exists count={len(existing_nodes)} connected=False; skipping duplicate connect")
+            self._wl_api = self._wl_api or "existing-nodes"
             return self._wl_api
 
         g = await self.config.guild(guild).all()
@@ -175,9 +193,11 @@ class AudioPlus(redcommands.Cog):
         if ap["has_Pool"] and ap["has_Pool_connect"]:
             try:
                 Node = getattr(wavelink, "Node")
-                node = Node(uri=uri, password=pw)
-                if "secure" in node.__init__.__code__.co_varnames:  # type: ignore[attr-defined]
-                    node = Node(uri=uri, password=pw, secure=https)
+                # WHY: Some builds accept secure=..., others infer from URI.
+                try:
+                    node = Node(uri=uri, password=pw, secure=https)  # type: ignore[call-arg]
+                except TypeError:
+                    node = Node(uri=uri, password=pw)  # type: ignore[call-arg]
                 await wavelink.Pool.connect(client=self.bot, nodes=[node])  # type: ignore[attr-defined]
                 self._wl_api = "Pool.connect(Node)"
                 self._last_error = None
@@ -206,7 +226,7 @@ class AudioPlus(redcommands.Cog):
         try:
             nodes = list(self._iter_nodes())
             parts.append(f"nodes_total={len(nodes)}")
-            parts.append(f"nodes_connected={sum(1 for n in nodes if getattr(n,'is_connected',False))}")
+            parts.append(f"nodes_connected={sum(1 for n in nodes if self._node_connected(n))}")
         except Exception:
             parts.append("nodes_introspection=error")
         if self._wl_api != "unset":
@@ -392,7 +412,7 @@ class AudioPlus(redcommands.Cog):
     async def node_status(self, ctx: redcommands.Context):
         conf = await self.config.guild(ctx.guild).node()
         nodes = list(self._iter_nodes())
-        connected = [n for n in nodes if getattr(n, "is_connected", False)]
+        connected = [n for n in nodes if self._node_connected(n)]
         players = [vc for vc in self.bot.voice_clients if isinstance(vc, MusicPlayer)]
         lines = [
             f"configured_uri={_uri(conf['host'], conf['port'], conf['https']) if conf['host'] else 'not set'}",
@@ -403,7 +423,8 @@ class AudioPlus(redcommands.Cog):
             f"api={self._wl_api} last_error={self._last_error or 'none'}",
         ]
         for i, n in enumerate(nodes, 1):
-            lines.append(f"node[{i}]: connected={getattr(n,'is_connected',False)} uri={getattr(n,'uri','?')}")
+            uri = getattr(n, "uri", None) or getattr(n, "rest_uri", "?")
+            lines.append(f"node[{i}]: connected={self._node_connected(n)} uri={uri}")
         await ctx.send(box("\n".join(lines), lang="ini"))
 
     @nodegrp.command(name="ping")
@@ -484,9 +505,9 @@ class AudioPlus(redcommands.Cog):
             diag = [
                 f"Play failed: {type(e).__name__}",
                 f"state=playing:{player.playing} paused:{player.paused}",
-                f"vc_bot={'yes' if (gv and gv.channel) else 'no'} vc_id={getattr(gv.channel,'id',None)}",
-                f"player_channel_id={getattr(player.channel,'id',None)}",
-                f"node_connected={getattr(node,'is_connected',False)} api={self._wl_api}",
+                f"vc_bot={'yes' if (gv and gv.channel) else 'no'} vc_id={getattr(getattr(gv,'channel',None),'id',None)}",
+                f"player_channel_id={getattr(getattr(player,'channel',None),'id',None)}",
+                f"node_connected={bool(node and self._node_connected(node))} api={self._wl_api}",
                 "hint=Check Connect/Speak perms, Lavalink logs, and YouTube cipher plugin.",
             ]
             await ctx.send(box("\n".join(diag), lang="ini"))
