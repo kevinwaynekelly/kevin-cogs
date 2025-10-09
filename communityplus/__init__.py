@@ -140,7 +140,7 @@ class CommunityPlus(redcommands.Cog):
         e = discord.Embed(title=title, description=desc, color=color, timestamp=self._utcnow())
         if footer:
             e.set_footer(text=footer)
-        return e)
+        return e
 
     # ---------- status ----------
     async def _status_embed(self, guild: discord.Guild) -> discord.Embed:
