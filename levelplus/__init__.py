@@ -337,7 +337,7 @@ class LevelPlus(redcommands.Cog):
     async def level(self, ctx: redcommands.Context):
         g = await self._g(ctx.guild)
         base, inc = await self._lin(ctx.guild)
-        lu_chan = f"<#{g['levelup']['channel_id']}>" if g["levelup"]["channel_id"] else "current"
+        lu_chan = f"<#{g['levelup']['channel_id']}>" if g['levelup']['channel_id'] else "current"
         lu_tpl = g["levelup"]["template"][:40]
         lines = [
             f"Curve={g['curve']} Mult={g['multiplier']} MaxLevel={g['max_level'] or '∞'}  Linear(base={base:.3f}, inc={inc:.3f})",
@@ -352,49 +352,20 @@ class LevelPlus(redcommands.Cog):
 
     @level.command(name="help")
     async def level_help(self, ctx: redcommands.Context):
-        """List **all** commands."""
+        """Pretty, sectioned help."""
         p = ctx.clean_prefix
-        desc = (
-            f"**Core**\n"
-            f"• `{p}level` • `{p}level help` • `{p}level diag`\n"
-            f"• `{p}level show [@user]` • `{p}level leaderboard [N]`\n"
-            f"• `{p}level testmsg [@user]` • `{p}level testup [@user] [levels]`\n\n"
-            f"**Formula & Scale**\n"
-            f"• `{p}level formula curve <linear|exponential|constant>`\n"
-            f"• `{p}level formula multiplier <float>` • `{p}level formula maxlevel <0|N>`\n"
-            f"• `{p}level formula preset arcane` • `{p}level formula calibrate <L1> <XP1> <L2> <XP2>`\n"
-            f"• `{p}level formula linear base <float>` • `linear inc <float>`\n\n"
-            f"**Message XP**\n"
-            f"• `{p}level message enable [true|false]` • `mode <perword|random|none>`\n"
-            f"• `min <n>` `max <n>` `cooldown <sec>`\n\n"
-            f"**Reaction XP**\n"
-            f"• `{p}level reaction enable [true|false]` • `awards <both|author|reactor|none>`\n"
-            f"• `min <n>` `max <n>` `cooldown <sec>`\n\n"
-            f"**Voice XP**\n"
-            f"• `{p}level voice enable [true|false]` • `range <min> <max>` • `cooldown <sec>`\n"
-            f"• `minmembers <n>` • `antiafk [true|false]`\n\n"
-            f"**Restrictions**\n"
-            f"• `{p}level restrict nochannels add|remove|list|clear <#ch>`\n"
-            f"• `{p}level restrict noroles add|remove|list|clear <@role>`\n"
-            f"• `{p}level restrict toggles <threadxp|forumxp|textvoicexp|slashxp> [true|false]`\n\n"
-            f"**Level-up Message**\n"
-            f"• `{p}level levelup enable [true|false]` • `channel [#ch|none]`\n"
-            f"• `template <text with {{user.*}}>`\n\n"
-            f"**XP Admin & Migration**\n"
-            f"• `{p}level xp set @user <amount>` • `{p}level xp add @user <amount>`\n"
-            f"• `{p}level xp setid <id> <amount>`\n"
-            f"• `{p}level xp exportcsv` • `{p}level xp importcsv` • `{p}level xp importlines`\n"
-            f"• `{p}level xp remove @user` • `{p}level xp removeid <id>`\n"
-            f"• `{p}level xp purgebots` • `{p}level xp clear yes`\n\n"
-            f"**Leavers / Aliases / Lookup**\n"
-            f"• `{p}level lookup <name|@mention|id>` → show ID(s)\n"
-            f"• `{p}level name set @user <alias>` • `name setid <id> <alias>` • `name get <id>`\n\n"
-            f"*Bots never gain XP. Data persists across leaves/joins.*"
-        )
-        try:
-            await ctx.send(embed=discord.Embed(title="LevelPlus — Commands", description=desc, color=discord.Color.blurple()))
-        except discord.Forbidden:
-            await ctx.send(box(desc, lang="ini"))
+        e = discord.Embed(title="LevelPlus — Commands", color=discord.Color.blurple())
+        e.description = f"✨ Cleaner help • examples use `{p}` as prefix."
+        e.add_field(name="🧩 Core", value=f"• `{p}level` • `{p}level help` • `{p}level diag`\n• `{p}level show [@user]` • `{p}level leaderboard [N]`\n• `{p}level testmsg [@user]` • `{p}level testup [@user] [levels]`", inline=False)
+        e.add_field(name="📈 Formula & Scale", value=f"• `{p}level formula curve <linear|exponential|constant>`\n• `{p}level formula multiplier <float>` • `{p}level formula maxlevel <0|N>`\n• `{p}level formula preset arcane` • `{p}level formula calibrate <L1> <XP1> <L2> <XP2>`\n• `{p}level formula linear base <float>` • `linear inc <float>`", inline=False)
+        e.add_field(name="💬 Message XP", value=f"• `{p}level message enable [true|false]` • `mode <perword|random|none>`\n• `min <n>` `max <n>` `cooldown <sec>`", inline=False)
+        e.add_field(name="➕ Reaction XP", value=f"• `{p}level reaction enable [true|false]` • `awards <both|author|reactor|none>`\n• `min <n>` `max <n>` `cooldown <sec>`", inline=False)
+        e.add_field(name="🎧 Voice XP", value=f"• `{p}level voice enable [true|false]` • `range <min> <max>` • `cooldown <sec>`\n• `minmembers <n>` • `antiafk [true|false]`", inline=False)
+        e.add_field(name="🚫 Restrictions", value=f"• `{p}level restrict nochannels add|remove|list|clear <#ch>`\n• `{p}level restrict noroles add|remove|list|clear <@role>`\n• `{p}level restrict toggles <threadxp|forumxp|textvoicexp|slashxp> [true|false]`", inline=False)
+        e.add_field(name="🎉 Level-up Message", value=f"• `{p}level levelup enable [true|false]` • `channel [#ch|none]`\n• `template <text with {{user.*}}>`", inline=False)
+        e.add_field(name="🗃️ XP Admin & Migration", value=f"• `{p}level xp set @user <amt>` • `add @user <amt>` • `setid <id> <amt>`\n• `exportcsv` • `importcsv` • `importlines`\n• `remove @user` • `removeid <id>` • `purgebots` • `clear yes`", inline=False)
+        e.add_field(name="🔍 Lookup & Aliases", value=f"• `{p}level lookup <name|@|id>`\n• `{p}level name set @user <alias>` • `name setid <id> <alias>` • `name get <id>`", inline=False)
+        await ctx.send(embed=e)
 
     @level.command()
     async def diag(self, ctx: redcommands.Context):
