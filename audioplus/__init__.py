@@ -5,10 +5,10 @@
 # ---------- info.json ----------
 # {
 #   "author": ["Code Copilot"],
-#   "install_msg": "Installed audioplus. Configure your Lavalink node with `[p]audio setnode <host> <port> <password> <secure>`.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`.",
+#   "install_msg": "Installed audioplus. Configure your Lavalink node with `[p]audio setnode <host> <port> <password> <secure>`.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`. Use `[p]audio pingnode` to check node health.",
 #   "name": "audioplus",
 #   "short": "Single-file Lavalink v4 music cog using Wavelink 3.x.",
-#   "description": "Red cog (single-file __init__.py) for Lavalink v4 via Wavelink 3.x. Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle; owner: audio setnode/shownode.",
+#   "description": "Red cog (single-file __init__.py) for Lavalink v4 via Wavelink 3.x. Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode; owner: audio setnode/shownode.",
 #   "end_user_data_statement": "Stores Lavalink node details (host, port, password, secure) in Red's Config.",
 #   "requirements": ["wavelink>=3.4.1,<4.0.0"],
 #   "tags": ["music", "lavalink", "wavelink", "audio"],
@@ -20,7 +20,7 @@
 # ---------- __init__.py ----------
 """
 AudioPlus: Single-file Red cog for Lavalink v4 using Wavelink 3.x.
-Commands: [p]audio ...  (join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle)
+Commands: [p]audio ...  (join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle/pingnode)
 Owner: [p]audio setnode <host> <port> <password> <secure>
 """
 from __future__ import annotations
@@ -29,9 +29,10 @@ import asyncio
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 
+import aiohttp  # why: REST call to /v4/info for pingnode
 import discord
 import wavelink
-from wavelink.exceptions import ChannelTimeoutException
+from wavelink.exceptions import ChannelTimeoutException, InvalidNodeException
 
 from redbot.core import Config, checks, commands
 from redbot.core.bot import Red
@@ -68,7 +69,7 @@ class AudioPlus(commands.Cog):
         self.bot: Red = bot
         self.config: Config = Config.get_conf(self, identifier=0xA10DEFAB, force_registration=True)
         self.config.register_global(**self.default_global)
-        # why: gate voice connect until node is reported ready at least once
+        # why: gate voice connects until node reports ready at least once
         self._node_ready: asyncio.Event = asyncio.Event()
 
     # ---- lifecycle ----
@@ -95,7 +96,7 @@ class AudioPlus(commands.Cog):
         )
 
     async def _ensure_nodes(self, node_cfg: NodeConfig) -> None:
-        # why: avoid duplicate node connections on reload
+        # avoid duplicate connects on reload
         try:
             existing = wavelink.Pool.get_node(node_cfg.identifier)
             if existing:
@@ -111,13 +112,24 @@ class AudioPlus(commands.Cog):
         )
         await wavelink.Pool.connect(nodes=[node], client=self.bot)
 
+    async def _ensure_pool_available(self, wait_timeout: float = 20.0) -> None:
+        """Ensure at least one CONNECTED node exists; reconnect if needed."""
+        needs_connect = False
+        try:
+            _ = wavelink.Pool.get_node()
+        except Exception:
+            needs_connect = True
+        if needs_connect:
+            await self._ensure_nodes(await self._get_node_config())
+        await self._wait_node_ready(timeout=wait_timeout)
+
     async def _wait_node_ready(self, timeout: float = 20.0) -> None:
         try:
             if self._node_ready.is_set():
                 return
             await asyncio.wait_for(self._node_ready.wait(), timeout=timeout)
         except asyncio.TimeoutError:
-            # why: node may already be usable; continue instead of hard-failing
+            # node may still be usable; continue
             pass
 
     async def _fetch_or_connect_player(
@@ -138,6 +150,9 @@ class AudioPlus(commands.Cog):
                 await vc.move_to(channel)
             return vc, channel
 
+        # ensure node is available/connected
+        await self._ensure_pool_available(wait_timeout=30.0)
+
         # perms guard
         me = ctx.guild.me
         perms = channel.permissions_for(me)
@@ -145,9 +160,6 @@ class AudioPlus(commands.Cog):
             raise commands.CheckFailure("I need the **Connect** permission for that voice channel.")
         if isinstance(channel, discord.StageChannel) and not perms.speak:
             raise commands.CheckFailure("On a Stage channel I also need **Speak** permission.")
-
-        # best-effort wait for node
-        await self._wait_node_ready()
 
         # connect with extended timeout; one retry on timeout
         try:
@@ -184,6 +196,27 @@ class AudioPlus(commands.Cog):
                 continue
         return count
 
+    @staticmethod
+    def _fmt_bytes_mib(value: Optional[int]) -> Optional[int]:
+        return None if value is None else max(0, int(value / (1024 * 1024)))
+
+    async def _fetch_lavalink_info(self, node: wavelink.Node, timeout: float = 7.0) -> Optional[dict]:
+        """GET /v4/info with Authorization header; include RTT (ms)."""
+        url = f"{getattr(node, 'uri', '')}/v4/info"
+        password = getattr(node, "password", None)
+        if not url or not password:
+            return None
+        headers = {"Authorization": str(password)}
+        t0 = asyncio.get_running_loop().time()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=timeout) as resp:
+                    data = await resp.json(content_type=None)
+        except Exception:
+            return None
+        data["_rtt_ms"] = int((asyncio.get_running_loop().time() - t0) * 1000)
+        return data
+
     # ---- events ----
 
     @commands.Cog.listener()
@@ -206,7 +239,6 @@ class AudioPlus(commands.Cog):
 
     @commands.Cog.listener()
     async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload) -> None:
-        # why: events don't have a text channel; avoid sending in a voice channel
         exc_msg = getattr(payload.exception, "message", None) or str(payload.exception) or "unknown"
         print(f"[audioplus] Track exception: {exc_msg!s}")
         await self._maybe_start_queue(payload.player)
@@ -229,7 +261,13 @@ class AudioPlus(commands.Cog):
         await self.config.port.set(int(port))
         await self.config.password.set(password)
         await self.config.secure.set(bool(secure))
+        # reset ready gate since we will reconnect
+        try:
+            self._node_ready.clear()
+        except Exception:
+            pass
         await self._ensure_nodes(await self._get_node_config())
+        await self._wait_node_ready(timeout=10.0)
         await ctx.send("Lavalink node saved & (re)connected.")
 
     @audio.command(name="shownode")
@@ -239,6 +277,56 @@ class AudioPlus(commands.Cog):
         data = await self.config.all()
         secure = "yes" if data["secure"] else "no"
         await ctx.send(f"Node: {data['host']}:{data['port']} (secure: {secure})")
+
+    @audio.command(name="pingnode")
+    @GUILD_ONLY
+    async def audio_pingnode(self, ctx: commands.Context) -> None:
+        """Show Lavalink node version/state."""
+        try:
+            await self._ensure_pool_available(wait_timeout=10.0)
+            node = wavelink.Pool.get_node()
+        except (InvalidNodeException, Exception):
+            await ctx.send("No Lavalink node is connected. Configure with `[p]audio setnode`.")
+            return
+
+        info = await self._fetch_lavalink_info(node, timeout=7.0)
+        stats = getattr(node, "stats", None)
+
+        # basic status heuristics
+        connected = True  # if Pool.get_node() succeeded, assume connected
+        ident = getattr(node, "identifier", "MAIN")
+        uri = getattr(node, "uri", "unknown")
+
+        lines = [f"**Lavalink Node — {ident}**", f"URI: `{uri}`", f"Connected: {'yes' if connected else 'no'}"]
+
+        if info:
+            ver = info.get("version", "unknown")
+            rtt = info.get("_rtt_ms", None)
+            build = info.get("buildTime", None)
+            lines.append(f"Version: `{ver}`" + (f" | HTTP RTT: `{rtt} ms`" if rtt is not None else ""))
+            if build:
+                lines.append(f"Build time: `{build}`")
+        else:
+            lines.append("Version: `unknown` (info endpoint not reachable)")
+
+        if stats:
+            players = getattr(stats, "players", None) or getattr(stats, "player_count", None) or 0
+            playing = getattr(stats, "playing_players", None) or getattr(stats, "playing", None) or 0
+            uptime = getattr(stats, "uptime", None)
+            mem = getattr(stats, "memory", None)
+            used_mib = None
+            reservable_mib = None
+            if isinstance(mem, dict):
+                used_mib = self._fmt_bytes_mib(mem.get("used"))
+                reservable_mib = self._fmt_bytes_mib(mem.get("reservable") or mem.get("allocated"))
+            else:
+                used_mib = self._fmt_bytes_mib(getattr(mem, "used", None))
+                reservable_mib = self._fmt_bytes_mib(getattr(mem, "reservable", None) or getattr(mem, "allocated", None))
+            lines.append(f"Players: `{players}` | Playing: `{playing}`" + (f" | Uptime: `{uptime} ms`" if uptime is not None else ""))
+            if used_mib is not None:
+                lines.append(f"Memory used: `{used_mib} MiB`" + (f" / `{reservable_mib} MiB` reservable" if reservable_mib is not None else ""))
+
+        await ctx.send("\n".join(lines))
 
     @audio.command(name="join", aliases=["connect", "summon"])
     @GUILD_ONLY
@@ -262,6 +350,7 @@ class AudioPlus(commands.Cog):
     @GUILD_ONLY
     async def audio_play(self, ctx: commands.Context, *, query: str) -> None:
         """Play a URL or search (YouTube, etc.). Example: `[p]audio play never gonna give you up`"""
+        await self._ensure_pool_available(wait_timeout=30.0)
         player, _ = await self._fetch_or_connect_player(ctx)
 
         if not (query.startswith("http://") or query.startswith("https://")):
@@ -279,7 +368,6 @@ class AudioPlus(commands.Cog):
             return
 
         queued = 0
-        # heuristic: if multiple results and query likely a playlist URL, enqueue all
         if hasattr(results, "__len__") and len(results) > 1 and ("list=" in query or "playlist" in query):
             queued = self._queue_put_many(player.queue, results)
         else:
@@ -317,7 +405,6 @@ class AudioPlus(commands.Cog):
         vc = ctx.voice_client
         if vc and isinstance(vc, wavelink.Player):
             try:
-                # clear then stop; avoid leaving stale current
                 if hasattr(vc, "queue"):
                     vc.queue.clear()
                 await vc.stop(force=True)
@@ -332,7 +419,7 @@ class AudioPlus(commands.Cog):
         """Pause the player."""
         vc = ctx.voice_client
         if vc and isinstance(vc, wavelink.Player):
-            await vc.pause(True)  # why: Wavelink pause expects bool
+            await vc.pause(True)
             await ctx.send("Paused.")
         else:
             await ctx.send("Not connected.")
