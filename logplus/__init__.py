@@ -1,4 +1,4 @@
-# path: cogs/logplus/__init__.py
+# path: cogs/kevinwaynekelly/logplus/__init__.py
 from __future__ import annotations
 
 from typing import Optional, Dict, Tuple, Iterable, List
@@ -15,8 +15,9 @@ from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import box
 
 __red_end_user_data_statement__ = (
-    "This cog stores per-guild settings for logging preferences, channel/role/member snapshots for short-lived, admin-initiated restore actions, "
-    "channel IDs, and optional per-channel routing overrides. Snapshots are auto-pruned by TTL and do not include message contents."
+    "This cog stores per-guild settings for logging preferences, channel/role/member snapshots for short-lived, "
+    "admin-initiated restore actions, channel IDs, and optional per-channel routing overrides. Snapshots are "
+    "auto-pruned by TTL and do not include message contents."
 )
 
 # ========================= Styling =========================
@@ -65,47 +66,67 @@ EVENT_STYLE: Dict[str, Dict[str, object]] = {
     "sched_user_rem": {"emoji": "➖", "color": discord.Color.red()},
     "cmd_thisbot": {"emoji": "🤖", "color": discord.Color.green()},
     "cmd_otherbot": {"emoji": "🤖", "color": discord.Color.blurple()},
-    "presence_updated": {"emoji": "🟢", "color": discord.Color.green()},
 }
 
 # Generic UI emojis (for embeds, not events)
-_UI = {"core": "🛠️", "style": "🎨", "ctrlz": "⏪", "toggles": "🎚️", "diag": "🧪", "ok": "✅", "warn": "⚠️"}
+_UI = {
+    "core": "🛠️",
+    "style": "🎨",
+    "ctrlz": "⏪",
+    "toggles": "🎚️",
+    "diag": "🧪",
+    "ok": "✅",
+    "warn": "⚠️",
+}
 
 # ========================= Defaults =========================
 DEFAULTS_GUILD = {
     "log_channel": None,
     "fast_logs": True,
     "overrides": {},
-
     "message": {"edit": True, "delete": True, "bulk_delete": True, "pins": True, "exempt_channels": []},
     "reactions": {"add": True, "remove": True, "clear": True},
     "server": {
-        "channel_create": True, "channel_delete": True, "channel_update": True,
-        "role_create": True, "role_delete": True, "role_update": True,
-        "server_update": True, "emoji_update": True, "sticker_update": True,
-        "integrations_update": True, "webhooks_update": True,
-        "thread_create": True, "thread_delete": True, "thread_update": True,
+        "channel_create": True,
+        "channel_delete": True,
+        "channel_update": True,
+        "role_create": True,
+        "role_delete": True,
+        "role_update": True,
+        "server_update": True,
+        "emoji_update": True,
+        "sticker_update": True,
+        "integrations_update": True,
+        "webhooks_update": True,
+        "thread_create": True,
+        "thread_delete": True,
+        "thread_update": True,
         "exempt_channels": [],
     },
     "invites": {"create": True, "delete": True},
     "member": {
-        "join": True, "leave": True, "roles_changed": True, "nick_changed": True,
-        "ban": True, "unban": True, "timeout": True, "presence": True,
+        "join": True,
+        "leave": True,
+        "roles_changed": True,
+        "nick_changed": True,
+        "ban": True,
+        "unban": True,
+        "timeout": True,
+        "presence": True,
     },
     "voice": {"join": True, "move": True, "leave": True, "mute": True, "deaf": True, "video": True, "stream": True},
     "sched": {"create": True, "update": True, "delete": True, "user_add": True, "user_remove": True},
     "commands": {"this_bot": True, "other_bots": True},
     "rate": {"seconds": 2.0},
     "style": {"compact": True},
-
     # CTRL-Z snapshot cache (short-lived)
     "ctrlz": {
         "ttl": 86400,  # seconds
-        "channels": {},          # {channel_id: {fields..., ts}}
+        "channels": {},  # {channel_id: {fields..., ts}}
         "deleted_channels": {},  # ditto
-        "roles": {},             # {role_id: {fields..., ts}}
-        "deleted_roles": {},     # ditto
-        "members": {},           # {member_id: {nick, roles:[ids], ts}}
+        "roles": {},  # {role_id: {fields..., ts}}
+        "deleted_roles": {},  # ditto
+        "members": {},  # {member_id: {nick, roles:[ids], ts}}
     },
 }
 
@@ -154,16 +175,24 @@ class LogPlus(redcommands.Cog):
         if compact and style.get("emoji"):
             title = f"{style['emoji']} {title}"
         if color is None and style.get("color"):
-            color = style["color"]  # why: consistent visual look per event
-        e = discord.Embed(title=title, description=description, color=color or discord.Color.blurple(), timestamp=self._now())
+            color = style["color"]  # consistent visual look per event
+        e = discord.Embed(
+            title=title, description=description, color=color or discord.Color.blurple(), timestamp=self._now()
+        )
         if footer:
             e.set_footer(text=footer)
         return e
 
-    async def _E(self, guild: discord.Guild, title: str, description: Optional[str] = None, *, color=None, footer=None, etype=None) -> discord.Embed:
-        return self._mk_embed(title, description, color=color, footer=footer, etype=etype, compact=await self._is_compact(guild))
+    async def _E(
+        self, guild: discord.Guild, title: str, description: Optional[str] = None, *, color=None, footer=None, etype=None
+    ) -> discord.Embed:
+        return self._mk_embed(
+            title, description, color=color, footer=footer, etype=etype, compact=await self._is_compact(guild)
+        )
 
-    async def _log_channel(self, guild: discord.Guild, source_channel_id: Optional[int] = None) -> Optional[discord.TextChannel]:
+    async def _log_channel(
+        self, guild: discord.Guild, source_channel_id: Optional[int] = None
+    ) -> Optional[discord.TextChannel]:
         if source_channel_id is not None:
             overrides = await self.config.guild(guild).overrides()
             if isinstance(overrides, dict):
@@ -191,7 +220,10 @@ class LogPlus(redcommands.Cog):
         except discord.Forbidden:
             pass
 
-    async def _audit_actor(self, guild: discord.Guild, action: discord.AuditLogAction, target_id: Optional[int] = None) -> Optional[str]:
+    async def _audit_actor(
+        self, guild: discord.Guild, action: discord.AuditLogAction, target_id: Optional[int] = None
+    ) -> Optional[str]:
+        # Simple "latest" matcher
         try:
             async for entry in guild.audit_logs(limit=5, action=action):
                 if target_id is None or (getattr(entry.target, "id", None) == target_id):
@@ -207,36 +239,32 @@ class LogPlus(redcommands.Cog):
         *,
         target_id: Optional[int] = None,
         channel_id: Optional[int] = None,
-        lookback_s: int = 15,
+        lookback_s: int = 60,
     ) -> Optional[str]:
-        """Best-effort: find a recent audit entry matching actions/target/channel."""
+        """
+        Best-effort: find a recent audit entry within lookback_s seconds that matches any of `actions`,
+        and optionally the target and channel. Returns "User (ID)" or None.
+        """
         if not isinstance(actions, (list, tuple, set)):
             actions = [actions]
         actions = [a for a in actions if a is not None]
         if not actions:
             return None
-
         after = discord.utils.utcnow() - timedelta(seconds=max(1, lookback_s))
         try:
-            async for entry in guild.audit_logs(limit=15, after=after):
+            async for entry in guild.audit_logs(limit=25, after=after):
                 if entry.action not in actions:
                     continue
-                ok = True
                 if target_id is not None and getattr(entry.target, "id", None) != target_id:
-                    ok = False
-                if ok and channel_id is not None:
+                    continue
+                if channel_id is not None:
                     extra_ch = getattr(getattr(entry, "extra", None), "channel", None)
                     if getattr(extra_ch, "id", None) != channel_id:
-                        ok = False
-                if ok:
-                    return f"{entry.user} ({entry.user.id})"
+                        continue
+                return f"{entry.user} ({entry.user.id})"
         except Exception:
             return None
         return None
-
-    @staticmethod
-    def _who(u: discord.abc.User | discord.Member | None) -> str:
-        return f"{u} ({u.id})" if u else "unknown"
 
     async def _rate_seconds(self, guild: discord.Guild) -> float:
         r = await self.config.guild(guild).rate.seconds()
@@ -258,16 +286,13 @@ class LogPlus(redcommands.Cog):
         g = await self.config.guild(guild).all()
         log_ch = guild.get_channel(g["log_channel"]) if g["log_channel"] else None
         e = discord.Embed(
-            title="LogPlus — Status",
-            description="Event logging + CTRL-Z snapshots.",
-            color=discord.Color.blurple(),
-            timestamp=self._now(),
+            title="LogPlus — Status", description="Event logging + CTRL-Z snapshots.", color=discord.Color.blurple(), timestamp=self._now()
         )
         e.add_field(
             name=f"{_UI['core']} Core",
             value=box(
-                f"log_channel = {getattr(log_ch, 'mention', 'not set')}\n"
-                f"rate        = {g['rate']['seconds']}s\n"
+                f"log_channel   = {getattr(log_ch, 'mention', 'not set')}\n"
+                f"rate          = {g['rate']['seconds']}s\n"
                 f"style.compact = {g['style']['compact']}",
                 lang="ini",
             ),
@@ -385,12 +410,7 @@ class LogPlus(redcommands.Cog):
 
     @staticmethod
     def _snap_member(m: discord.Member) -> Dict[str, object]:
-        return {
-            "id": m.id,
-            "nick": m.nick,
-            "roles": [role.id for role in m.roles if not role.is_default()],
-            "ts": time.time(),
-        }
+        return {"id": m.id, "nick": m.nick, "roles": [role.id for role in m.roles if not role.is_default()], "ts": time.time()}
 
     # ---------------- commands: main & settings ----------------
     @redcommands.group(name="logplus", invoke_without_command=True)
@@ -405,28 +425,34 @@ class LogPlus(redcommands.Cog):
         e = discord.Embed(title="LogPlus — Commands", color=discord.Color.blurple())
         e.add_field(
             name=f"{_UI['core']} Core",
-            value=(f"• `{p}logplus` • `{p}logplus help` • `{p}logplus diag`\n"
-                   f"• `{p}logplus rate [seconds]`\n"
-                   f"• `{p}logplus style compact <on|off>` • `{p}logplus style preview`"),
+            value=(
+                f"• `{p}logplus` • `{p}logplus help` • `{p}logplus diag`\n"
+                f"• `{p}logplus rate [seconds]`\n"
+                f"• `{p}logplus style compact <on|off>` • `{p}logplus style preview`"
+            ),
             inline=False,
         )
         e.add_field(
             name=f"{_UI['ctrlz']} CTRL-Z",
-            value=(f"• `{p}logplus ctrlz ttl [seconds]` • `{p}logplus ctrlz list`\n"
-                   f"• `{p}logplus ctrlz nick @user` • `{p}logplus ctrlz roles @user`\n"
-                   f"• `{p}logplus ctrlz channel #channel` • `{p}logplus ctrlz role @role`\n"
-                   f"• `{p}logplus ctrlz recreatechannel <id>` • `{p}logplus ctrlz recreaterole <id>`"),
+            value=(
+                f"• `{p}logplus ctrlz ttl [seconds]` • `{p}logplus ctrlz list`\n"
+                f"• `{p}logplus ctrlz nick @user` • `{p}logplus ctrlz roles @user`\n"
+                f"• `{p}logplus ctrlz channel #channel` • `{p}logplus ctrlz role @role`\n"
+                f"• `{p}logplus ctrlz recreatechannel <id>` • `{p}logplus ctrlz recreaterole <id>`"
+            ),
             inline=False,
         )
         e.add_field(
             name=f"{_UI['toggles']} Toggles",
-            value=(f"• `{p}logplus toggle message <edit|delete|bulk|pins>`\n"
-                   f"• `{p}logplus toggle reactions <add|remove|clear>`\n"
-                   f"• `{p}logplus toggle server <channelcreate|channeldelete|channelupdate|rolecreate|roledelete|roleupdate|serverupdate|emojiupdate|stickerupdate|integrationsupdate|webhooksupdate|threadcreate|threaddelete|thredupdate>`\n"
-                   f"• `{p}logplus toggle invites <create|delete>`\n"
-                   f"• `{p}logplus toggle member <join|leave|roles|nick|ban|unban|timeout|presence>`\n"
-                   f"• `{p}logplus toggle voice <join|move|leave|mute|deaf|video|stream>`\n"
-                   f"• `{p}logplus toggle commands <thisbot|otherbots>`"),
+            value=(
+                f"• `{p}logplus toggle message <edit|delete|bulk|pins>`\n"
+                f"• `{p}logplus toggle reactions <add|remove|clear>`\n"
+                f"• `{p}logplus toggle server <channelcreate|channeldelete|channelupdate|rolecreate|roledelete|roleupdate|serverupdate|emojiupdate|stickerupdate|integrationsupdate|webhooksupdate|threadcreate|threaddelete|thredupdate>`\n"
+                f"• `{p}logplus toggle invites <create|delete>`\n"
+                f"• `{p}logplus toggle member <join|leave|roles|nick|ban|unban|timeout|presence>`\n"
+                f"• `{p}logplus toggle voice <join|move|leave|mute|deaf|video|stream>`\n"
+                f"• `{p}logplus toggle commands <thisbot|otherbots>`"
+            ),
             inline=False,
         )
         e.add_field(
@@ -442,7 +468,9 @@ class LogPlus(redcommands.Cog):
             cur = await self._rate_seconds(ctx.guild)
             return await ctx.send(embed=await self._E(ctx.guild, "Rate limit", f"Current window: **{cur:.2f}s**"))
         if seconds < 0:
-            return await ctx.send(embed=await self._E(ctx.guild, "Rate limit", f"{_UI['warn']} Seconds must be ≥ 0.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "Rate limit", f"{_UI['warn']} Seconds must be ≥ 0.", color=discord.Color.orange())
+            )
         await self.config.guild(ctx.guild).rate.seconds.set(float(seconds))
         await ctx.send(embed=await self._E(ctx.guild, "Rate limit", f"{_UI['ok']} Window set to **{seconds:.2f}s**"))
 
@@ -454,10 +482,14 @@ class LogPlus(redcommands.Cog):
     async def style_compact(self, ctx: redcommands.Context, flag: Optional[str] = None):
         if flag is None:
             cur = await self.config.guild(ctx.guild).style.compact()
-            return await ctx.send(embed=await self._E(ctx.guild, "Style: compact", f"Compact style is **{'ON' if cur else 'OFF'}**."))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "Style: compact", f"Compact style is **{'ON' if cur else 'OFF'}**.")
+            )
         flag = flag.lower()
         if flag not in {"on", "off"}:
-            return await ctx.send(embed=await self._E(ctx.guild, "Style: compact", "Use `on` or `off`.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "Style: compact", "Use `on` or `off`.", color=discord.Color.orange())
+            )
         await self.config.guild(ctx.guild).style.compact.set(flag == "on")
         await ctx.send(embed=await self._E(ctx.guild, "Style: compact", f"Compact style **{flag.upper()}**."))
 
@@ -480,7 +512,9 @@ class LogPlus(redcommands.Cog):
             ttl = await self._ctrlz_ttl(ctx.guild)
             return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z TTL", f"Snapshot TTL: **{ttl}s**."))
         if seconds < 60:
-            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z TTL", "TTL must be ≥ 60s.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z TTL", "TTL must be ≥ 60s.", color=discord.Color.orange())
+            )
         await self.config.guild(ctx.guild).ctrlz.ttl.set(int(seconds))
         await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z TTL", f"{_UI['ok']} TTL set to **{seconds}s**."))
 
@@ -518,12 +552,18 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.members()
         snap = snaps.get(str(member.id))
         if not snap or "nick" not in snap:
-            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Nick", "No snapshot for that member.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Nick", "No snapshot for that member.", color=discord.Color.orange())
+            )
         try:
             await member.edit(nick=snap["nick"])
-            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Nick", f"Restored nickname for **{member}** to **{snap['nick'] or 'None'}**."))
+            await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Nick", f"Restored nickname for **{member}** to **{snap['nick'] or 'None'}**.")
+            )
         except discord.Forbidden:
-            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Nick", "I lack permission to change that member's nick.", color=discord.Color.red()))
+            await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Nick", "I lack permission to change that member's nick.", color=discord.Color.red())
+            )
 
     @ctrlz.command(name="roles")
     async def ctrlz_roles(self, ctx: redcommands.Context, member: discord.Member):
@@ -532,7 +572,9 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.members()
         snap = snaps.get(str(member.id))
         if not snap or "roles" not in snap:
-            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Roles", "No snapshot for that member.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Roles", "No snapshot for that member.", color=discord.Color.orange())
+            )
         roles: List[discord.Role] = []
         for rid in snap["roles"]:
             r = ctx.guild.get_role(int(rid))
@@ -542,7 +584,9 @@ class LogPlus(redcommands.Cog):
             await member.edit(roles=roles)
             await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Roles", f"Restored roles for **{member}**."))
         except discord.Forbidden:
-            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Roles", "I lack permission to edit that member's roles.", color=discord.Color.red()))
+            await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Roles", "I lack permission to edit that member's roles.", color=discord.Color.red())
+            )
 
     @ctrlz.command(name="channel")
     async def ctrlz_channel(self, ctx: redcommands.Context, channel: discord.abc.GuildChannel):
@@ -551,12 +595,18 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.channels()
         snap = snaps.get(str(channel.id))
         if not snap:
-            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Channel", "No snapshot for that channel.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Channel", "No snapshot for that channel.", color=discord.Color.orange())
+            )
         kwargs = {}
-        if "name" in snap: kwargs["name"] = snap["name"]
-        if "topic" in snap and hasattr(channel, "topic"): kwargs["topic"] = snap["topic"]
-        if "nsfw" in snap and hasattr(channel, "nsfw"): kwargs["nsfw"] = snap["nsfw"]
-        if "slowmode" in snap and hasattr(channel, "slowmode_delay"): kwargs["slowmode_delay"] = snap["slowmode"]
+        if "name" in snap:
+            kwargs["name"] = snap["name"]
+        if "topic" in snap and hasattr(channel, "topic"):
+            kwargs["topic"] = snap["topic"]
+        if "nsfw" in snap and hasattr(channel, "nsfw"):
+            kwargs["nsfw"] = snap["nsfw"]
+        if "slowmode" in snap and hasattr(channel, "slowmode_delay"):
+            kwargs["slowmode_delay"] = snap["slowmode"]
         if "parent_id" in snap:
             parent = ctx.guild.get_channel(snap["parent_id"]) if snap["parent_id"] else None
             if isinstance(parent, discord.CategoryChannel):
@@ -564,15 +614,19 @@ class LogPlus(redcommands.Cog):
             elif snap["parent_id"] is None:
                 kwargs["category"] = None
         if isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
-            if "bitrate" in snap: kwargs["bitrate"] = snap["bitrate"]
-            if "user_limit" in snap: kwargs["user_limit"] = snap["user_limit"]
+            if "bitrate" in snap:
+                kwargs["bitrate"] = snap["bitrate"]
+            if "user_limit" in snap:
+                kwargs["user_limit"] = snap["user_limit"]
         try:
             await channel.edit(**kwargs)
             if "position" in snap and snap["position"] is not None:
                 await channel.edit(position=int(snap["position"]))
             await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Channel", f"Reverted settings for {channel.mention}."))
         except discord.Forbidden:
-            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Channel", "I lack permission to edit that channel.", color=discord.Color.red()))
+            await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Channel", "I lack permission to edit that channel.", color=discord.Color.red())
+            )
 
     @ctrlz.command(name="role")
     async def ctrlz_role(self, ctx: redcommands.Context, role: discord.Role):
@@ -581,7 +635,9 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.roles()
         snap = snaps.get(str(role.id))
         if not snap:
-            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Role", "No snapshot for that role.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Role", "No snapshot for that role.", color=discord.Color.orange())
+            )
         kwargs = {
             "name": snap.get("name", role.name),
             "colour": discord.Colour(int(snap.get("color", role.color.value))),
@@ -595,7 +651,9 @@ class LogPlus(redcommands.Cog):
                 await role.edit(position=int(snap["position"]))
             await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Role", f"Reverted settings for role **{role.name}**."))
         except discord.Forbidden:
-            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Role", "I lack permission to edit that role.", color=discord.Color.red()))
+            await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Role", "I lack permission to edit that role.", color=discord.Color.red())
+            )
 
     @ctrlz.command(name="recreatechannel")
     async def ctrlz_recreate_channel(self, ctx: redcommands.Context, channel_id: int):
@@ -604,24 +662,38 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.deleted_channels()
         snap = snaps.get(str(channel_id))
         if not snap:
-            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Channel", "No snapshot for that channel ID.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Recreate Channel", "No snapshot for that channel ID.", color=discord.Color.orange())
+            )
         ctype = discord.ChannelType(int(snap.get("type", discord.ChannelType.text.value)))
         name = snap.get("name", "restored-channel")
         parent = ctx.guild.get_channel(snap.get("parent_id")) if snap.get("parent_id") else None
         try:
             if ctype in (discord.ChannelType.voice, discord.ChannelType.stage_voice):
-                new = await ctx.guild.create_voice_channel(name, category=parent if isinstance(parent, discord.CategoryChannel) else None)
-                if "bitrate" in snap: await new.edit(bitrate=snap["bitrate"])
-                if "user_limit" in snap: await new.edit(user_limit=snap["user_limit"])
+                new = await ctx.guild.create_voice_channel(
+                    name, category=parent if isinstance(parent, discord.CategoryChannel) else None
+                )
+                if "bitrate" in snap:
+                    await new.edit(bitrate=snap["bitrate"])
+                if "user_limit" in snap:
+                    await new.edit(user_limit=snap["user_limit"])
             else:
-                new = await ctx.guild.create_text_channel(name, category=parent if isinstance(parent, discord.CategoryChannel) else None, nsfw=snap.get("nsfw"))
-                if "topic" in snap: await new.edit(topic=snap["topic"])
-                if "slowmode" in snap: await new.edit(slowmode_delay=snap["slowmode"])
+                new = await ctx.guild.create_text_channel(
+                    name, category=parent if isinstance(parent, discord.CategoryChannel) else None, nsfw=snap.get("nsfw")
+                )
+                if "topic" in snap:
+                    await new.edit(topic=snap["topic"])
+                if "slowmode" in snap:
+                    await new.edit(slowmode_delay=snap["slowmode"])
             if "position" in snap and snap["position"] is not None:
                 await new.edit(position=int(snap["position"]))
             await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Channel", f"Recreated channel {new.mention}."))
         except discord.Forbidden:
-            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Channel", "I lack permission to create channels here.", color=discord.Color.red()))
+            await ctx.send(
+                embed=await self._E(
+                    ctx.guild, "CTRL-Z Recreate Channel", "I lack permission to create channels here.", color=discord.Color.red()
+                )
+            )
 
     @ctrlz.command(name="recreaterole")
     async def ctrlz_recreate_role(self, ctx: redcommands.Context, role_id: int):
@@ -630,7 +702,9 @@ class LogPlus(redcommands.Cog):
         snaps = await self.config.guild(ctx.guild).ctrlz.deleted_roles()
         snap = snaps.get(str(role_id))
         if not snap:
-            return await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Role", "No snapshot for that role ID.", color=discord.Color.orange()))
+            return await ctx.send(
+                embed=await self._E(ctx.guild, "CTRL-Z Recreate Role", "No snapshot for that role ID.", color=discord.Color.orange())
+            )
         try:
             new = await ctx.guild.create_role(
                 name=snap.get("name", "restored-role"),
@@ -643,7 +717,11 @@ class LogPlus(redcommands.Cog):
                 await new.edit(position=int(snap["position"]))
             await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Role", f"Recreated role **{new.name}**."))
         except discord.Forbidden:
-            await ctx.send(embed=await self._E(ctx.guild, "CTRL-Z Recreate Role", "I lack permission to create roles here.", color=discord.Color.red()))
+            await ctx.send(
+                embed=await self._E(
+                    ctx.guild, "CTRL-Z Recreate Role", "I lack permission to create roles here.", color=discord.Color.red()
+                )
+            )
 
     # ---------------- toggles (unchanged API) ----------------
     @logplus.group()
@@ -865,10 +943,25 @@ class LogPlus(redcommands.Cog):
 
         add("message", ["edit", "delete", "bulk_delete", "pins"])
         add("reactions", ["add", "remove", "clear"])
-        add("server", ["channel_create", "channel_delete", "channel_update",
-                       "role_create", "role_delete", "role_update", "server_update",
-                       "emoji_update", "sticker_update", "integrations_update",
-                       "webhooks_update", "thread_create", "thread_delete", "thread_update"])
+        add(
+            "server",
+            [
+                "channel_create",
+                "channel_delete",
+                "channel_update",
+                "role_create",
+                "role_delete",
+                "role_update",
+                "server_update",
+                "emoji_update",
+                "sticker_update",
+                "integrations_update",
+                "webhooks_update",
+                "thread_create",
+                "thread_delete",
+                "thread_update",
+            ],
+        )
         add("invites", ["create", "delete"])
         add("member", ["join", "leave", "roles_changed", "nick_changed", "ban", "unban", "timeout", "presence"])
         add("voice", ["join", "move", "leave", "mute", "deaf", "video", "stream"])
@@ -910,9 +1003,12 @@ class LogPlus(redcommands.Cog):
             return
         if await self._is_exempt(before.guild, before.channel.id, "message"):
             return
-        e = await self._E(before.guild, "Message edited", etype="message_edited", footer=f"User ID: {before.author.id}")
+        e = await self._E(
+            before.guild, "Message edited", etype="message_edited", footer=f"Author ID: {before.author.id}"
+        )
         e.add_field(name="Author", value=f"{before.author} ({before.author.id})", inline=False)
         e.add_field(name="Channel", value=before.channel.mention, inline=True)
+        e.add_field(name="By", value=f"{before.author} ({before.author.id})", inline=True)
         e.add_field(name="Jump", value=f"[link]({after.jump_url})", inline=True)
         e.add_field(name="Before", value=(before.content or "<empty>")[:1000], inline=False)
         e.add_field(name="After", value=(after.content or "<empty>")[:1000], inline=False)
@@ -927,19 +1023,20 @@ class LogPlus(redcommands.Cog):
             return
         if await self._is_exempt(message.guild, message.channel.id, "message"):
             return
-
+        # Try to find the responsible actor (moderator/bot) via recent audit logs.
         actor = await self._audit_actor_recent(
             message.guild,
             [discord.AuditLogAction.message_delete, discord.AuditLogAction.message_bulk_delete],
             target_id=getattr(message.author, "id", None),
             channel_id=getattr(message.channel, "id", None),
+            lookback_s=60,
         )
-
-        e = await self._E(message.guild, "Message deleted", etype="message_deleted", footer=f"Author ID: {message.author.id}")
-        e.add_field(name="Author", value=self._who(message.author), inline=True)
+        e = await self._E(
+            message.guild, "Message deleted", etype="message_deleted", footer=f"Author ID: {message.author.id}"
+        )
+        e.add_field(name="Author", value=f"{message.author} ({message.author.id})", inline=False)
         e.add_field(name="Channel", value=message.channel.mention, inline=True)
-        if actor:
-            e.add_field(name="By", value=actor, inline=True)
+        e.add_field(name="By", value=actor or "Author / Unknown (no audit entry)", inline=True)
         if message.content:
             e.add_field(name="Content", value=message.content[:1500], inline=False)
         await self._send(message.guild, e, message.channel.id)
@@ -955,18 +1052,16 @@ class LogPlus(redcommands.Cog):
         if await self._is_exempt(guild, payload.channel_id, "message"):
             return
         ch = guild.get_channel(payload.channel_id)
-
         actor = await self._audit_actor_recent(
             guild,
             [discord.AuditLogAction.message_bulk_delete, discord.AuditLogAction.message_delete],
             channel_id=payload.channel_id,
+            lookback_s=60,
         )
-
         e = await self._E(guild, "Bulk delete", description=f"{len(payload.message_ids)} messages", etype="bulk_delete")
         if isinstance(ch, discord.TextChannel):
-            e.add_field(name="Channel", value=ch.mention)
-        if actor:
-            e.add_field(name="By", value=actor, inline=True)
+            e.add_field(name="Channel", value=ch.mention, inline=True)
+        e.add_field(name="By", value=actor or "Unknown (no audit entry)", inline=True)
         await self._send(guild, e, payload.channel_id)
 
     @commands.Cog.listener()
@@ -979,20 +1074,22 @@ class LogPlus(redcommands.Cog):
             return
         actor = await self._audit_actor_recent(
             guild,
-            [
-                getattr(discord.AuditLogAction, "message_pin", None),
-                getattr(discord.AuditLogAction, "message_unpin", None),
-            ],
+            [getattr(discord.AuditLogAction, "message_pin", None), getattr(discord.AuditLogAction, "message_unpin", None)],
             channel_id=getattr(channel, "id", None),
+            lookback_s=60,
         )
-        e = await self._E(guild, "Pins updated", description=f"#{getattr(channel, 'name', 'unknown')}", etype="pins_updated")
+        e = await self._E(
+            guild, "Pins updated", description=f"#{getattr(channel, 'name', 'unknown')}", etype="pins_updated"
+        )
         if last_pin:
-            e.add_field(name="Last Pin", value=discord.utils.format_dt(last_pin, style="R"), inline=True)
-        if actor:
-            e.add_field(name="By", value=actor, inline=True)
+            try:
+                e.add_field(name="Last Pin", value=discord.utils.format_dt(last_pin, style="R"), inline=True)
+            except Exception:
+                pass
+        e.add_field(name="By", value=actor or "Unknown (no audit entry)", inline=True)
         await self._send(guild, e, channel.id)
 
-    # reactions (with suppression) — includes reactor/remover, message author, jump
+    # reactions
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         guild = self.bot.get_guild(payload.guild_id)
@@ -1003,30 +1100,18 @@ class LogPlus(redcommands.Cog):
             return
         if await self._is_exempt(guild, payload.channel_id, "message"):
             return
-        if self._should_suppress(f"react_add:{payload.guild_id}:{payload.channel_id}:{payload.message_id}:{str(payload.emoji)}", await self._rate_seconds(guild)):
+        if self._should_suppress(
+            f"react_add:{payload.guild_id}:{payload.channel_id}:{payload.message_id}:{str(payload.emoji)}",
+            await self._rate_seconds(guild),
+        ):
             return
-
-        reactor = guild.get_member(payload.user_id)
-        channel = guild.get_channel(payload.channel_id)
-        msg_author = None
-        jump = None
-        try:
-            if isinstance(channel, (discord.TextChannel, discord.Thread)):
-                msg = await channel.fetch_message(payload.message_id)
-                msg_author = msg.author if msg and not msg.author.bot else msg_author
-                jump = msg.jump_url if msg else None
-        except Exception:
-            pass
-
+        user = guild.get_member(payload.user_id)
+        by = f"{user} ({user.id})" if user else f"{payload.user_id}"
+        jump = f"https://discord.com/channels/{payload.guild_id}/{payload.channel_id}/{payload.message_id}"
         e = await self._E(guild, "Reaction added", etype="reaction_added")
-        e.add_field(name="Reactor", value=self._who(reactor), inline=True)
         e.add_field(name="Emoji", value=str(payload.emoji), inline=True)
-        e.add_field(name="Channel", value=getattr(channel, "mention", f"<#{payload.channel_id}>"), inline=True)
-        e.add_field(name="Message ID", value=str(payload.message_id), inline=True)
-        if msg_author:
-            e.add_field(name="Message Author", value=self._who(msg_author), inline=False)
-        if jump:
-            e.add_field(name="Jump", value=f"[link]({jump})", inline=True)
+        e.add_field(name="Message", value=f"[jump]({jump})", inline=True)
+        e.add_field(name="By", value=by, inline=True)
         await self._send(guild, e, payload.channel_id)
 
     @commands.Cog.listener()
@@ -1039,30 +1124,18 @@ class LogPlus(redcommands.Cog):
             return
         if await self._is_exempt(guild, payload.channel_id, "message"):
             return
-        if self._should_suppress(f"react_rm:{payload.guild_id}:{payload.channel_id}:{payload.message_id}:{str(payload.emoji)}", await self._rate_seconds(guild)):
+        if self._should_suppress(
+            f"react_rm:{payload.guild_id}:{payload.channel_id}:{payload.message_id}:{str(payload.emoji)}",
+            await self._rate_seconds(guild),
+        ):
             return
-
-        remover = guild.get_member(payload.user_id)
-        channel = guild.get_channel(payload.channel_id)
-        msg_author = None
-        jump = None
-        try:
-            if isinstance(channel, (discord.TextChannel, discord.Thread)):
-                msg = await channel.fetch_message(payload.message_id)
-                msg_author = msg.author if msg and not msg.author.bot else msg_author
-                jump = msg.jump_url if msg else None
-        except Exception:
-            pass
-
+        user = guild.get_member(payload.user_id)
+        by = f"{user} ({user.id})" if user else f"{payload.user_id}"
+        jump = f"https://discord.com/channels/{payload.guild_id}/{payload.channel_id}/{payload.message_id}"
         e = await self._E(guild, "Reaction removed", etype="reaction_removed")
-        e.add_field(name="Remover", value=self._who(remover), inline=True)
         e.add_field(name="Emoji", value=str(payload.emoji), inline=True)
-        e.add_field(name="Channel", value=getattr(channel, "mention", f"<#{payload.channel_id}>"), inline=True)
-        e.add_field(name="Message ID", value=str(payload.message_id), inline=True)
-        if msg_author:
-            e.add_field(name="Message Author", value=self._who(msg_author), inline=False)
-        if jump:
-            e.add_field(name="Jump", value=f"[link]({jump})", inline=True)
+        e.add_field(name="Message", value=f"[jump]({jump})", inline=True)
+        e.add_field(name="By", value=by, inline=True)
         await self._send(guild, e, payload.channel_id)
 
     @commands.Cog.listener()
@@ -1075,28 +1148,22 @@ class LogPlus(redcommands.Cog):
             return
         if await self._is_exempt(guild, payload.channel_id, "message"):
             return
-        actor = await self._audit_actor_recent(
-            guild,
-            [discord.AuditLogAction.message_delete, discord.AuditLogAction.message_bulk_delete],
-            channel_id=payload.channel_id,
-        )
-        channel = guild.get_channel(payload.channel_id)
+        jump = f"https://discord.com/channels/{payload.guild_id}/{payload.channel_id}/{payload.message_id}"
         e = await self._E(guild, "Reactions cleared", etype="reaction_cleared")
-        e.add_field(name="Channel", value=getattr(channel, "mention", f"<#{payload.channel_id}>"), inline=True)
-        e.add_field(name="Message ID", value=str(payload.message_id), inline=True)
-        if actor:
-            e.add_field(name="By", value=actor, inline=True)
+        e.add_field(name="Message", value=f"[jump]({jump})", inline=True)
+        e.add_field(name="By", value="Unknown (Discord does not audit reaction clears)", inline=True)
         await self._send(guild, e, payload.channel_id)
 
     # server structure (also snapshotting)
-    @commands.Cog.listener()
+    @commands.Cog.listener())
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
         g = await self.config.guild(channel.guild).all()
         if g["server"]["channel_create"] and not await self._is_exempt(channel.guild, channel.id, "server"):
-            actor = await self._audit_actor(channel.guild, discord.AuditLogAction.channel_create, getattr(channel, "id", None))
+            actor = await self._audit_actor_recent(
+                channel.guild, discord.AuditLogAction.channel_create, target_id=getattr(channel, "id", None)
+            )
             e = await self._E(channel.guild, "Channel created", description=channel.mention, etype="channel_created")
-            if actor:
-                e.add_field(name="By", value=actor)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(channel.guild, e, getattr(channel, "id", None))
 
     @commands.Cog.listener()
@@ -1109,10 +1176,13 @@ class LogPlus(redcommands.Cog):
 
         g = await self.config.guild(channel.guild).all()
         if g["server"]["channel_delete"] and not await self._is_exempt(channel.guild, channel.id, "server"):
-            actor = await self._audit_actor(channel.guild, discord.AuditLogAction.channel_delete, getattr(channel, "id", None))
-            e = await self._E(channel.guild, "Channel deleted", description=f"#{channel.name}", etype="channel_deleted")
-            if actor:
-                e.add_field(name="By", value=actor)
+            actor = await self._audit_actor_recent(
+                channel.guild, discord.AuditLogAction.channel_delete, target_id=getattr(channel, "id", None)
+            )
+            e = await self._E(
+                channel.guild, "Channel deleted", description=f"#{channel.name}", etype="channel_deleted"
+            )
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(channel.guild, e, getattr(channel, "id", None))
 
     @commands.Cog.listener()
@@ -1125,20 +1195,22 @@ class LogPlus(redcommands.Cog):
 
         g = await self.config.guild(after.guild).all()
         if g["server"]["channel_update"] and not await self._is_exempt(after.guild, after.id, "server"):
-            actor = await self._audit_actor(after.guild, discord.AuditLogAction.channel_update, getattr(after, "id", None))
+            actor = await self._audit_actor_recent(
+                after.guild, discord.AuditLogAction.channel_update, target_id=getattr(after, "id", None)
+            )
             e = await self._E(after.guild, "Channel updated", description=after.mention, etype="channel_updated")
-            if actor:
-                e.add_field(name="By", value=actor)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(after.guild, e, getattr(after, "id", None))
 
     @commands.Cog.listener()
     async def on_guild_role_create(self, role: discord.Role):
         g = await self.config.guild(role.guild).all()
         if g["server"]["role_create"]:
-            actor = await self._audit_actor(role.guild, discord.AuditLogAction.role_create, getattr(role, "id", None))
+            actor = await self._audit_actor_recent(
+                role.guild, discord.AuditLogAction.role_create, target_id=getattr(role, "id", None)
+            )
             e = await self._E(role.guild, "Role created", description=role.mention, etype="role_created")
-            if actor:
-                e.add_field(name="By", value=actor)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(role.guild, e)
 
     @commands.Cog.listener()
@@ -1151,10 +1223,11 @@ class LogPlus(redcommands.Cog):
 
         g = await self.config.guild(role.guild).all()
         if g["server"]["role_delete"]:
-            actor = await self._audit_actor(role.guild, discord.AuditLogAction.role_delete, getattr(role, "id", None))
+            actor = await self._audit_actor_recent(
+                role.guild, discord.AuditLogAction.role_delete, target_id=getattr(role, "id", None)
+            )
             e = await self._E(role.guild, "Role deleted", description=role.name, etype="role_deleted")
-            if actor:
-                e.add_field(name="By", value=actor)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(role.guild, e)
 
     @commands.Cog.listener()
@@ -1167,38 +1240,71 @@ class LogPlus(redcommands.Cog):
 
         g = await self.config.guild(after.guild).all()
         if g["server"]["role_update"]:
-            actor = await self._audit_actor(after.guild, discord.AuditLogAction.role_update, getattr(after, "id", None))
+            actor = await self._audit_actor_recent(
+                after.guild, discord.AuditLogAction.role_update, target_id=getattr(after, "id", None)
+            )
             e = await self._E(after.guild, "Role updated", description=after.mention, etype="role_updated")
-            if actor:
-                e.add_field(name="By", value=actor)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(after.guild, e)
 
     @commands.Cog.listener()
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild):
         g = await self.config.guild(after).all()
         if g["server"]["server_update"]:
+            actor = await self._audit_actor_recent(after, discord.AuditLogAction.guild_update, lookback_s=60)
             e = await self._E(after, "Server updated", etype="server_updated")
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(after, e)
 
     @commands.Cog.listener()
     async def on_guild_emojis_update(self, guild: discord.Guild, before, after):
         g = await self.config.guild(guild).all()
         if g["server"]["emoji_update"]:
+            actor = await self._audit_actor_recent(
+                guild,
+                [
+                    getattr(discord.AuditLogAction, "emoji_create", None),
+                    getattr(discord.AuditLogAction, "emoji_delete", None),
+                    getattr(discord.AuditLogAction, "emoji_update", None),
+                ],
+                lookback_s=60,
+            )
             e = await self._E(guild, "Emoji list updated", etype="emoji_updated")
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(guild, e)
 
     @commands.Cog.listener()
     async def on_guild_stickers_update(self, guild: discord.Guild, before, after):
         g = await self.config.guild(guild).all()
         if g["server"]["sticker_update"]:
+            actor = await self._audit_actor_recent(
+                guild,
+                [
+                    getattr(discord.AuditLogAction, "sticker_create", None),
+                    getattr(discord.AuditLogAction, "sticker_delete", None),
+                    getattr(discord.AuditLogAction, "sticker_update", None),
+                ],
+                lookback_s=60,
+            )
             e = await self._E(guild, "Sticker list updated", etype="sticker_updated")
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(guild, e)
 
     @commands.Cog.listener()
     async def on_guild_integrations_update(self, guild: discord.Guild):
         g = await self.config.guild(guild).all()
         if g["server"]["integrations_update"]:
+            actor = await self._audit_actor_recent(
+                guild,
+                [
+                    getattr(discord.AuditLogAction, "integration_create", None),
+                    getattr(discord.AuditLogAction, "integration_delete", None),
+                    getattr(discord.AuditLogAction, "integration_update", None),
+                ],
+                lookback_s=60,
+            )
             e = await self._E(guild, "Integrations updated", etype="integrations_updated")
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(guild, e)
 
     @commands.Cog.listener()
@@ -1209,14 +1315,16 @@ class LogPlus(redcommands.Cog):
                 channel.guild,
                 [
                     getattr(discord.AuditLogAction, "webhook_create", None),
-                    getattr(discord.AuditLogAction, "webhook_update", None),
                     getattr(discord.AuditLogAction, "webhook_delete", None),
+                    getattr(discord.AuditLogAction, "webhook_update", None),
                 ],
                 channel_id=getattr(channel, "id", None),
+                lookback_s=60,
             )
-            e = await self._E(channel.guild, "Webhooks updated", description=f"#{getattr(channel, 'name', 'unknown')}", etype="webhooks_updated")
-            if actor:
-                e.add_field(name="By", value=actor, inline=True)
+            e = await self._E(
+                channel.guild, "Webhooks updated", description=f"#{getattr(channel, 'name', 'unknown')}", etype="webhooks_updated"
+            )
+            e.add_field(name="By", value=actor or "Unknown (no audit entry)", inline=True)
             await self._send(channel.guild, e, channel.id)
 
     @commands.Cog.listener()
@@ -1227,19 +1335,18 @@ class LogPlus(redcommands.Cog):
             e.add_field(name="Code", value=invite.code, inline=True)
             if invite.channel:
                 e.add_field(name="Channel", value=invite.channel.mention, inline=True)
-            if invite.inviter:
-                e.add_field(name="By", value=self._who(invite.inviter), inline=True)
+            inv = getattr(invite, "inviter", None)
+            e.add_field(name="By", value=(f"{inv} ({inv.id})" if inv else "Unknown"), inline=True)
             await self._send(invite.guild, e, getattr(invite.channel, "id", None))
 
     @commands.Cog.listener()
     async def on_invite_delete(self, invite: discord.Invite):
         g = await self.config.guild(invite.guild).all()
         if g["invites"]["delete"]:
-            actor = await self._audit_actor_recent(invite.guild, getattr(discord.AuditLogAction, "invite_delete", None))
+            actor = await self._audit_actor_recent(invite.guild, getattr(discord.AuditLogAction, "invite_delete", None), lookback_s=60)
             e = await self._E(invite.guild, "Invite deleted", etype="invite_deleted")
             e.add_field(name="Code", value=invite.code, inline=True)
-            if actor:
-                e.add_field(name="By", value=actor, inline=True)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(invite.guild, e)
 
     @commands.Cog.listener()
@@ -1247,6 +1354,7 @@ class LogPlus(redcommands.Cog):
         g = await self.config.guild(member.guild).all()
         if g["member"]["join"]:
             e = await self._E(member.guild, "Member joined", description=f"{member} ({member.id})", etype="member_joined")
+            e.add_field(name="By", value=f"{member} ({member.id})", inline=True)
             await self._send(member.guild, e)
 
     @commands.Cog.listener()
@@ -1254,6 +1362,7 @@ class LogPlus(redcommands.Cog):
         g = await self.config.guild(member.guild).all()
         if g["member"]["leave"]:
             e = await self._E(member.guild, "Member left", description=f"{member} ({member.id})", etype="member_left")
+            e.add_field(name="By", value=f"{member} ({member.id})", inline=True)
             await self._send(member.guild, e)
 
     @commands.Cog.listener()
@@ -1264,66 +1373,49 @@ class LogPlus(redcommands.Cog):
         await gconf.members.set(data)
 
         g = await self.config.guild(after.guild).all()
-
+        # Nick change
         if before.nick != after.nick and g["member"]["nick_changed"]:
-            actor = await self._audit_actor_recent(
-                after.guild,
-                getattr(discord.AuditLogAction, "member_update", None),
-                target_id=after.id,
-            )
+            actor = await self._audit_actor_recent(after.guild, discord.AuditLogAction.member_update, target_id=after.id)
             e = await self._E(after.guild, "Nickname changed", etype="nick_changed")
-            e.add_field(name="User", value=self._who(after), inline=False)
+            e.add_field(name="User", value=f"{after} ({after.id})", inline=False)
             e.add_field(name="Before", value=before.nick or "None", inline=True)
             e.add_field(name="After", value=after.nick or "None", inline=True)
-            e.add_field(name="By", value=actor or "self/unknown", inline=True)
+            e.add_field(name="By", value=actor or f"{after} (self / unknown)", inline=True)
             await self._send(after.guild, e)
-
+        # Roles changed
         if set(before.roles) != set(after.roles) and g["member"]["roles_changed"]:
-            actor = await self._audit_actor_recent(
-                after.guild,
-                getattr(discord.AuditLogAction, "member_role_update", None),
-                target_id=after.id,
-            )
+            actor = await self._audit_actor_recent(after.guild, discord.AuditLogAction.member_role_update, target_id=after.id)
             e = await self._E(after.guild, "Roles changed", etype="roles_changed")
-            e.add_field(name="User", value=self._who(after), inline=False)
-            if actor:
-                e.add_field(name="By", value=actor, inline=True)
+            e.add_field(name="User", value=f"{after} ({after.id})", inline=False)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(after.guild, e)
-
+        # Timeout updated
         if g["member"]["timeout"] and before.timed_out_until != after.timed_out_until:
-            actor = await self._audit_actor_recent(
-                after.guild,
-                getattr(discord.AuditLogAction, "member_update", None),
-                target_id=after.id,
-            )
+            actor = await self._audit_actor_recent(after.guild, discord.AuditLogAction.member_update, target_id=after.id)
             e = await self._E(after.guild, "Timeout updated", etype="timeout_updated")
-            e.add_field(name="User", value=self._who(after), inline=False)
-            e.add_field(name="Until", value=str(after.timed_out_until))
-            if actor:
-                e.add_field(name="By", value=actor, inline=True)
+            e.add_field(name="User", value=f"{after} ({after.id})", inline=False)
+            e.add_field(name="Until", value=str(after.timed_out_until), inline=True)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(after.guild, e)
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User):
         g = await self.config.guild(guild).all()
         if g["member"]["ban"]:
-            actor = await self._audit_actor(guild, discord.AuditLogAction.ban, getattr(user, "id", None))
+            actor = await self._audit_actor_recent(guild, discord.AuditLogAction.ban, target_id=getattr(user, "id", None))
             e = await self._E(guild, "User banned", description=f"{user} ({user.id})", etype="user_banned")
-            if actor:
-                e.add_field(name="By", value=actor)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(guild, e)
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User):
         g = await self.config.guild(guild).all()
         if g["member"]["unban"]:
-            actor = await self._audit_actor(guild, discord.AuditLogAction.unban, getattr(user, "id", None))
+            actor = await self._audit_actor_recent(guild, discord.AuditLogAction.unban, target_id=getattr(user, "id", None))
             e = await self._E(guild, "User unbanned", description=f"{user} ({user.id})", etype="user_unbanned")
-            if actor:
-                e.add_field(name="By", value=actor)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(guild, e)
 
-    # Voice (with actor for moves/mute/deaf when available)
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         g = await self.config.guild(member.guild).all()
@@ -1332,77 +1424,115 @@ class LogPlus(redcommands.Cog):
             return
         rate = await self._rate_seconds(member.guild)
 
+        # Joins/Leaves/Moves (try to determine actor; otherwise member self)
         if before.channel is None and after.channel is not None and g["voice"]["join"]:
-            await ch.send(embed=await self._E(member.guild, "Voice join", description=f"{self._who(member)} → {after.channel.mention}", etype="voice_join"))
+            actor = None  # joins are almost always self
+            e = await self._E(
+                member.guild, "Voice join", description=f"{member} → {after.channel.mention}", etype="voice_join"
+            )
+            e.add_field(name="By", value=f"{member} ({member.id})", inline=True)
+            await ch.send(embed=e)
             return
         if before.channel is not None and after.channel is None and g["voice"]["leave"]:
-            await ch.send(embed=await self._E(member.guild, "Voice leave", description=f"{self._who(member)} ← {before.channel.mention}", etype="voice_leave"))
+            actor = await self._audit_actor_recent(
+                member.guild, getattr(discord.AuditLogAction, "member_disconnect", None), target_id=member.id, lookback_s=30
+            )
+            e = await self._E(
+                member.guild, "Voice leave", description=f"{member} ← {before.channel.mention}", etype="voice_leave"
+            )
+            e.add_field(name="By", value=actor or f"{member} (self)", inline=True)
+            await ch.send(embed=e)
             return
         if before.channel and after.channel and before.channel.id != after.channel.id and g["voice"]["move"]:
-            actor = await self._audit_actor_recent(member.guild, getattr(discord.AuditLogAction, "member_move", None), target_id=member.id)
-            e = await self._E(member.guild, "Voice move", etype="voice_move")
-            e.add_field(name="Member", value=self._who(member), inline=False)
-            e.add_field(name="From → To", value=f"{before.channel.mention} → {after.channel.mention}", inline=False)
-            e.add_field(name="By", value=actor or "self", inline=True)
+            actor = await self._audit_actor_recent(
+                member.guild, getattr(discord.AuditLogAction, "member_move", None), target_id=member.id, lookback_s=30
+            )
+            e = await self._E(
+                member.guild,
+                "Voice move",
+                description=f"{member}: {before.channel.mention} → {after.channel.mention}",
+                etype="voice_move",
+            )
+            e.add_field(name="By", value=actor or f"{member} (self)", inline=True)
             await ch.send(embed=e)
 
-        # Server mute/deaf (audited); self_mute/self_deaf are excluded here
-        if g["voice"]["mute"] and (before.mute != after.mute):
+        # Server mute/deaf (might be by a mod)
+        if g["voice"]["mute"] and (before.self_mute != after.self_mute or before.mute != after.mute):
             if not self._should_suppress(f"v_mute:{member.guild.id}:{member.id}", rate):
-                actor = await self._audit_actor_recent(member.guild, getattr(discord.AuditLogAction, "member_update", None), target_id=member.id)
-                e = await self._E(member.guild, "Server mute state change", etype="voice_mute")
-                e.add_field(name="Member", value=self._who(member), inline=True)
-                e.add_field(name="State", value="muted" if after.mute else "unmuted", inline=True)
-                if actor:
-                    e.add_field(name="By", value=actor, inline=True)
-                await ch.send(embed=e)
-        if g["voice"]["deaf"] and (before.deaf != after.deaf):
-            if not self._should_suppress(f"v_deaf:{member.guild.id}:{member.id}", rate):
-                actor = await self._audit_actor_recent(member.guild, getattr(discord.AuditLogAction, "member_update", None), target_id=member.id)
-                e = await self._E(member.guild, "Server deaf state change", etype="voice_deaf")
-                e.add_field(name="Member", value=self._who(member), inline=True)
-                e.add_field(name="State", value="deafened" if after.deaf else "undeafened", inline=True)
-                if actor:
-                    e.add_field(name="By", value=actor, inline=True)
+                actor = None
+                if before.mute != after.mute:  # server mute toggled
+                    actor = await self._audit_actor_recent(
+                        member.guild, discord.AuditLogAction.member_update, target_id=member.id, lookback_s=30
+                    )
+                e = await self._E(member.guild, "Mute state change", description=str(member), etype="voice_mute")
+                e.add_field(name="By", value=actor or f"{member} (self)", inline=True)
                 await ch.send(embed=e)
 
-        # Self toggles (video/stream)
+        if g["voice"]["deaf"] and (before.self_deaf != after.self_deaf or before.deaf != after.deaf):
+            if not self._should_suppress(f"v_deaf:{member.guild.id}:{member.id}", rate):
+                actor = None
+                if before.deaf != after.deaf:  # server deafen toggled
+                    actor = await self._audit_actor_recent(
+                        member.guild, discord.AuditLogAction.member_update, target_id=member.id, lookback_s=30
+                    )
+                e = await self._E(member.guild, "Deaf state change", description=str(member), etype="voice_deaf")
+                e.add_field(name="By", value=actor or f"{member} (self)", inline=True)
+                await ch.send(embed=e)
+
+        # Self-only toggles (video/stream)
         if g["voice"]["video"] and (before.self_video != after.self_video):
             if not self._should_suppress(f"v_video:{member.guild.id}:{member.id}", rate):
-                await ch.send(embed=await self._E(member.guild, "Video state change", description=f"{self._who(member)} → {'on' if after.self_video else 'off'}", etype="voice_video"))
+                e = await self._E(
+                    member.guild,
+                    "Video state change",
+                    description=f"{member} → {'on' if after.self_video else 'off'}",
+                    etype="voice_video",
+                )
+                e.add_field(name="By", value=f"{member} (self)", inline=True)
+                await ch.send(embed=e)
         if g["voice"]["stream"] and (before.self_stream != after.self_stream):
             if not self._should_suppress(f"v_stream:{member.guild.id}:{member.id}", rate):
-                await ch.send(embed=await self._E(member.guild, "Stream state change", description=f"{self._who(member)} → {'on' if after.self_stream else 'off'}", etype="voice_stream"))
+                e = await self._E(
+                    member.guild,
+                    "Stream state change",
+                    description=f"{member} → {'on' if after.self_stream else 'off'}",
+                    etype="voice_stream",
+                )
+                e.add_field(name="By", value=f"{member} (self)", inline=True)
+                await ch.send(embed=e)
 
-    # Scheduled Events
+    # scheduled events
     @commands.Cog.listener()
     async def on_guild_scheduled_event_create(self, event: discord.ScheduledEvent):
         g = await self.config.guild(event.guild).all()
         if g["sched"]["create"]:
-            actor = await self._audit_actor_recent(event.guild, getattr(discord.AuditLogAction, "guild_scheduled_event_create", None))
+            actor = await self._audit_actor_recent(
+                event.guild, getattr(discord.AuditLogAction, "guild_scheduled_event_create", None), target_id=getattr(event, "id", None)
+            )
             e = await self._E(event.guild, "Scheduled event created", description=event.name, etype="sched_created")
-            if actor:
-                e.add_field(name="By", value=actor, inline=True)
+            e.add_field(name="By", value=actor or getattr(event, "creator", None) or "Unknown", inline=True)
             await self._send(event.guild, e)
 
     @commands.Cog.listener()
     async def on_guild_scheduled_event_update(self, before: discord.ScheduledEvent, after: discord.ScheduledEvent):
         g = await self.config.guild(after.guild).all()
         if g["sched"]["update"]:
-            actor = await self._audit_actor_recent(after.guild, getattr(discord.AuditLogAction, "guild_scheduled_event_update", None))
+            actor = await self._audit_actor_recent(
+                after.guild, getattr(discord.AuditLogAction, "guild_scheduled_event_update", None), target_id=getattr(after, "id", None)
+            )
             e = await self._E(after.guild, "Scheduled event updated", description=after.name, etype="sched_updated")
-            if actor:
-                e.add_field(name="By", value=actor, inline=True)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(after.guild, e)
 
     @commands.Cog.listener()
     async def on_guild_scheduled_event_delete(self, event: discord.ScheduledEvent):
         g = await self.config.guild(event.guild).all()
         if g["sched"]["delete"]:
-            actor = await self._audit_actor_recent(event.guild, getattr(discord.AuditLogAction, "guild_scheduled_event_delete", None))
+            actor = await self._audit_actor_recent(
+                event.guild, getattr(discord.AuditLogAction, "guild_scheduled_event_delete", None), target_id=getattr(event, "id", None)
+            )
             e = await self._E(event.guild, "Scheduled event deleted", description=event.name, etype="sched_deleted")
-            if actor:
-                e.add_field(name="By", value=actor, inline=True)
+            e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(event.guild, e)
 
     @commands.Cog.listener()
@@ -1410,7 +1540,7 @@ class LogPlus(redcommands.Cog):
         g = await self.config.guild(event.guild).all()
         if g["sched"]["user_add"]:
             e = await self._E(event.guild, "Event RSVP added", description=f"{user} → {event.name}", etype="sched_user_add")
-            e.add_field(name="By", value=self._who(user), inline=True)
+            e.add_field(name="By", value=f"{user} ({user.id})", inline=True)
             await self._send(event.guild, e)
 
     @commands.Cog.listener()
@@ -1418,10 +1548,10 @@ class LogPlus(redcommands.Cog):
         g = await self.config.guild(event.guild).all()
         if g["sched"]["user_remove"]:
             e = await self._E(event.guild, "Event RSVP removed", description=f"{user} ✕ {event.name}", etype="sched_user_rem")
-            e.add_field(name="By", value=self._who(user), inline=True)
+            e.add_field(name="By", value=f"{user} ({user.id})", inline=True)
             await self._send(event.guild, e)
 
-    # Bot command logs
+    # commands
     @commands.Cog.listener()
     async def on_command_completion(self, ctx: commands.Context):
         guild = getattr(ctx, "guild", None)
@@ -1446,7 +1576,9 @@ class LogPlus(redcommands.Cog):
         content = message.content or ""
         if not self._cmd_prefix_re.match(content):
             return
-        if self._should_suppress(f"otherbotcmd:{message.guild.id}:{message.author.id}", await self._rate_seconds(message.guild)):
+        if self._should_suppress(
+            f"otherbotcmd:{message.guild.id}:{message.author.id}", await self._rate_seconds(message.guild)
+        ):
             return
         e = await self._E(message.guild, "Other bot command ran", etype="cmd_otherbot")
         e.add_field(name="Bot", value=f"{message.author} ({message.author.id})", inline=True)
@@ -1455,43 +1587,6 @@ class LogPlus(redcommands.Cog):
             e.add_field(name="Content", value=content[:300], inline=False)
         await self._send(message.guild, e, message.channel.id)
 
-    # Presence logging (status/activities/device states) with rate suppression
-    @commands.Cog.listener()
-    async def on_presence_update(self, before: discord.Member, after: discord.Member):
-        guild = after.guild
-        g = await self.config.guild(guild).all()
-        if not g["member"]["presence"]:
-            return
-        key = f"presence:{guild.id}:{after.id}"
-        if self._should_suppress(key, await self._rate_seconds(guild)):
-            return
-
-        # Determine changes
-        status_changed = getattr(before, "status", None) != getattr(after, "status", None)
-        acts_before = [getattr(a, "name", str(a)) for a in (before.activities or [])]
-        acts_after = [getattr(a, "name", str(a)) for a in (after.activities or [])]
-        activities_changed = acts_before != acts_after
-
-        d_before = (getattr(before, "desktop_status", None), getattr(before, "web_status", None), getattr(before, "mobile_status", None))
-        d_after = (getattr(after, "desktop_status", None), getattr(after, "web_status", None), getattr(after, "mobile_status", None))
-        devices_changed = d_before != d_after
-
-        if not (status_changed or activities_changed or devices_changed):
-            return
-
-        e = await self._E(guild, "Presence updated", etype="presence_updated")
-        e.add_field(name="User", value=self._who(after), inline=False)
-        if status_changed:
-            e.add_field(name="Status", value=f"{getattr(before, 'status', 'unknown')} → {getattr(after, 'status', 'unknown')}", inline=True)
-        if activities_changed:
-            b = ", ".join(acts_before)[:256] or "None"
-            a = ", ".join(acts_after)[:256] or "None"
-            e.add_field(name="Activity", value=f"{b} → {a}", inline=False)
-        if devices_changed:
-            b = f"D:{d_before[0]} W:{d_before[1]} M:{d_before[2]}"
-            a = f"D:{d_after[0]} W:{d_after[1]} M:{d_after[2]}"
-            e.add_field(name="Devices", value=f"{b} → {a}", inline=False)
-        await self._send(guild, e)
 
 async def setup(bot: Red) -> None:
     await bot.add_cog(LogPlus(bot))
