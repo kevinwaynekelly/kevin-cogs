@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Iterable
 
 import aiohttp
 import discord
@@ -13,7 +13,7 @@ from redbot.core import Config, commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.utils.chat_formatting import box
 
-# YouTube URL quick check
+# Detect YouTube URLs
 YOUTUBE_URL_RE = re.compile(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
 
 DEFAULTS_GUILD = {
@@ -30,22 +30,21 @@ def _scheme(https: bool) -> str:
 def _uri(host: str, port: int, https: bool) -> str:
     return f"{_scheme(https)}://{host}:{port}"
 
+# Wavelink 3.x is required
+try:
+    import wavelink  # type: ignore
+except Exception as e:
+    raise ImportError("AudioPlus requires Wavelink 3.x. Install: pip install -U 'wavelink>=3,<4'") from e
+
+
 class LoopMode:
     OFF = "off"
     ONE = "one"
     ALL = "all"
 
-# --- Wavelink optional import (we handle API variants at runtime) ---
-try:
-    import wavelink  # Expect WL 3.x for Lavalink v4
-except Exception as e:
-    raise ImportError(
-        "audioplus requires Wavelink 3.x (for Lavalink v4).\n"
-        "Install: pip install -U 'wavelink>=3,<4'  (or [p]pipinstall wavelink==3.*)"
-    ) from e
 
 class MusicPlayer(wavelink.Player):
-    """Minimal queue/loop TextChannel-aware player."""
+    """Queue/loop player bound to a text channel."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.queue: wavelink.Queue[wavelink.Playable] = wavelink.Queue()
@@ -69,19 +68,19 @@ class MusicPlayer(wavelink.Player):
         except discord.Forbidden:
             pass
 
+
 class AudioPlus(redcommands.Cog):
     """Lavalink v4 (YouTube) player with autoconnect, rich help, search preview, and loud debug."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
-        # FIX: valid integer identifier (hex or decimal). The previous 0xAUDIOP10 was invalid.
         self.config: Config = Config.get_conf(self, identifier=0xA71D01, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self._wl_api: str = "unset"
         self._last_error: Optional[str] = None
         self._autoconnect_task: Optional[asyncio.Task] = None
 
-    # ---------- debug ----------
+    # -------- debug --------
     async def _debug(self, guild: discord.Guild, msg: str):
         if not await self.config.guild(guild).debug():
             return
@@ -89,12 +88,10 @@ class AudioPlus(redcommands.Cog):
         ch = guild.get_channel(ch_id) if ch_id else getattr(guild, "system_channel", None)
         print(f"[AudioPlus] {guild.name}: {msg}")
         if isinstance(ch, (discord.TextChannel, discord.Thread)):
-            try:
-                await ch.send(box(msg, lang="ini"))
-            except Exception:
-                pass
+            try: await ch.send(box(msg, lang="ini"))
+            except Exception: pass
 
-    # ---------- lifecycle ----------
+    # -------- lifecycle --------
     async def cog_load(self) -> None:
         async def _maybe():
             await self.bot.wait_until_ready()
@@ -110,103 +107,92 @@ class AudioPlus(redcommands.Cog):
     async def cog_unload(self) -> None:
         if self._autoconnect_task:
             self._autoconnect_task.cancel()
-        # best-effort cleanup to avoid aiohttp session leaks
         try:
             for vc in list(self.bot.voice_clients):
                 if isinstance(vc, MusicPlayer):
-                    try:
-                        await vc.disconnect(force=True)
-                    except Exception:
-                        pass
-            NP = getattr(wavelink, "NodePool", None)
-            if NP and hasattr(NP, "nodes"):
-                for node in list(NP.nodes.values()):  # type: ignore[attr-defined]
-                    try:
-                        await node.disconnect()
-                    except Exception:
-                        pass
-            PL = getattr(wavelink, "Pool", None)
-            if PL and hasattr(PL, "nodes"):
-                for node in list(PL.nodes.values()):  # type: ignore[attr-defined]
-                    try:
-                        await node.disconnect()
-                    except Exception:
-                        pass
+                    await vc.disconnect(force=True)
         except Exception:
             pass
 
-    # ---------- wavelink API probing ----------
+    # -------- API helpers --------
     def _apis(self):
         NP = getattr(wavelink, "NodePool", None)
         PL = getattr(wavelink, "Pool", None)
         return {
             "has_NodePool": bool(NP),
             "has_NodePool_create_node": bool(getattr(NP, "create_node", None)),
-            "has_NodePool_get_node": bool(getattr(NP, "get_node", None)),
+            "has_NodePool_nodes": hasattr(NP, "nodes"),
             "has_Pool": bool(PL),
             "has_Pool_connect": bool(getattr(PL, "connect", None)),
-            "has_Pool_get_node": bool(getattr(PL, "get_node", None)),
+            "has_Pool_nodes": hasattr(PL, "nodes"),
         }
 
-    def _get_connected_node(self) -> Optional["wavelink.Node"]:
+    def _iter_nodes(self) -> Iterable["wavelink.Node"]:
         ap = self._apis()
-        try:
-            if ap["has_NodePool"] and ap["has_NodePool_get_node"]:
-                node = wavelink.NodePool.get_node()
-                if getattr(node, "is_connected", False):
-                    return node
-        except Exception:
-            pass
-        try:
-            if ap["has_Pool"] and ap["has_Pool_get_node"]:
-                node = wavelink.Pool.get_node()  # type: ignore[attr-defined]
-                if getattr(node, "is_connected", False):
-                    return node
-        except Exception:
-            pass
+        if ap["has_Pool"] and ap["has_Pool_nodes"]:
+            try:
+                nodes = getattr(wavelink.Pool, "nodes")  # type: ignore[attr-defined]
+                if isinstance(nodes, dict): yield from nodes.values()
+                elif isinstance(nodes, (list, tuple, set)): yield from nodes
+            except Exception: pass
+        if ap["has_NodePool"] and ap["has_NodePool_nodes"]:
+            try:
+                nodes = getattr(wavelink.NodePool, "nodes")  # type: ignore[attr-defined]
+                if isinstance(nodes, dict): yield from nodes.values()
+                elif isinstance(nodes, (list, tuple, set)): yield from nodes
+            except Exception: pass
+
+    def _get_connected_node(self) -> Optional["wavelink.Node"]:
+        for n in self._iter_nodes():
+            try:
+                if getattr(n, "is_connected", False):
+                    return n
+            except Exception:
+                continue
         return None
 
     async def _connect_node(self, guild: discord.Guild) -> str:
         node = self._get_connected_node()
         if node:
-            return self._wl_api or "already-connected"
+            self._wl_api = self._wl_api or "already-connected"
+            self._last_error = None
+            return self._wl_api
 
         g = await self.config.guild(guild).all()
         host, port, pw, https = g["node"]["host"], g["node"]["port"], g["node"]["password"], g["node"]["https"]
         if not host:
             raise RuntimeError("Node host is empty. Run [p]music node set first.")
-
         uri = _uri(host, port, https)
-        ver = getattr(wavelink, "__version__", "unknown")
         ap = self._apis()
-        await self._debug(guild, f"node.connect: wl={ver} apis={ap} uri={uri}")
+        await self._debug(guild, f"node.connect: wl={getattr(wavelink,'__version__','?')} apis={ap} uri={uri}")
 
-        # Prefer Pool.connect (WL 3.x)
         if ap["has_Pool"] and ap["has_Pool_connect"]:
             try:
                 Node = getattr(wavelink, "Node")
                 node = Node(uri=uri, password=pw)
-                # Some builds accept secure kw; guard usage
                 if "secure" in node.__init__.__code__.co_varnames:  # type: ignore[attr-defined]
                     node = Node(uri=uri, password=pw, secure=https)
                 await wavelink.Pool.connect(client=self.bot, nodes=[node])  # type: ignore[attr-defined]
                 self._wl_api = "Pool.connect(Node)"
+                self._last_error = None
+                await self._debug(guild, "node.connect: success")
                 return self._wl_api
             except Exception as e:
                 self._last_error = f"Pool.connect failed: {type(e).__name__}: {e}"
                 await self._debug(guild, self._last_error)
 
-        # Fallback: NodePool.create_node
         if ap["has_NodePool"] and ap["has_NodePool_create_node"]:
             try:
-                await wavelink.NodePool.create_node(bot=self.bot, host=host, port=port, password=pw, https=https)
+                await wavelink.NodePool.create_node(bot=self.bot, host=host, port=port, password=pw, https=https)  # type: ignore[attr-defined]
                 self._wl_api = "NodePool.create_node"
+                self._last_error = None
+                await self._debug(guild, "node.connect: success (NodePool)")
                 return self._wl_api
             except Exception as e:
                 self._last_error = f"NodePool.create_node failed: {type(e).__name__}: {e}"
                 await self._debug(guild, self._last_error)
 
-        self._last_error = self._last_error or f"Incompatible Wavelink APIs; need WL 3.x. apis={ap}"
+        self._last_error = self._last_error or "Incompatible Wavelink APIs; need WL 3.x."
         raise RuntimeError(self._last_error)
 
     async def _wavelink_status(self) -> str:
@@ -214,114 +200,97 @@ class AudioPlus(redcommands.Cog):
         ver = getattr(wavelink, "__version__", "unknown")
         parts.append(f"wavelink_version={ver}")
         try:
-            Pool = getattr(wavelink, "Pool", None)
-            npool = getattr(wavelink, "NodePool", None)
-            if Pool and hasattr(Pool, "nodes"):
-                nodes = getattr(Pool, "nodes")
-                parts.append(f"pool_nodes={len(nodes) if hasattr(nodes, '__len__') else 'unknown'}")
-            elif npool and hasattr(npool, "nodes"):
-                nodes = getattr(npool, "nodes")
-                parts.append(f"nodepool_nodes={len(nodes) if hasattr(nodes, '__len__') else 'unknown'}")
+            nodes = list(self._iter_nodes())
+            parts.append(f"nodes_total={len(nodes)}")
+            parts.append(f"nodes_connected={sum(1 for n in nodes if getattr(n,'is_connected',False))}")
         except Exception:
-            parts.append("pool_introspection=error")
+            parts.append("nodes_introspection=error")
         if self._wl_api != "unset":
             parts.append(f"api={self._wl_api}")
         if self._last_error:
             parts.append(f"last_error={self._last_error}")
         return " ".join(parts)
 
-    async def _ping_http(self, host: str, port: int, https: bool) -> dict:
-        uri_v = f"{_uri(host, port, https)}/version"
-        uri_info = f"{_uri(host, port, https)}/v4/info"
-        out = {"version": None, "info": None, "errors": []}
+    def _auth_headers(self, guild: discord.Guild) -> dict:
+        pw = self.bot.loop.run_until_complete(self.config.guild(guild).node.password()) if False else None
+        return {}  # not used here; kept for reference
+
+    async def _ping_http(self, host: str, port: int, https: bool, password: Optional[str] = None) -> dict:
+        base = _uri(host, port, https)
+        out = {"version": None, "info": None, "stats": None, "errors": []}
         timeout = aiohttp.ClientTimeout(total=5)
+        headers = {"Authorization": password} if password else {}
         async with aiohttp.ClientSession(timeout=timeout) as sess:
             try:
-                async with sess.get(uri_v) as resp:
+                async with sess.get(f"{base}/version") as resp:
                     out["version"] = {"status": resp.status, "body": (await resp.text())[:200]}
             except Exception as e:
                 out["errors"].append(f"/version {type(e).__name__}: {e}")
-            try:
-                async with sess.get(uri_info) as resp:
-                    out["info"] = {"status": resp.status, "body": (await resp.text())[:200]}
-            except Exception as e:
-                out["errors"].append(f"/v4/info {type(e).__name__}: {e}")
+            for path in ("/v4/info", "/v4/stats"):
+                try:
+                    async with sess.get(f"{base}{path}", headers=headers or None) as resp:
+                        out["info" if path.endswith("info") else "stats"] = {
+                            "status": resp.status, "body": (await resp.text())[:200]
+                        }
+                except Exception as e:
+                    out["errors"].append(f"{path} {type(e).__name__}: {e}")
         return out
 
-    # ---------- search helper ----------
-    async def _search_youtube(self, guild: discord.Guild, query: str) -> Tuple[Optional[wavelink.Playable], str]:
+    # ---- search helper ----
+    async def _search_best(self, guild: discord.Guild, query: str) -> Tuple[Optional[wavelink.Playable], str]:
         prefer_lyrics = await self.config.guild(guild).prefer_lyrics()
-        debug_lines: List[str] = [f"search: prefer_lyrics={prefer_lyrics} raw='{query}'"]
-
-        async def _search(q: str) -> List[wavelink.Playable]:
-            try:
-                res = await wavelink.Playable.search(f"ytsearch:{q}")
-                return list(res) if res else []
-            except Exception as e:
-                debug_lines.append(f"search: FAIL {type(e).__name__}")
-                return []
-
+        dbg: List[str] = [f"search prefer_lyrics={prefer_lyrics} raw='{query}'"]
         if YOUTUBE_URL_RE.search(query):
             try:
                 res = await wavelink.Playable.search(query)
                 t = res[0] if res else None
-                debug_lines.append(f"search.url: results={len(res) if res else 0}")
-                return t, "\n".join(debug_lines)
+                dbg.append(f"url results={len(res) if res else 0}")
+                return t, "\n".join(dbg)
             except Exception as e:
-                debug_lines.append(f"search.url: ERROR {type(e).__name__}")
-                return None, "\n".join(debug_lines)
+                dbg.append(f"url ERROR {type(e).__name__}")
+                return None, "\n".join(dbg)
 
         queries = [f"{query} lyrics", f"{query} lyric video", query] if prefer_lyrics else [query]
         for q in queries:
-            items = await _search(q)
-            debug_lines.append(f"search.q: '{q}' -> {len(items)}")
-            if items:
-                if prefer_lyrics:
-                    def score(t: wavelink.Playable) -> Tuple[int, int]:
-                        title = (getattr(t, "title", "") or "").lower()
-                        return (0 if ("lyric" in title or "lyrics" in title) else 1, len(title))
-                    items.sort(key=score)
-                t = items[0]
-                debug_lines.append(f"search.pick: title='{getattr(t, 'title', 'Unknown')}' length={getattr(t, 'length', 0)}")
-                return t, "\n".join(debug_lines)
+            try:
+                res = await wavelink.Playable.search(f"ytsearch:{q}")
+            except Exception as e:
+                dbg.append(f"q='{q}' ERROR {type(e).__name__}")
+                continue
+            n = len(res) if res else 0
+            dbg.append(f"q='{q}' -> {n}")
+            if not n:
+                continue
+            items = list(res)
+            if prefer_lyrics:
+                def score(t: wavelink.Playable) -> Tuple[int, int]:
+                    title = (getattr(t, "title", "") or "").lower()
+                    return (0 if ("lyric" in title or "lyrics" in title) else 1, len(title))
+                items.sort(key=score)
+            return items[0], "\n".join(dbg)
+        dbg.append("NO_RESULTS")
+        return None, "\n".join(dbg)
 
-        debug_lines.append("search: NO_RESULTS (Check Lavalink v4 + YouTube cipher plugin)")
-        return None, "\n".join(debug_lines)
+    # ---- readiness wait ----
+    async def _await_voice_ready(self, player: MusicPlayer, timeout: float = 6.0) -> bool:
+        """Wait for Discord voice handshake to complete."""
+        step = 0.25
+        for _ in range(int(timeout / step)):
+            me_vc = getattr(player.guild.me, "voice", None)
+            if me_vc and me_vc.channel and player.channel and me_vc.channel.id == player.channel.id:
+                # wavelink 3.x also tracks connected state internally
+                if getattr(player, "connected", True):  # if absent, assume ok
+                    return True
+            await asyncio.sleep(step)
+        return False
 
-    # ---------- events ----------
-    @commands.Cog.listener()
-    async def on_ready(self):
-        # autoconnect executed in cog_load, keep as safety if bot reconnects without reload
-        try:
-            for g in self.bot.guilds:
-                conf = await self.config.guild(g).all()
-                if conf["node"]["autoconnect"]:
-                    await self._connect_node(g)
-        except Exception:
-            pass
-
+    # ---- events ----
     @commands.Cog.listener()
     async def on_wavelink_node_ready(self, payload):
         node = payload.node
+        self._last_error = None
         for g in self.bot.guilds:
-            await self._debug(g, f"node.ready: connected uri={getattr(node, 'uri', 'unknown')} session={getattr(payload, 'session_id', '?')}")
-        self._wl_api = self._wl_api or "ready"
-
-    @commands.Cog.listener()
-    async def on_wavelink_node_connection_closed(self, payload):
-        node = payload.node
-        self._last_error = f"closed: code={getattr(payload,'code','?')} reason={getattr(payload,'reason','?')}"
-        for g in self.bot.guilds:
-            await self._debug(g, f"node.closed: uri={getattr(node,'uri','unknown')} code={getattr(payload,'code','?')} reason={getattr(payload,'reason','?')}")
-            conf = await self.config.guild(g).all()
-            if conf["node"]["autoconnect"]:
-                async def _recon():
-                    await asyncio.sleep(5)
-                    try:
-                        await self._connect_node(g)
-                    except Exception:
-                        pass
-                self.bot.loop.create_task(_recon())
+            await self._debug(g, f"node.ready uri={getattr(node,'uri','?')} session={getattr(payload,'session_id','?')}")
 
     @commands.Cog.listener()
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
@@ -340,78 +309,38 @@ class AudioPlus(redcommands.Cog):
                 await player.announce(f"▶️ Now playing: **{getattr(nxt, 'title', 'Unknown')}**")
             else:
                 await player.stop()
-        except Exception as e:
-            await self._debug(player.guild, f"track_end: ERROR {type(e).__name__}")
+        except Exception:
+            await player.announce("❌ Playback error; stopped.")
 
-    @commands.Cog.listener()
-    async def on_wavelink_track_stuck(self, payload: wavelink.TrackStuckEventPayload):
-        player: MusicPlayer = payload.player  # type: ignore[assignment]
-        if isinstance(player, MusicPlayer) and not player.queue.is_empty:
-            nxt = player.queue.get()
-            await player.play(nxt)
-            await player.announce(f"⚠️ Track stuck. Skipping to **{getattr(nxt, 'title', 'Unknown')}**")
-
-    @commands.Cog.listener()
-    async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload):
-        player: MusicPlayer = payload.player  # type: ignore[assignment]
-        if isinstance(player, MusicPlayer):
-            if not player.queue.is_empty:
-                nxt = player.queue.get()
-                await player.play(nxt)
-                await player.announce(f"❌ Track error. Next: **{getattr(nxt, 'title', 'Unknown')}**")
-            else:
-                await player.announce("❌ Track error.")
-
-    # ---------- commands ----------
+    # ---- commands: help ----
     @redcommands.group(name="music", invoke_without_command=True)
     @redcommands.guild_only()
     async def music(self, ctx: redcommands.Context):
-        await self._help_full(ctx)
-
-    @music.command()
-    async def help(self, ctx: redcommands.Context):
-        await self._help_full(ctx)
-
-    async def _help_full(self, ctx: redcommands.Context):
         p = ctx.clean_prefix
         desc = (
             f"**AudioPlus (Lavalink v4 / Wavelink 3.x / YouTube)**\n\n"
-            f"**Setup**\n"
-            f"• `{p}music node set <host> <port> <password> <https>`\n"
-            f"• `{p}music node connect` • `{p}music node status` • `{p}music node autoconnect [true|false]`\n"
-            f"• `{p}music node ping` • `{p}music debug [true|false]` • `{p}music bind [#channel]`\n"
-            f"• `{p}music preferlyrics [true|false]` • `{p}music defaultvolume <0-150>`\n\n"
-            f"**Playback**\n"
-            f"• `{p}play <query|youtube-url>` (`{p}p`) — lyric-first\n"
-            f"• `{p}search <query>` — preview top 5\n"
-            f"• `pause` • `resume` • `skip` • `stop` • `seek <mm:ss|hh:mm:ss|sec|+/-sec>` • `volume <0-150>` • `now`\n\n"
-            f"**Queue**\n"
-            f"• `queue` • `remove <index>` • `clear` • `shuffle` • `repeat <off|one|all>`\n"
+            f"**Node**  `{p}music node set <host> <port> <password> <https>` • `node connect` • `node status` • `node ping`\n"
+            f"          `node autoconnect [true|false]`\n"
+            f"**Prefs** `music preferlyrics [true|false]` • `music defaultvolume <0-150>` • `music debug [true|false]`\n"
+            f"**Play**  `play <query|url>` (`p`) • `search <query>` • `pause` • `resume` • `skip` • `stop` • `seek <mm:ss|sec|+/-sec>`\n"
+            f"**Queue** `queue` • `remove <index>` • `clear` • `shuffle` • `repeat <off|one|all>` • `now`\n"
         )
         try:
-            await ctx.send(embed=discord.Embed(title="AudioPlus — Full Help", description=desc, color=discord.Color.blurple()))
+            await ctx.send(embed=discord.Embed(title="AudioPlus — Help", description=desc, color=discord.Color.blurple()))
         except discord.Forbidden:
             await ctx.send(box(desc, lang="ini"))
 
-    @music.command(name="debug")
+    @music.command()
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def debug_cmd(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+    async def debug(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
         if enabled is None:
             enabled = not (await self.config.guild(ctx.guild).debug())
-        await self.config.guild(ctx.guild).debug.set(bool(enabled))
-        await ctx.send(f"debug = **{bool(enabled)}**")
+        await self.config.guild(ctx.guild).debug.set(bool(enabled)); await ctx.tick()
 
+    # ---- node cmds ----
     @music.group(name="node")
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def nodegrp(self, ctx: redcommands.Context):
-        pass
-
-    @nodegrp.command(name="autoconnect")
-    async def node_autoconnect(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
-        if enabled is None:
-            enabled = not (await self.config.guild(ctx.guild).node.autoconnect())
-        await self.config.guild(ctx.guild).node.autoconnect.set(bool(enabled))
-        await ctx.send(f"autoconnect = **{bool(enabled)}**")
+    async def nodegrp(self, ctx: redcommands.Context): ...
 
     @nodegrp.command(name="set")
     async def node_set(self, ctx: redcommands.Context, host: str, port: int, password: str, https: bool):
@@ -429,47 +358,42 @@ class AudioPlus(redcommands.Cog):
     @nodegrp.command(name="status")
     async def node_status(self, ctx: redcommands.Context):
         conf = await self.config.guild(ctx.guild).node()
-        node = self._get_connected_node()
-        ver = getattr(wavelink, "__version__", "unknown")
-        ap = self._apis()
-        uri = _uri(conf["host"], conf["port"], conf["https"]) if conf["host"] else "not set"
-        players = getattr(getattr(node, "stats", None), "players", None) if node else None
+        nodes = list(self._iter_nodes())
+        connected = [n for n in nodes if getattr(n, "is_connected", False)]
         lines = [
-            f"configured_uri={uri}",
-            f"connected={bool(node)}",
-            f"wavelink_version={ver}",
-            f"apis={ap}",
-            f"players={players if players is not None else 'n/a'}",
-            f"last_error={self._last_error or 'none'}",
+            f"configured_uri={_uri(conf['host'], conf['port'], conf['https']) if conf['host'] else 'not set'}",
+            f"connected={bool(connected)}",
+            f"wavelink_version={getattr(wavelink,'__version__','unknown')}",
+            f"nodes_total={len(nodes)} nodes_connected={len(connected)}",
+            f"api={self._wl_api} last_error={self._last_error or 'none'}",
         ]
+        for i, n in enumerate(nodes, 1):
+            lines.append(f"node[{i}]: connected={getattr(n,'is_connected',False)} uri={getattr(n,'uri','?')}")
         await ctx.send(box("\n".join(lines), lang="ini"))
-
-    @nodegrp.command(name="show")
-    async def node_show(self, ctx: redcommands.Context):
-        g = await self.config.guild(ctx.guild).all()
-        uri = _uri(g["node"]["host"], g["node"]["port"], g["node"]["https"]) if g["node"]["host"] else "not set"
-        status = await self._wavelink_status()
-        await ctx.send(box(f"uri={uri}\nautoconnect={g['node']['autoconnect']}\n{status}", lang="ini"))
 
     @nodegrp.command(name="ping")
     async def node_ping(self, ctx: redcommands.Context):
         g = await self.config.guild(ctx.guild).all()
-        res = await self._ping_http(g["node"]["host"], g["node"]["port"], g["node"]["https"])
+        res = await self._ping_http(g["node"]["host"], g["node"]["port"], g["node"]["https"], password=g["node"]["password"])
         await ctx.send(box(json.dumps(res, indent=2), lang="json"))
 
-    # ----- prefs -----
+    @nodegrp.command(name="autoconnect")
+    async def node_autoc(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+        if enabled is None:
+            enabled = not (await self.config.guild(ctx.guild).node.autoconnect())
+        await self.config.guild(ctx.guild).node.autoconnect.set(bool(enabled)); await ctx.tick()
+
+    # ---- prefs ----
     @music.command(name="preferlyrics")
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def preferlyrics_cmd(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+    async def prefer_lyrics(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
         if enabled is None:
-            cur = await self.config.guild(ctx.guild).prefer_lyrics()
-            enabled = not cur
-        await self.config.guild(ctx.guild).prefer_lyrics.set(bool(enabled))
-        await ctx.send(f"prefer_lyrics = **{bool(enabled)}**")
+            enabled = not (await self.config.guild(ctx.guild).prefer_lyrics())
+        await self.config.guild(ctx.guild).prefer_lyrics.set(bool(enabled)); await ctx.tick()
 
-    @music.command(name="defaultvolume", aliases=["defvol", "setvolume"])
+    @music.command(name="defaultvolume", aliases=["defvol"])
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def defaultvolume_cmd(self, ctx: redcommands.Context, value: int):
+    async def default_volume(self, ctx: redcommands.Context, value: int):
         value = int(max(0, min(150, value)))
         await self.config.guild(ctx.guild).default_volume.set(value)
         player = ctx.voice_client
@@ -478,7 +402,7 @@ class AudioPlus(redcommands.Cog):
             except Exception: pass
         await ctx.send(f"default_volume = **{value}%**")
 
-    # ----- voice/connect -----
+    # ---- voice helpers ----
     async def _get_player(self, ctx: redcommands.Context, *, connect: bool = True) -> MusicPlayer:
         player = ctx.voice_client
         if isinstance(player, MusicPlayer):
@@ -493,36 +417,39 @@ class AudioPlus(redcommands.Cog):
             player = await channel.connect(cls=MusicPlayer)  # type: ignore[arg-type]
         except discord.Forbidden:
             raise redcommands.UserFeedbackCheckFailure("Missing Connect permission for that voice channel.")
-        except Exception as e:
-            raise redcommands.UserFeedbackCheckFailure(f"VC connect failed: {type(e).__name__}")
         bind_id = await self.config.guild(ctx.guild).bind_channel()
         player.text_channel_id = bind_id or ctx.channel.id
         vol = await self.config.guild(ctx.guild).default_volume()
         try: await player.set_volume(int(max(0, min(150, vol))))
         except Exception: pass
-        await self._debug(ctx.guild, f"player.init: text_channel_id={player.text_channel_id} volume={vol}")
         return player
 
     def _ensure_same_vc(self, ctx: redcommands.Context, player: MusicPlayer):
         if not ctx.author.voice or not ctx.author.voice.channel or ctx.author.voice.channel != player.channel:
             raise redcommands.UserFeedbackCheckFailure("You must be in my voice channel.")
 
-    # ----- playback -----
+    # ---- playback ----
     @music.command(aliases=["p"])
     async def play(self, ctx: redcommands.Context, *, query: str):
+        # connect/get player
         try:
             player = await self._get_player(ctx, connect=True)
         except redcommands.UserFeedbackCheckFailure as e:
             return await ctx.send(f"Setup failed: {e}")
 
-        track, dbg = await self._search_youtube(ctx.guild, query)
+        # wait for voice ready before first play
+        ready = await self._await_voice_ready(player, timeout=6.0)
+        if not ready:
+            return await ctx.send(box("Voice not ready (handshake not finished). Try again in a second.", lang="ini"))
+
+        # search best match
+        track, dbg = await self._search_best(ctx.guild, query)
         await self._debug(ctx.guild, dbg)
         if not track:
-            hint = "Ensure Lavalink v4 is up, port open, password correct, HTTPS flag matches, and the YouTube cipher plugin is enabled."
-            return await ctx.send(box(f"Play failed: no results for query.\n{dbg}\nhint={hint}", lang="ini"))
+            return await ctx.send(box("Play failed: no results for query.", lang="ini"))
 
+        # try play / queue
         try:
-            player.requester_id = ctx.author.id
             if not player.playing and not player.paused:
                 await player.play(track)
                 await player.announce(f"▶️ Now playing: **{getattr(track, 'title', 'Unknown')}**")
@@ -530,10 +457,9 @@ class AudioPlus(redcommands.Cog):
                 player.queue.put(track)
                 await ctx.send(f"➕ Queued: **{getattr(track, 'title', 'Unknown')}**")
         except Exception as e:
-            return await ctx.send(box(
-                f"Play failed: {type(e).__name__}\nstate=playing:{player.playing} paused:{player.paused}\ntrack='{getattr(track,'title','?')}'",
-                lang="ini"
-            ))
+            state = f"playing:{player.playing} paused:{player.paused}"
+            hint = "Check VC perms (Connect/Speak), Lavalink logs, and cipher plugin. If first play, wait a moment after connecting."
+            await ctx.send(box(f"Play failed: {type(e).__name__}\nstate={state}\ntrack='{getattr(track,'title','?')}'\nhint={hint}", lang="ini"))
 
     @music.command()
     async def search(self, ctx: redcommands.Context, *, query: str):
@@ -546,165 +472,96 @@ class AudioPlus(redcommands.Cog):
                 res = await wavelink.Playable.search(f"ytsearch:{q}")
                 dbg.append(f"q='{q}' -> {len(res) if res else 0}")
                 if res:
-                    results = list(res)
-                    break
+                    results = list(res); break
         except Exception as e:
             dbg.append(f"ERROR {type(e).__name__}")
         await self._debug(ctx.guild, "\n".join(dbg))
 
         if not results:
             return await ctx.send("No YouTube results.")
-
-        def dur_fmt(ms: int) -> str:
-            s = int((ms or 0) / 1000)
-            m, s = divmod(s, 60)
-            h, m = divmod(m, 60)
+        def dur(ms: int) -> str:
+            s = int((ms or 0)/1000); m, s = divmod(s,60); h, m = divmod(m,60)
             return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
-
         if prefer_lyrics:
             def score(t: wavelink.Playable) -> Tuple[int, int]:
-                title = (getattr(t, "title", "") or "").lower()
+                title = (getattr(t,"title","") or "").lower()
                 return (0 if ("lyric" in title or "lyrics" in title) else 1, len(title))
             results.sort(key=score)
-
         top = results[:5]
-        lines = []
-        for i, t in enumerate(top, start=1):
-            title = getattr(t, "title", "Unknown")
-            length = dur_fmt(getattr(t, "length", 0))
-            lines.append(f"{i}. {title} [{length}]")
-        lines.append("")
-        lines.append(f"Tip: `{ctx.clean_prefix}play {query}` to enqueue the best match.")
+        lines = [f"{i}. {getattr(t,'title','Unknown')} [{dur(getattr(t,'length',0))}]" for i,t in enumerate(top,1)]
+        lines += ["", f"Tip: `{ctx.clean_prefix}play {query}` to enqueue the best match."]
         await ctx.send(box("\n".join(lines), lang="ini"))
 
     @music.command()
     async def pause(self, ctx: redcommands.Context):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        await player.pause(True); await ctx.tick()
+        p = await self._get_player(ctx, connect=False); self._ensure_same_vc(ctx, p); await p.pause(True); await ctx.tick()
 
     @music.command()
     async def resume(self, ctx: redcommands.Context):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        await player.pause(False); await ctx.tick()
+        p = await self._get_player(ctx, connect=False); self._ensure_same_vc(ctx, p); await p.pause(False); await ctx.tick()
 
     @music.command()
     async def stop(self, ctx: redcommands.Context):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        player.queue.reset()
-        await player.stop(); await ctx.tick()
+        p = await self._get_player(ctx, connect=False); self._ensure_same_vc(ctx, p); p.queue.reset(); await p.stop(); await ctx.tick()
 
     @music.command()
     async def skip(self, ctx: redcommands.Context):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        await player.stop(); await ctx.tick()
+        p = await self._get_player(ctx, connect=False); self._ensure_same_vc(ctx, p); await p.stop(); await ctx.tick()
 
     @music.command()
     async def seek(self, ctx: redcommands.Context, position: str):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-
-        def parse_pos(s: str) -> Optional[int]:
-            s = s.strip()
-            if s.startswith(("+", "-")):
-                try:
-                    delta = int(s)
-                    return max(0, (player.position or 0) + (delta * 1000))
-                except Exception:
-                    return None
+        p = await self._get_player(ctx, connect=False); self._ensure_same_vc(ctx, p)
+        def parse(s: str) -> Optional[int]:
+            s=s.strip()
+            if s.startswith(("+","-")):
+                try: return max(0, (p.position or 0) + int(s)*1000)
+                except: return None
             if ":" in s:
                 try:
-                    parts = [int(p) for p in s.split(":")]
-                    while len(parts) < 2: parts.insert(0, 0)
-                    h, m, sec = (0, parts[-2], parts[-1]) if len(parts) == 2 else (parts[-3], parts[-2], parts[-1])
-                    return max(0, (h * 3600 + m * 60 + sec) * 1000)
-                except Exception:
-                    return None
-            try:
-                return max(0, int(float(s)) * 1000)
-            except Exception:
-                return None
-
-        ms = parse_pos(position)
-        if ms is None:
-            return await ctx.send("Use `mm:ss`, `hh:mm:ss`, or seconds (supports `+/-` delta).")
-        try:
-            await player.seek(ms); await ctx.tick()
-        except Exception:
-            await ctx.send("Seek failed.")
+                    parts=[int(x) for x in s.split(":")]
+                    while len(parts)<2: parts.insert(0,0)
+                    h,m,s= (0,parts[-2],parts[-1]) if len(parts)==2 else (parts[-3],parts[-2],parts[-1])
+                    return max(0,(h*3600+m*60+s)*1000)
+                except: return None
+            try: return max(0,int(float(s))*1000)
+            except: return None
+        ms = parse(position)
+        if ms is None: return await ctx.send("Use `mm:ss`, `hh:mm:ss`, or seconds (supports +/-).")
+        try: await p.seek(ms); await ctx.tick()
+        except: await ctx.send("Seek failed.")
 
     @music.command(aliases=["vol"])
     async def volume(self, ctx: redcommands.Context, value: int):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        value = int(max(0, min(150, value)))
-        await player.set_volume(value)
-        await ctx.send(f"Volume set to **{value}%**")
+        p = await self._get_player(ctx, connect=False); self._ensure_same_vc(ctx, p)
+        value = int(max(0, min(150, value))); await p.set_volume(value); await ctx.send(f"Volume **{value}%**")
 
     @music.command()
     async def now(self, ctx: redcommands.Context):
-        player = await self._get_player(ctx, connect=False)
-        track = player.current
-        if not track:
-            return await ctx.send("Nothing playing.")
-        pos = int((player.position or 0) / 1000)
-        dur = int((getattr(track, "length", 0) or 0) / 1000)
-
-        def fmt(s: int) -> str:
-            m, s = divmod(max(0, s), 60)
-            h, m = divmod(m, 60)
-            return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
-        await ctx.send(f"🎵 **{getattr(track, 'title', 'Unknown')}** [{fmt(pos)}/{fmt(dur)}]")
+        p = await self._get_player(ctx, connect=False)
+        t = p.current
+        if not t: return await ctx.send("Nothing playing.")
+        pos=int((p.position or 0)/1000); dur=int((getattr(t,"length",0) or 0)/1000)
+        def fmt(s:int)->str: m,s=divmod(max(0,s),60); h,m=divmod(m,60); return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+        await ctx.send(f"🎵 **{getattr(t,'title','Unknown')}** [{fmt(pos)}/{fmt(dur)}]")
 
     @music.command()
     async def queue(self, ctx: redcommands.Context):
-        player = await self._get_player(ctx, connect=False)
-        if player.queue.is_empty:
-            return await ctx.send("Queue is empty.")
-        lines = [f"{i:>2}. {getattr(t, 'title', 'Unknown')}" for i, t in enumerate(list(player.queue)[:15], start=1)]
-        more = len(player.queue) - 15
-        if more > 0:
-            lines.append(f"... and {more} more")
+        p = await self._get_player(ctx, connect=False)
+        if p.queue.is_empty: return await ctx.send("Queue is empty.")
+        items=list(p.queue)[:15]; lines=[f"{i:>2}. {getattr(t,'title','Unknown')}" for i,t in enumerate(items,1)]
+        if len(p.queue)>15: lines.append(f"... and {len(p.queue)-15} more")
         await ctx.send(box("\n".join(lines), lang="ini"))
 
     @music.command()
     async def remove(self, ctx: redcommands.Context, index: int):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        if index < 1 or index > len(player.queue):
-            return await ctx.send("Index out of range.")
-        items = list(player.queue)
-        removed = items.pop(index - 1)
-        player.queue.clear()
-        for t in items: player.queue.put(t)
-        await ctx.send(f"Removed **{getattr(removed, 'title', 'Unknown')}**")
+        p = await self._get_player(ctx, connect=False); self._ensure_same_vc(ctx, p)
+        if index<1 or index>len(p.queue): return await ctx.send("Index out of range.")
+        items=list(p.queue); removed=items.pop(index-1); p.queue.clear(); [p.queue.put(t) for t in items]
+        await ctx.send(f"Removed **{getattr(removed,'title','Unknown')}**")
 
     @music.command()
     async def clear(self, ctx: redcommands.Context):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        player.queue.reset()
-        await ctx.tick()
-
-    @music.command()
-    async def shuffle(self, ctx: redcommands.Context):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        player.queue.shuffle()
-        await ctx.tick()
-
-    @music.command()
-    async def repeat(self, ctx: redcommands.Context, mode: str):
-        player = await self._get_player(ctx, connect=False)
-        self._ensure_same_vc(ctx, player)
-        mode = mode.lower()
-        if mode not in (LoopMode.OFF, LoopMode.ONE, LoopMode.ALL):
-            return await ctx.send("Use: `off|one|all`.")
-        player.loop = mode
-        await ctx.send(f"Repeat mode: **{mode}**")
+        p = await self._get_player(ctx, connect=False); self._ensure_same_vc(ctx, p); p.queue.reset(); await ctx.tick()
 
 
 async def setup(bot: Red) -> None:
