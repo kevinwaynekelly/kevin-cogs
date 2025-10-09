@@ -5,10 +5,10 @@
 # ---------- info.json ----------
 # {
 #   "author": ["Code Copilot"],
-#   "install_msg": "Installed audioplus. Configure your Lavalink node with `[p]audio setnode <host> <port> <password> <secure>`.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`. Use `[p]audio pingnode` to check node health.",
+#   "install_msg": "Installed audioplus. Configure your Lavalink node with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` to check health or `[p]audio connectnode` to force reconnect.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`.",
 #   "name": "audioplus",
 #   "short": "Single-file Lavalink v4 music cog using Wavelink 3.x.",
-#   "description": "Red cog (single-file __init__.py) for Lavalink v4 via Wavelink 3.x. Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode; owner: audio setnode/shownode.",
+#   "description": "Red cog (single-file __init__.py) for Lavalink v4 via Wavelink 3.x. Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode/connectnode; owner: audio setnode/shownode.",
 #   "end_user_data_statement": "Stores Lavalink node details (host, port, password, secure) in Red's Config.",
 #   "requirements": ["wavelink>=3.4.1,<4.0.0"],
 #   "tags": ["music", "lavalink", "wavelink", "audio"],
@@ -20,7 +20,7 @@
 # ---------- __init__.py ----------
 """
 AudioPlus: Single-file Red cog for Lavalink v4 using Wavelink 3.x.
-Commands: [p]audio ...  (join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle/pingnode)
+Commands: [p]audio ...  (join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle/pingnode/connectnode)
 Owner: [p]audio setnode <host> <port> <password> <secure>
 """
 from __future__ import annotations
@@ -72,19 +72,13 @@ class AudioPlus(commands.Cog):
         # why: gate voice connects until node reports ready at least once
         self._node_ready: asyncio.Event = asyncio.Event()
 
-    # ---- lifecycle ----
-
-    async def cog_load(self) -> None:
-        node_cfg = await self._get_node_config()
-        await self._ensure_nodes(node_cfg)
-
-    async def cog_unload(self) -> None:
-        try:
-            await wavelink.Pool.close()
-        except Exception:
-            pass
-
     # ---- helpers ----
+
+    @staticmethod
+    def _is_node_connected(node: wavelink.Node) -> bool:
+        status = getattr(node, "status", None)
+        name = getattr(status, "name", None) or (str(status) if status is not None else "")
+        return str(name).upper() == "CONNECTED"
 
     async def _get_node_config(self) -> NodeConfig:
         data = await self.config.all()
@@ -96,13 +90,18 @@ class AudioPlus(commands.Cog):
         )
 
     async def _ensure_nodes(self, node_cfg: NodeConfig) -> None:
-        # avoid duplicate connects on reload
+        # ensure there is a CONNECTED node; (re)connect if needed
+        existing = None
         try:
             existing = wavelink.Pool.get_node(node_cfg.identifier)
-            if existing:
-                return
         except Exception:
-            pass
+            existing = None
+
+        if existing:
+            if not self._is_node_connected(existing):
+                print("[audioplus] Node present but not CONNECTED; reconnecting…")
+                await wavelink.Pool.connect(nodes=[existing], client=self.bot)
+            return
 
         node = wavelink.Node(
             identifier=node_cfg.identifier,
@@ -110,17 +109,21 @@ class AudioPlus(commands.Cog):
             password=node_cfg.password,
             resume_timeout=int(await self.config.resume_timeout()),
         )
+        print(f"[audioplus] Connecting new node {node.identifier} at {node.uri} …")
         await wavelink.Pool.connect(nodes=[node], client=self.bot)
 
     async def _ensure_pool_available(self, wait_timeout: float = 20.0) -> None:
         """Ensure at least one CONNECTED node exists; reconnect if needed."""
         needs_connect = False
         try:
-            _ = wavelink.Pool.get_node()
+            node = wavelink.Pool.get_node()
+            if not self._is_node_connected(node):
+                needs_connect = True
         except Exception:
             needs_connect = True
         if needs_connect:
-            await self._ensure_nodes(await self._get_node_config())
+            cfg = await self._get_node_config()
+            await self._ensure_nodes(cfg)
         await self._wait_node_ready(timeout=wait_timeout)
 
     async def _wait_node_ready(self, timeout: float = 20.0) -> None:
@@ -217,31 +220,40 @@ class AudioPlus(commands.Cog):
         data["_rtt_ms"] = int((asyncio.get_running_loop().time() - t0) * 1000)
         return data
 
-    # ---- events ----
+    # ---- lifecycle ----
+
+    async def cog_load(self) -> None:
+        node_cfg = await self._get_node_config()
+        await self._ensure_nodes(node_cfg)
+
+    async def cog_unload(self) -> None:
+        try:
+            await wavelink.Pool.close()
+        except Exception:
+            pass
+
+    # ---- events (logs) ----
 
     @commands.Cog.listener()
     async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload) -> None:
         guilds = len(self.bot.guilds)
-        print(
-            f"[audioplus] Node {payload.node.identifier} ready (resumed={payload.resumed}) for {guilds} guilds."
-        )
+        print(f"[audioplus] Node {payload.node.identifier} **CONNECTED** (resumed={payload.resumed}) | guilds={guilds}")
         try:
             self._node_ready.set()
         except Exception:
             pass
 
+    # Some Wavelink versions emit this on close; safe to implement even if not fired.
     @commands.Cog.listener()
-    async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload) -> None:
-        player = payload.player
-        if not player:
-            return
-        await self._maybe_start_queue(player)
-
-    @commands.Cog.listener()
-    async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload) -> None:
-        exc_msg = getattr(payload.exception, "message", None) or str(payload.exception) or "unknown"
-        print(f"[audioplus] Track exception: {exc_msg!s}")
-        await self._maybe_start_queue(payload.player)
+    async def on_wavelink_node_closed(self, payload) -> None:
+        code = getattr(payload, "code", "unknown")
+        reason = getattr(payload, "reason", "")
+        ident = getattr(getattr(payload, "node", None), "identifier", "MAIN")
+        print(f"[audioplus] Node {ident} **CLOSED** code={code} reason={reason}")
+        try:
+            self._node_ready.clear()
+        except Exception:
+            pass
 
     # ---- commands ----
 
@@ -278,24 +290,60 @@ class AudioPlus(commands.Cog):
         secure = "yes" if data["secure"] else "no"
         await ctx.send(f"Node: {data['host']}:{data['port']} (secure: {secure})")
 
+    @audio.command(name="connectnode")
+    @checks.is_owner()
+    async def audio_connectnode(self, ctx: commands.Context) -> None:
+        """Force (re)connect to the Lavalink node and print status."""
+        cfg = await self._get_node_config()
+        try:
+            self._node_ready.clear()
+        except Exception:
+            pass
+        # hard reset connections
+        try:
+            await wavelink.Pool.close()
+        except Exception:
+            pass
+        await self._ensure_nodes(cfg)
+        await self._wait_node_ready(timeout=15.0)
+        # status
+        node = None
+        try:
+            node = wavelink.Pool.get_node(cfg.identifier)
+        except Exception:
+            node = None
+        connected = self._is_node_connected(node) if node else False
+        info = await self._fetch_lavalink_info(node, timeout=7.0) if node else None
+        ver = info.get("version") if info else "unknown"
+        await ctx.send(
+            f"Reconnect {'**successful**' if connected else '**failed**'} — Version: `{ver}` | URI: `{cfg.uri}`."
+        )
+
     @audio.command(name="pingnode")
     @GUILD_ONLY
     async def audio_pingnode(self, ctx: commands.Context) -> None:
         """Show Lavalink node version/state."""
+        node = None
         try:
             await self._ensure_pool_available(wait_timeout=10.0)
             node = wavelink.Pool.get_node()
-        except (InvalidNodeException, Exception):
-            await ctx.send("No Lavalink node is connected. Configure with `[p]audio setnode`.")
-            return
+        except Exception:
+            # try REST probe from config even if Pool has no node
+            cfg = await self._get_node_config()
+            node = wavelink.Node(identifier=cfg.identifier, uri=cfg.uri, password=cfg.password)
 
-        info = await self._fetch_lavalink_info(node, timeout=7.0)
-        stats = getattr(node, "stats", None)
+        info = await self._fetch_lavalink_info(node, timeout=7.0) if node else None
+        stats = getattr(node, "stats", None) if node else None
 
-        # basic status heuristics
-        connected = True  # if Pool.get_node() succeeded, assume connected
-        ident = getattr(node, "identifier", "MAIN")
-        uri = getattr(node, "uri", "unknown")
+        connected = False
+        if node:
+            try:
+                connected = self._is_node_connected(wavelink.Pool.get_node(getattr(node, "identifier", "MAIN")))
+            except Exception:
+                connected = False
+
+        ident = getattr(node, "identifier", "MAIN") if node else "MAIN"
+        uri = getattr(node, "uri", "unknown") if node else "unknown"
 
         lines = [f"**Lavalink Node — {ident}**", f"URI: `{uri}`", f"Connected: {'yes' if connected else 'no'}"]
 
@@ -309,7 +357,7 @@ class AudioPlus(commands.Cog):
         else:
             lines.append("Version: `unknown` (info endpoint not reachable)")
 
-        if stats:
+        if stats and connected:
             players = getattr(stats, "players", None) or getattr(stats, "player_count", None) or 0
             playing = getattr(stats, "playing_players", None) or getattr(stats, "playing", None) or 0
             uptime = getattr(stats, "uptime", None)
