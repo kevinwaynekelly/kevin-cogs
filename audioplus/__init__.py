@@ -425,7 +425,7 @@ class AudioPlus(redcommands.Cog):
         except Exception:
             await player.announce("❌ Playback error; stopped.")
 
-    @commands.Cog.listener())
+    @commands.Cog.listener()
     async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload):
         player: MusicPlayer = payload.player  # type: ignore[assignment]
         if not isinstance(player, MusicPlayer):
