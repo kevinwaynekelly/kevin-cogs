@@ -5,10 +5,10 @@
 # ---------- info.json ----------
 # {
 #   "author": ["Code Copilot"],
-#   "install_msg": "Installed audioplus. Configure with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` to check health or `[p]audio connectnode` to force reconnect.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`.",
+#   "install_msg": "Installed audioplus. Configure with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` to check health or `[p]audio connectnode` to force reconnect.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`. If using Stage, try `[p]audio speak`.",
 #   "name": "audioplus",
 #   "short": "Single-file Lavalink v4 music cog using Wavelink 3.x.",
-#   "description": "Red cog (single-file __init__.py) for Lavalink v4 via Wavelink 3.x. Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode/connectnode; owner: audio setnode/shownode.",
+#   "description": "Red cog (single-file __init__.py) for Lavalink v4 via Wavelink 3.x. Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode/connectnode/speak; owner: audio setnode/shownode.",
 #   "end_user_data_statement": "Stores Lavalink node details (host, port, password, secure) in Red's Config.",
 #   "requirements": ["wavelink>=3.4.1,<4.0.0", "aiohttp>=3.8"],
 #   "tags": ["music", "lavalink", "wavelink", "audio"],
@@ -20,7 +20,7 @@
 # ---------- __init__.py ----------
 """
 AudioPlus: Single-file Red cog for Lavalink v4 using Wavelink 3.x.
-Commands: [p]audio ...  (join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle/pingnode/connectnode)
+Commands: [p]audio ...  (join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle/pingnode/connectnode/speak)
 Owner: [p]audio setnode <host> <port> <password> <secure>
 """
 from __future__ import annotations
@@ -71,7 +71,7 @@ class AudioPlus(commands.Cog):
         self.bot: Red = bot
         self.config: Config = Config.get_conf(self, identifier=0xA10DEFAB, force_registration=True)
         self.config.register_global(**self.default_global)
-        self._node_ready: asyncio.Event = asyncio.Event()  # gate VC connects
+        self._node_ready: asyncio.Event = asyncio.Event()
 
     # ---- helpers ----
 
@@ -104,12 +104,11 @@ class AudioPlus(commands.Cog):
             return None
 
     def _new_identifier(self) -> str:
-        # why: avoid identifier collisions when Pool holds stale nodes
         short = secrets.token_hex(3)
         return f"AP-{int(time.time())}-{short}"
 
     async def _reconnect_fresh(self, cfg: NodeConfig) -> None:
-        # why: don't reuse old IDs; create a fresh node with a unique identifier
+        # why: use a fresh identifier to avoid collisions
         node = wavelink.Node(
             identifier=self._new_identifier(),
             uri=cfg.uri,
@@ -120,7 +119,6 @@ class AudioPlus(commands.Cog):
         await wavelink.Pool.connect(nodes=[node], client=self.bot)
 
     async def _ensure_nodes(self, node_cfg: NodeConfig) -> None:
-        # ensure there is a CONNECTED node; if not, connect a fresh one
         if self._connected_node():
             return
         print("[audioplus] No CONNECTED node — connecting fresh…")
@@ -139,6 +137,29 @@ class AudioPlus(commands.Cog):
         except asyncio.TimeoutError:
             pass
 
+    async def _stage_unsuppress_if_needed(self, guild: discord.Guild, channel: discord.abc.GuildChannel) -> None:
+        # why: Stage channels suppress speakers by default; request/unsuppress so audio is audible
+        if not isinstance(channel, discord.StageChannel):
+            return
+        me = guild.me
+        vs = getattr(me, "voice", None)
+        if not vs:
+            return
+        if getattr(vs, "suppress", False):
+            try:
+                await me.edit(suppress=False, reason="AudioPlus unsuppress for playback")
+                print("[audioplus] Unsuppressed on Stage channel.")
+            except discord.Forbidden:
+                # fallback: request to speak; a mod must approve if required
+                try:
+                    await me.request_to_speak()
+                    print("[audioplus] Requested to speak on Stage channel.")
+                except Exception:
+                    pass
+        # also ensure not server-muted
+        if getattr(vs, "mute", False):
+            print("[audioplus] Warning: I am server-muted; mods must unmute me to hear audio.")
+
     async def _fetch_or_connect_player(
         self, ctx: commands.Context
     ) -> Tuple[wavelink.Player, discord.VoiceChannel | discord.StageChannel]:
@@ -155,6 +176,7 @@ class AudioPlus(commands.Cog):
         if vc and isinstance(vc, wavelink.Player):
             if vc.channel and vc.channel.id != channel.id:
                 await vc.move_to(channel)
+                await self._stage_unsuppress_if_needed(ctx.guild, channel)
             return vc, channel
 
         await self._ensure_pool_available(wait_timeout=30.0)
@@ -167,16 +189,20 @@ class AudioPlus(commands.Cog):
             raise commands.CheckFailure("On a Stage channel I also need **Speak** permission.")
 
         try:
-            player: wavelink.Player = await channel.connect(cls=wavelink.Player, timeout=60.0, self_deaf=True)
+            player: wavelink.Player = await channel.connect(
+                cls=wavelink.Player, timeout=60.0, self_deaf=True, self_mute=False
+            )
         except ChannelTimeoutException:
             try:
                 player = await channel.connect(
-                    cls=wavelink.Player, timeout=90.0, self_deaf=True, reconnect=True
+                    cls=wavelink.Player, timeout=90.0, self_deaf=True, self_mute=False, reconnect=True
                 )
             except ChannelTimeoutException as e:
                 raise commands.CommandError(
                     "Voice connect timed out. Check my **Connect/Speak** perms and try again."
                 ) from e
+
+        await self._stage_unsuppress_if_needed(ctx.guild, channel)
         return player, channel
 
     async def _maybe_start_queue(self, player: wavelink.Player) -> None:
@@ -203,7 +229,6 @@ class AudioPlus(commands.Cog):
         return None if value is None else max(0, int(value / (1024 * 1024)))
 
     async def _fetch_lavalink_info(self, node_like, timeout: float = 7.0) -> Optional[dict]:
-        # node_like: wavelink.Node OR simple object with uri/password
         url = f"{getattr(node_like, 'uri', '')}/v4/info"
         password = getattr(node_like, "password", None)
         if not url or not password:
@@ -244,7 +269,6 @@ class AudioPlus(commands.Cog):
 
     @commands.Cog.listener()
     async def on_wavelink_node_closed(self, *args, **kwargs) -> None:
-        # accept any signature
         node = None
         payload = None
         if args:
@@ -262,6 +286,12 @@ class AudioPlus(commands.Cog):
             self._node_ready.clear()
         except Exception:
             pass
+
+    @commands.Cog.listener()
+    async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload) -> None:
+        t = getattr(payload, "track", None)
+        title = getattr(t, "title", None) or "Unknown"
+        print(f"[audioplus] Track started: {title}")
 
     # ---- commands ----
 
@@ -358,6 +388,17 @@ class AudioPlus(commands.Cog):
                 lines.append(f"Memory used: `{used_mib} MiB`" + (f" / `{reservable_mib} MiB` reservable" if reservable_mib is not None else ""))
 
         await ctx.send("\n".join(lines))
+
+    @audio.command(name="speak")
+    @GUILD_ONLY
+    async def audio_speak(self, ctx: commands.Context) -> None:
+        """Unsuppress/request-to-speak in a Stage channel."""
+        vc = getattr(ctx.guild.me, "voice", None)
+        if not vc or not vc.channel:
+            await ctx.send("I'm not connected to a voice channel.")
+            return
+        await self._stage_unsuppress_if_needed(ctx.guild, vc.channel)
+        await ctx.send("Tried to unsuppress/request-to-speak (if applicable).")
 
     @audio.command(name="join", aliases=["connect", "summon"])
     @GUILD_ONLY
