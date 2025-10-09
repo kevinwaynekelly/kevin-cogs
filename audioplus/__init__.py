@@ -5,10 +5,10 @@
 # ---------- info.json ----------
 # {
 #   "author": ["Code Copilot"],
-#   "install_msg": "Installed audioplus. Configure with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` to check health or `[p]audio connectnode` to force reconnect.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`. If silent, try `[p]audio debugvc`, `[p]audio playerstate`, `[p]audio undeafen`, or `[p]audio fixvoice`.",
+#   "install_msg": "Installed audioplus. Configure with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` or `[p]audio connectnode`.\nPlay with `[p]audio play <query|url>`. If silent, try `[p]audio playerstate`, `[p]audio debugvc`, `[p]audio fixvoice`, or `[p]audio tone`.",
 #   "name": "audioplus",
 #   "short": "Single-file Lavalink v4 music cog using Wavelink 3.x.",
-#   "description": "Red cog for Lavalink v4 via Wavelink 3.x. Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode/connectnode/speak/undeafen/debugvc/fixvoice/playerstate; owner: audio setnode/shownode.",
+#   "description": "Red cog for Lavalink v4 (Wavelink 3.x). Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode/connectnode/speak/undeafen/debugvc/fixvoice/playerstate/tone; owner: audio setnode/shownode.",
 #   "end_user_data_statement": "Stores Lavalink node details (host, port, password, secure) in Red's Config.",
 #   "requirements": ["wavelink>=3.4.1,<4.0.0", "aiohttp>=3.8"],
 #   "tags": ["music", "lavalink", "wavelink", "audio"],
@@ -23,7 +23,7 @@ AudioPlus: Single-file Red cog for Lavalink v4 using Wavelink 3.x.
 
 Commands:
   [p]audio join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle
-  [p]audio pingnode | connectnode | speak | undeafen | debugvc | fixvoice | playerstate
+  [p]audio pingnode | connectnode | speak | undeafen | debugvc | fixvoice | playerstate | tone
 Owner:
   [p]audio setnode <host> <port> <password> <secure>, [p]audio shownode
 """
@@ -183,6 +183,21 @@ class AudioPlus(commands.Cog):
             return None
         return None
 
+    async def _wait_ll_pos_change(self, guild_id: int, timeout: float = 6.0) -> bool:
+        # why: confirm node started sending frames; 0=>stuck voice
+        start = asyncio.get_running_loop().time()
+        last: Optional[int] = None
+        while (asyncio.get_running_loop().time() - start) < timeout:
+            data = await self._fetch_player_state(guild_id)
+            if data:
+                pos = (data.get("state") or {}).get("position", 0) or 0
+                if last is None:
+                    last = pos
+                elif pos > last:
+                    return True
+            await asyncio.sleep(0.6)
+        return False
+
     # ---- lifecycle ----
 
     async def cog_load(self) -> None:
@@ -195,7 +210,7 @@ class AudioPlus(commands.Cog):
         except Exception:
             pass
 
-    # ---- events ----
+    # ---- events / logs ----
 
     @commands.Cog.listener()
     async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload) -> None:
@@ -234,7 +249,20 @@ class AudioPlus(commands.Cog):
         title = getattr(t, "title", None) or "Unknown"
         print(f"[audioplus] Track started: {title}")
 
-    # ---- core VC helpers ----
+    @commands.Cog.listener()
+    async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload) -> None:
+        print(f"[audioplus] Track ended: reason={getattr(payload, 'reason', 'unknown')}")
+
+    @commands.Cog.listener()
+    async def on_wavelink_track_exception(self, payload: wavelink.TrackExceptionEventPayload) -> None:
+        ex = getattr(payload, "exception", None)
+        print(f"[audioplus] Track exception: {ex}")
+
+    @commands.Cog.listener()
+    async def on_wavelink_track_stuck(self, payload: wavelink.TrackStuckEventPayload) -> None:
+        print(f"[audioplus] Track stuck: thresholdMs={getattr(payload, 'threshold_ms', 'n/a')}")
+
+    # ---- VC / playback helpers ----
 
     async def _fetch_or_connect_player(
         self, ctx: commands.Context
@@ -411,7 +439,6 @@ class AudioPlus(commands.Cog):
         pos = state.get("position", 0)
         connected = bool(data.get("connected", True))
 
-        # track info may be None in some cases
         tinfo = {}
         track_container = data.get("track")
         if isinstance(track_container, dict):
@@ -452,6 +479,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="fixvoice")
     @GUILD_ONLY
     async def audio_fixvoice(self, ctx: commands.Context) -> None:
+        """Try unsuppress + undeafen + quick reconnect if needed."""
         me_vs = getattr(ctx.guild.me, "voice", None)
         if not me_vs or not me_vs.channel:
             await ctx.send("I'm not connected to voice.")
@@ -485,6 +513,27 @@ class AudioPlus(commands.Cog):
             s = state.get("state", {}) or {}
             lines.append(f"Lavalink: playing=`{not state.get('paused', False)}` pos=`{s.get('position', 0)}` vol=`{state.get('volume')}`")
         await ctx.send("\n".join(lines))
+
+    @audio.command(name="tone")
+    @GUILD_ONLY
+    async def audio_tone(self, ctx: commands.Context) -> None:
+        """Play a direct MP3 test tone/music to rule out source issues."""
+        await self._ensure_pool_available(wait_timeout=30.0)
+        player, _ = await self._fetch_or_connect_player(ctx)
+
+        url = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"  # stable direct MP3
+        res = await wavelink.Playable.search(url)
+        if not res:
+            await ctx.send("Tone source unavailable.")
+            return
+        track = res[0]
+        player.queue.put(track)
+        if not player.playing and not player.paused:
+            await self._maybe_start_queue(player)
+        await ctx.send("Playing test tone…")
+        ok = await self._wait_ll_pos_change(ctx.guild.id, timeout=8.0)
+        if not ok:
+            await ctx.send("Position didn’t move. Voice may be stuck. Try `[p]audio fixvoice` or `[p]audio connectnode` and rejoin.")
 
     @audio.command(name="join", aliases=["connect", "summon"])
     @GUILD_ONLY
@@ -535,6 +584,11 @@ class AudioPlus(commands.Cog):
             await ctx.send(f"Now playing: `{title}`")
         else:
             await ctx.send(f"Queued {queued} track{'s' if queued != 1 else ''}.")
+
+        # wait to verify playback actually moves
+        ok = await self._wait_ll_pos_change(ctx.guild.id, timeout=8.0)
+        if not ok:
+            await ctx.send("Position didn’t move. Voice may be stuck. Try `[p]audio fixvoice` or `[p]audio connectnode`, then re-run play.")
 
     @audio.command(name="skip", aliases=["next", "s"])
     @GUILD_ONLY
