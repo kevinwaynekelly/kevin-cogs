@@ -5,7 +5,7 @@ import asyncio
 import json
 import random
 import re
-from typing import Optional, List, Tuple, Iterable
+from typing import Optional, List, Tuple, Iterable, Any
 
 import aiohttp
 import discord
@@ -24,14 +24,11 @@ DEFAULTS_GUILD = {
     "debug": True,
 }
 
-
 def _scheme(https: bool) -> str:
     return "https" if https else "http"
 
-
 def _uri(host: str, port: int, https: bool) -> str:
     return f"{_scheme(https)}://{host}:{port}"
-
 
 try:
     import wavelink  # 3.x required
@@ -81,6 +78,7 @@ class AudioPlus(redcommands.Cog):
         self._wl_api: str = "unset"
         self._last_error: Optional[str] = None
         self._autoconnect_task: Optional[asyncio.Task] = None
+        self._did_global_connect: bool = False  # WHY: only one Lavalink node for the entire process.
 
     # ---------- debug ----------
     async def _debug(self, guild: discord.Guild, msg: str):
@@ -99,14 +97,19 @@ class AudioPlus(redcommands.Cog):
     async def cog_load(self) -> None:
         async def _maybe():
             await self.bot.wait_until_ready()
-            # WHY: autoconnect once; with fixed connection check we won't spawn duplicates.
+            if self._did_global_connect:
+                return
+            # Find one guild to source node settings; connect ONCE.
             for guild in self.bot.guilds:
                 g = await self.config.guild(guild).all()
-                if g["node"]["autoconnect"]:
+                if g["node"]["autoconnect"] and g["node"]["host"]:
                     try:
                         await self._connect_node(guild)
                     except Exception as e:
                         self._last_error = f"autoconnect-error: {type(e).__name__}: {e}"
+                    finally:
+                        self._did_global_connect = True
+                        break
         self._autoconnect_task = asyncio.create_task(_maybe())
 
     async def cog_unload(self) -> None:
@@ -134,27 +137,39 @@ class AudioPlus(redcommands.Cog):
 
     @staticmethod
     def _node_connected(node: "wavelink.Node") -> bool:
-        # WHY: Wavelink 3.4.x exposes `connected`; earlier code looked at `is_connected`.
+        # WHY: WL 3.4.x exposes `connected`; some snippets still use `is_connected`.
         return bool(getattr(node, "connected", False) or getattr(node, "is_connected", False))
 
     def _iter_nodes(self) -> Iterable["wavelink.Node"]:
+        # Merge Pool/NodePool and dedupe by stable key (uri or object id).
+        seen: set[Any] = set()
         ap = self._apis()
+
+        def _yield(nodes_obj):
+            if isinstance(nodes_obj, dict):
+                it = nodes_obj.values()
+            elif isinstance(nodes_obj, (list, tuple, set)):
+                it = nodes_obj
+            else:
+                return
+            for n in it:
+                try:
+                    key = getattr(n, "uri", None) or getattr(n, "rest_uri", None) or id(n)
+                except Exception:
+                    key = id(n)
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield n
+
         if ap["has_Pool"] and ap["has_Pool_nodes"]:
             try:
-                nodes = getattr(wavelink.Pool, "nodes")  # type: ignore[attr-defined]
-                if isinstance(nodes, dict):
-                    yield from nodes.values()
-                elif isinstance(nodes, (list, tuple, set)):
-                    yield from nodes
+                yield from _yield(getattr(wavelink.Pool, "nodes"))  # type: ignore[attr-defined]
             except Exception:
                 pass
         if ap["has_NodePool"] and ap["has_NodePool_nodes"]:
             try:
-                nodes = getattr(wavelink.NodePool, "nodes")  # type: ignore[attr-defined]
-                if isinstance(nodes, dict):
-                    yield from nodes.values()
-                elif isinstance(nodes, (list, tuple, set)):
-                    yield from nodes
+                yield from _yield(getattr(wavelink.NodePool, "nodes"))  # type: ignore[attr-defined]
             except Exception:
                 pass
 
@@ -167,18 +182,44 @@ class AudioPlus(redcommands.Cog):
                 continue
         return None
 
-    async def _connect_node(self, guild: discord.Guild) -> str:
-        # If we already have a connected node, don't create more.
-        n_connected = self._get_connected_node()
-        if n_connected:
-            self._wl_api = self._wl_api or "already-connected"
-            self._last_error = None
-            return self._wl_api
+    async def _close_all_nodes(self) -> int:
+        # Best-effort close + clear both WL storages.
+        count = 0
+        for n in list(self._iter_nodes()):
+            try:
+                close = getattr(n, "close", None) or getattr(n, "disconnect", None) or getattr(n, "destroy", None)
+                if asyncio.iscoroutinefunction(close):
+                    await close()  # type: ignore[misc]
+                elif callable(close):
+                    close()  # type: ignore[misc]
+                count += 1
+            except Exception:
+                pass
+        # Clear containers (WL keeps class-level registries).
+        for obj_name in ("Pool", "NodePool"):
+            try:
+                cls = getattr(wavelink, obj_name, None)
+                store = getattr(cls, "nodes", None)
+                if isinstance(store, dict):
+                    store.clear()
+                elif isinstance(store, list):
+                    store.clear()
+                elif isinstance(store, set):
+                    store.clear()
+            except Exception:
+                pass
+        return count
 
-        # If nodes exist but aren't connected, don't keep piling up duplicates.
-        existing_nodes = list(self._iter_nodes())
-        if existing_nodes:
-            await self._debug(guild, f"node.exists count={len(existing_nodes)} connected=False; skipping duplicate connect")
+    async def _connect_node(self, guild: discord.Guild) -> str:
+        # Singleton: if any node exists, never create more.
+        nodes_existing = list(self._iter_nodes())
+        if nodes_existing:
+            if any(self._node_connected(n) for n in nodes_existing):
+                self._wl_api = self._wl_api or "already-connected"
+                self._last_error = None
+                return self._wl_api
+            # Nodes exist but disconnected; don't pile more on top.
+            await self._debug(guild, f"node.exists count={len(nodes_existing)} connected=False; not creating duplicates")
             self._wl_api = self._wl_api or "existing-nodes"
             return self._wl_api
 
@@ -193,7 +234,6 @@ class AudioPlus(redcommands.Cog):
         if ap["has_Pool"] and ap["has_Pool_connect"]:
             try:
                 Node = getattr(wavelink, "Node")
-                # WHY: Some builds accept secure=..., others infer from URI.
                 try:
                     node = Node(uri=uri, password=pw, secure=https)  # type: ignore[call-arg]
                 except TypeError:
@@ -338,7 +378,7 @@ class AudioPlus(redcommands.Cog):
         p = ctx.clean_prefix
         desc = (
             f"**AudioPlus (Lavalink v4 / Wavelink 3.x / YouTube)**\n\n"
-            f"**Node**  `{p}music node set <host> <port> <password> <https>` • `node connect` • `node status` • `node ping`\n"
+            f"**Node**  `{p}music node set <host> <port> <password> <https>` • `node connect` • `node reset` • `node status` • `node ping`\n"
             f"          `node autoconnect [true|false]`\n"
             f"**Prefs** `music preferlyrics [true|false]` • `music defaultvolume <0-150>` • `music debug [true|false]` • "
             f"`music bind [#channel]`\n"
@@ -407,6 +447,21 @@ class AudioPlus(redcommands.Cog):
             await ctx.send(box(f"Connected via {api}", lang="ini"))
         except Exception as e:
             await ctx.send(box(f"Connect failed: {type(e).__name__}: {e}", lang="ini"))
+
+    @nodegrp.command(name="reset")
+    async def node_reset(self, ctx: redcommands.Context, reconnect: Optional[bool] = True):
+        # WHY: purge duplicates across pools; optionally reconnect once.
+        n = await self._close_all_nodes()
+        self._wl_api = "unset"
+        self._last_error = None
+        msg = [f"Cleared {n} nodes."]
+        if reconnect:
+            try:
+                api = await self._connect_node(ctx.guild)
+                msg.append(f"Reconnected via {api}.")
+            except Exception as e:
+                msg.append(f"Reconnect failed: {type(e).__name__}: {e}")
+        await ctx.send(box(" ".join(msg), lang="ini"))
 
     @nodegrp.command(name="status")
     async def node_status(self, ctx: redcommands.Context):
