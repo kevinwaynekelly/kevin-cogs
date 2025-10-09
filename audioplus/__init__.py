@@ -29,10 +29,9 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, Iterable
 
 import discord
-from discord.ext import commands
 import wavelink
 
-from redbot.core import Config, checks
+from redbot.core import Config, checks, commands
 from redbot.core.bot import Red
 
 GUILD_ONLY = commands.guild_only()
