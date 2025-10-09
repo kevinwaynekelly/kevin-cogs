@@ -5,7 +5,7 @@
 # ---------- info.json ----------
 # {
 #   "author": ["Code Copilot"],
-#   "install_msg": "Installed audioplus. Configure with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` to check health or `[p]audio connectnode` to force reconnect.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`. If silent, try `[p]audio debugvc`, `[p]audio undeafen`, or `[p]audio fixvoice`.",
+#   "install_msg": "Installed audioplus. Configure with `[p]audio setnode <host> <port> <password> <secure>`.\nUse `[p]audio pingnode` to check health or `[p]audio connectnode` to force reconnect.\nJoin a VC with `[p]audio join` then play with `[p]audio play <query|url>`. If silent, try `[p]audio debugvc`, `[p]audio playerstate`, `[p]audio undeafen`, or `[p]audio fixvoice`.",
 #   "name": "audioplus",
 #   "short": "Single-file Lavalink v4 music cog using Wavelink 3.x.",
 #   "description": "Red cog for Lavalink v4 via Wavelink 3.x. Commands: audio join/leave/play/skip/pause/resume/stop/volume/queue/np/shuffle/pingnode/connectnode/speak/undeafen/debugvc/fixvoice/playerstate; owner: audio setnode/shownode.",
@@ -20,6 +20,7 @@
 # ---------- __init__.py ----------
 """
 AudioPlus: Single-file Red cog for Lavalink v4 using Wavelink 3.x.
+
 Commands:
   [p]audio join/leave/play/skip/stop/pause/resume/volume/queue/np/shuffle
   [p]audio pingnode | connectnode | speak | undeafen | debugvc | fixvoice | playerstate
@@ -168,19 +169,19 @@ class AudioPlus(commands.Cog):
             return False
 
     async def _fetch_player_state(self, guild_id: int) -> Optional[dict]:
-        """Fetch /v4/sessions/{id}/players/{guild} for deep diagnostics."""
+        """GET /v4/sessions/{session}/players/{guild}."""
         try:
             node = wavelink.Pool.get_node()
         except Exception:
             return None
-        sid = getattr(node, "session_id", None)
+        sid = getattr(node, "session_id", None) or getattr(node, "sessionId", None)
         if not sid:
             return None
         url = f"{node.uri}/v4/sessions/{sid}/players/{guild_id}"
         headers = {"Authorization": str(node.password)}
         try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(url, headers=headers, timeout=7) as r:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=7)) as s:
+                async with s.get(url, headers=headers) as r:
                     if r.status == 200:
                         return await r.json(content_type=None)
         except Exception:
@@ -232,7 +233,7 @@ class AudioPlus(commands.Cog):
 
     @commands.Cog.listener()
     async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload) -> None:
-        # reinforce voice sanity on start (Stage/undeafen)
+        # reinforce voice sanity on start
         try:
             guild = payload.player.guild
             ch = payload.player.channel
@@ -266,10 +267,7 @@ class AudioPlus(commands.Cog):
             await self._stage_unsuppress_if_needed(ctx.guild, channel)
             vs = getattr(ctx.guild.me, "voice", None)
             if vs and vs.self_deaf:
-                await ctx.send("I'm self-deafened; trying to undeafen…")
-                ok = await self._force_undeafen(ctx.guild, channel)
-                if not ok:
-                    await ctx.send("Could not undeafen automatically. Manually undeafen me or run `[p]audio undeafen`.")
+                await self._force_undeafen(ctx.guild, channel)
             return vc, channel
 
         await self._ensure_pool_available(wait_timeout=30.0)
@@ -296,10 +294,7 @@ class AudioPlus(commands.Cog):
         await self._stage_unsuppress_if_needed(ctx.guild, channel)
         vs = getattr(ctx.guild.me, "voice", None)
         if vs and vs.self_deaf:
-            await ctx.send("I'm self-deafened; trying to undeafen…")
-            ok = await self._force_undeafen(ctx.guild, channel)
-            if not ok:
-                await ctx.send("Could not undeafen automatically. Manually undeafen me or run `[p]audio undeafen`.")
+            await self._force_undeafen(ctx.guild, channel)
         return player, channel
 
     async def _maybe_start_queue(self, player: wavelink.Player) -> None:
@@ -418,6 +413,30 @@ class AudioPlus(commands.Cog):
 
         await ctx.send("\n".join(lines))
 
+    @audio.command(name="playerstate")
+    @GUILD_ONLY
+    async def audio_playerstate(self, ctx: commands.Context) -> None:
+        """Show raw Lavalink player REST state for this guild."""
+        data = await self._fetch_player_state(ctx.guild.id)
+        if not data:
+            await ctx.send("No REST player state found (not connected, wrong session, or Lavalink denied).")
+            return
+        state = data.get("state", {})
+        voice = data.get("voice", {})
+        filters = data.get("filters", {})
+        paused = bool(data.get("paused", False))
+        vol = data.get("volume", "n/a")
+        pos = state.get("position", 0)
+        connected = bool(data.get("connected", True))
+        lines = [
+            "**Lavalink Player State**",
+            f"Connected: `{connected}`  Playing: `{not paused}`  Volume: `{vol}`  Position(ms): `{pos}`",
+            f"Track: `{data.get('track', {}).get('info', {}).get('title', 'unknown')}`",
+            f"Voice: endpoint=`{voice.get('endpoint', 'n/a')}` sessionId=`{voice.get('sessionId', 'n/a')}`",
+            f"Filters: keys={list(filters.keys()) if isinstance(filters, dict) else 'n/a'}",
+        ]
+        await ctx.send("\n".join(lines))
+
     @audio.command(name="speak")
     @GUILD_ONLY
     async def audio_speak(self, ctx: commands.Context) -> None:
@@ -441,7 +460,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="fixvoice")
     @GUILD_ONLY
     async def audio_fixvoice(self, ctx: commands.Context) -> None:
-        """Try several automatic fixes (unsuppress + undeafen + quick reconnect if needed)."""
+        """Try unsuppress + undeafen + quick reconnect if needed."""
         me_vs = getattr(ctx.guild.me, "voice", None)
         if not me_vs or not me_vs.channel:
             await ctx.send("I'm not connected to voice.")
