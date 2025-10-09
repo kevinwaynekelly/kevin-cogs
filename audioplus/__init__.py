@@ -26,10 +26,12 @@ Owner: [p]audio setnode <host> <port> <password> <secure>
 from __future__ import annotations
 
 import asyncio
+import secrets
+import time
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 
-import aiohttp  # REST call to /v4/info
+import aiohttp
 import discord
 import wavelink
 from wavelink.exceptions import ChannelTimeoutException, InvalidNodeException
@@ -69,7 +71,7 @@ class AudioPlus(commands.Cog):
         self.bot: Red = bot
         self.config: Config = Config.get_conf(self, identifier=0xA10DEFAB, force_registration=True)
         self.config.register_global(**self.default_global)
-        self._node_ready: asyncio.Event = asyncio.Event()  # gate voice connects
+        self._node_ready: asyncio.Event = asyncio.Event()  # gate VC connects
 
     # ---- helpers ----
 
@@ -94,14 +96,22 @@ class AudioPlus(commands.Cog):
             secure=bool(data["secure"]),
         )
 
-    async def _reconnect_fresh(self, cfg: NodeConfig) -> None:
-        # why: avoid "identifier already exists" by nuking Pool then adding a fresh Node
+    def _connected_node(self) -> Optional[wavelink.Node]:
         try:
-            await wavelink.Pool.close()
+            n = wavelink.Pool.get_node()
+            return n if self._is_node_connected(n) else None
         except Exception:
-            pass
+            return None
+
+    def _new_identifier(self) -> str:
+        # why: avoid identifier collisions when Pool holds stale nodes
+        short = secrets.token_hex(3)
+        return f"AP-{int(time.time())}-{short}"
+
+    async def _reconnect_fresh(self, cfg: NodeConfig) -> None:
+        # why: don't reuse old IDs; create a fresh node with a unique identifier
         node = wavelink.Node(
-            identifier=cfg.identifier,
+            identifier=self._new_identifier(),
             uri=cfg.uri,
             password=cfg.password,
             resume_timeout=int(await self.config.resume_timeout()),
@@ -110,34 +120,15 @@ class AudioPlus(commands.Cog):
         await wavelink.Pool.connect(nodes=[node], client=self.bot)
 
     async def _ensure_nodes(self, node_cfg: NodeConfig) -> None:
-        # ensure there is a CONNECTED node; (re)connect if needed
-        existing = None
-        try:
-            existing = wavelink.Pool.get_node(node_cfg.identifier)
-        except Exception:
-            existing = None
-
-        if existing:
-            if self._is_node_connected(existing):
-                return
-            print("[audioplus] Node present but not CONNECTED; reconnecting fresh…")
-            await self._reconnect_fresh(node_cfg)
+        # ensure there is a CONNECTED node; if not, connect a fresh one
+        if self._connected_node():
             return
-
+        print("[audioplus] No CONNECTED node — connecting fresh…")
         await self._reconnect_fresh(node_cfg)
 
     async def _ensure_pool_available(self, wait_timeout: float = 20.0) -> None:
-        """Ensure at least one CONNECTED node exists; reconnect if needed."""
-        needs_connect = False
-        try:
-            node = wavelink.Pool.get_node()
-            if not self._is_node_connected(node):
-                needs_connect = True
-        except Exception:
-            needs_connect = True
-        if needs_connect:
-            cfg = await self._get_node_config()
-            await self._ensure_nodes(cfg)
+        if not self._connected_node():
+            await self._ensure_nodes(await self._get_node_config())
         await self._wait_node_ready(timeout=wait_timeout)
 
     async def _wait_node_ready(self, timeout: float = 20.0) -> None:
@@ -211,16 +202,17 @@ class AudioPlus(commands.Cog):
     def _fmt_bytes_mib(value: Optional[int]) -> Optional[int]:
         return None if value is None else max(0, int(value / (1024 * 1024)))
 
-    async def _fetch_lavalink_info(self, node: wavelink.Node, timeout: float = 7.0) -> Optional[dict]:
-        url = f"{getattr(node, 'uri', '')}/v4/info"
-        password = getattr(node, "password", None)
+    async def _fetch_lavalink_info(self, node_like, timeout: float = 7.0) -> Optional[dict]:
+        # node_like: wavelink.Node OR simple object with uri/password
+        url = f"{getattr(node_like, 'uri', '')}/v4/info"
+        password = getattr(node_like, "password", None)
         if not url or not password:
             return None
         headers = {"Authorization": str(password)}
         t0 = asyncio.get_running_loop().time()
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=timeout) as resp:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+                async with session.get(url, headers=headers) as resp:
                     data = await resp.json(content_type=None)
         except Exception:
             return None
@@ -252,7 +244,7 @@ class AudioPlus(commands.Cog):
 
     @commands.Cog.listener()
     async def on_wavelink_node_closed(self, *args, **kwargs) -> None:
-        # why: Wavelink may pass (payload) or (node, payload); accept anything
+        # accept any signature
         node = None
         payload = None
         if args:
@@ -262,7 +254,7 @@ class AudioPlus(commands.Cog):
             else:
                 node = args[0]
                 payload = args[1]
-        ident = getattr(node, "identifier", "MAIN") if node else "MAIN"
+        ident = getattr(node, "identifier", "UNKNOWN") if node else "UNKNOWN"
         code = getattr(payload, "code", "unknown")
         reason = getattr(payload, "reason", "")
         print(f"[audioplus] Node {ident} **CLOSED** code={code} reason={reason}")
@@ -284,7 +276,6 @@ class AudioPlus(commands.Cog):
     async def audio_setnode(
         self, ctx: commands.Context, host: str, port: int, password: str, secure: Optional[bool] = False
     ) -> None:
-        """Owner: Configure Lavalink node."""
         await self.config.host.set(host)
         await self.config.port.set(int(port))
         await self.config.password.set(password)
@@ -315,44 +306,29 @@ class AudioPlus(commands.Cog):
             pass
         await self._reconnect_fresh(cfg)
         await self._wait_node_ready(timeout=15.0)
-        node = None
-        try:
-            node = wavelink.Pool.get_node(cfg.identifier)
-        except Exception:
-            node = None
-        connected = self._is_node_connected(node) if node else False
-        info = await self._fetch_lavalink_info(node, timeout=7.0) if node else None
+        node = self._connected_node()
+        connected = node is not None
+        info = await self._fetch_lavalink_info(node or cfg, timeout=7.0)
         ver = self._fmt_version(info.get("version")) if info else "unknown"
+        uri = getattr(node, "uri", None) or cfg.uri
         await ctx.send(
-            f"Reconnect {'**successful**' if connected else '**failed**'} — Version: `{ver}` | URI: `{cfg.uri}`."
+            f"Reconnect {'**successful**' if connected else '**failed**'} — Version: `{ver}` | URI: `{uri}`."
         )
 
     @audio.command(name="pingnode")
     @GUILD_ONLY
     async def audio_pingnode(self, ctx: commands.Context) -> None:
         """Show Lavalink node version/state."""
-        node = None
-        try:
-            await self._ensure_pool_available(wait_timeout=10.0)
-            node = wavelink.Pool.get_node()
-        except Exception:
-            cfg = await self._get_node_config()
-            node = wavelink.Node(identifier=cfg.identifier, uri=cfg.uri, password=cfg.password)
-
-        info = await self._fetch_lavalink_info(node, timeout=7.0) if node else None
+        node = self._connected_node()
+        cfg = await self._get_node_config() if node is None else None
+        info = await self._fetch_lavalink_info(node or cfg, timeout=7.0) if (node or cfg) else None
         stats = getattr(node, "stats", None) if node else None
 
-        connected = False
-        if node:
-            try:
-                connected = self._is_node_connected(wavelink.Pool.get_node(getattr(node, "identifier", "MAIN")))
-            except Exception:
-                connected = False
+        connected = node is not None
+        ident = getattr(node, "identifier", "none") if node else "none"
+        uri = getattr(node, "uri", None) or (cfg.uri if cfg else "unknown")
 
-        ident = getattr(node, "identifier", "MAIN") if node else "MAIN"
-        uri = getattr(node, "uri", "unknown") if node else "unknown"
-
-        lines = [f"**Lavalink Node — {ident}**", f"URI: `{uri}`", f"Connected: {'yes' if connected else 'no'}"]
+        lines = [f"**Lavalink Node**", f"Connected: {'yes' if connected else 'no'}", f"Identifier: `{ident}`", f"URI: `{uri}`"]
 
         if info:
             ver = self._fmt_version(info.get("version", "unknown"))
