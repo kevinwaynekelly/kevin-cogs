@@ -38,7 +38,7 @@ from typing import Iterable, Optional, Tuple
 import aiohttp
 import discord
 import wavelink
-from wavelink.exceptions import ChannelTimeoutException, InvalidNodeException
+from wavelink.exceptions import ChannelTimeoutException
 from redbot.core import Config, checks, commands
 from redbot.core.bot import Red
 
@@ -68,7 +68,7 @@ class AudioPlus(commands.Cog):
         self.bot: Red = bot
         self.config: Config = Config.get_conf(self, identifier=0xA10DEFAB, force_registration=True)
         self.config.register_global(**self.default_global)
-        self._node_ready: asyncio.Event = asyncio.Event()  # gate VC connects
+        self._node_ready: asyncio.Event = asyncio.Event()
 
     # ---- helpers ----
 
@@ -100,7 +100,6 @@ class AudioPlus(commands.Cog):
         return f"AP-{int(time.time())}-{short}"
 
     async def _reconnect_fresh(self, cfg: NodeConfig) -> None:
-        # why: new identifier avoids "already have a node with identifier"
         node = wavelink.Node(
             identifier=self._new_identifier(),
             uri=cfg.uri,
@@ -130,7 +129,6 @@ class AudioPlus(commands.Cog):
             pass
 
     async def _stage_unsuppress_if_needed(self, guild: discord.Guild, channel: discord.abc.GuildChannel) -> None:
-        # why: Stage channels suppress speakers by default
         if not isinstance(channel, discord.StageChannel):
             return
         me = guild.me
@@ -149,13 +147,11 @@ class AudioPlus(commands.Cog):
                     pass
 
     async def _force_undeafen(self, guild: discord.Guild, channel: discord.abc.Connectable) -> bool:
-        """Try to clear self_deaf; fallback reconnect with self_deaf=False."""
         try:
             await guild.change_voice_state(channel=channel, self_deaf=False, self_mute=False)
             return True
         except Exception:
             pass
-        # reconnect fallback
         vc = guild.voice_client
         if vc and isinstance(vc, wavelink.Player):
             try:
@@ -169,7 +165,6 @@ class AudioPlus(commands.Cog):
             return False
 
     async def _fetch_player_state(self, guild_id: int) -> Optional[dict]:
-        """GET /v4/sessions/{session}/players/{guild}."""
         try:
             node = wavelink.Pool.get_node()
         except Exception:
@@ -200,16 +195,12 @@ class AudioPlus(commands.Cog):
         except Exception:
             pass
 
-    # ---- events / logs ----
+    # ---- events ----
 
     @commands.Cog.listener()
     async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload) -> None:
-        guilds = len(self.bot.guilds)
-        print(f"[audioplus] Node {payload.node.identifier} **CONNECTED** (resumed={payload.resumed}) | guilds={guilds}")
-        try:
-            self._node_ready.set()
-        except Exception:
-            pass
+        print(f"[audioplus] Node {payload.node.identifier} **CONNECTED** (resumed={payload.resumed}) | guilds={len(self.bot.guilds)}")
+        self._node_ready.set()
 
     @commands.Cog.listener()
     async def on_wavelink_node_closed(self, *args, **kwargs) -> None:
@@ -226,14 +217,10 @@ class AudioPlus(commands.Cog):
         code = getattr(payload, "code", "unknown")
         reason = getattr(payload, "reason", "")
         print(f"[audioplus] Node {ident} **CLOSED** code={code} reason={reason}")
-        try:
-            self._node_ready.clear()
-        except Exception:
-            pass
+        self._node_ready.clear()
 
     @commands.Cog.listener()
     async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload) -> None:
-        # reinforce voice sanity on start
         try:
             guild = payload.player.guild
             ch = payload.player.channel
@@ -350,10 +337,7 @@ class AudioPlus(commands.Cog):
         await self.config.port.set(int(port))
         await self.config.password.set(password)
         await self.config.secure.set(bool(secure))
-        try:
-            self._node_ready.clear()
-        except Exception:
-            pass
+        self._node_ready.clear()
         await self._ensure_nodes(await self._get_node_config())
         await self._wait_node_ready(timeout=10.0)
         await ctx.send("Lavalink node saved & (re)connected.")
@@ -368,10 +352,7 @@ class AudioPlus(commands.Cog):
     @checks.is_owner()
     async def audio_connectnode(self, ctx: commands.Context) -> None:
         cfg = await self._get_node_config()
-        try:
-            self._node_ready.clear()
-        except Exception:
-            pass
+        self._node_ready.clear()
         await self._reconnect_fresh(cfg)
         await self._wait_node_ready(timeout=15.0)
         node = self._connected_node()
@@ -421,17 +402,28 @@ class AudioPlus(commands.Cog):
         if not data:
             await ctx.send("No REST player state found (not connected, wrong session, or Lavalink denied).")
             return
-        state = data.get("state", {})
-        voice = data.get("voice", {})
-        filters = data.get("filters", {})
+
+        state = data.get("state") or {}
+        voice = data.get("voice") or {}
+        filters = data.get("filters") or {}
         paused = bool(data.get("paused", False))
         vol = data.get("volume", "n/a")
         pos = state.get("position", 0)
         connected = bool(data.get("connected", True))
+
+        # track info may be None in some cases
+        tinfo = {}
+        track_container = data.get("track")
+        if isinstance(track_container, dict):
+            tinfo = track_container.get("info") or {}
+        title = tinfo.get("title", "unknown")
+        author = tinfo.get("author", "unknown")
+        length = tinfo.get("length", "unknown")
+
         lines = [
             "**Lavalink Player State**",
             f"Connected: `{connected}`  Playing: `{not paused}`  Volume: `{vol}`  Position(ms): `{pos}`",
-            f"Track: `{data.get('track', {}).get('info', {}).get('title', 'unknown')}`",
+            f"Track: `{title}` by `{author}` (len={length})",
             f"Voice: endpoint=`{voice.get('endpoint', 'n/a')}` sessionId=`{voice.get('sessionId', 'n/a')}`",
             f"Filters: keys={list(filters.keys()) if isinstance(filters, dict) else 'n/a'}",
         ]
@@ -460,7 +452,6 @@ class AudioPlus(commands.Cog):
     @audio.command(name="fixvoice")
     @GUILD_ONLY
     async def audio_fixvoice(self, ctx: commands.Context) -> None:
-        """Try unsuppress + undeafen + quick reconnect if needed."""
         me_vs = getattr(ctx.guild.me, "voice", None)
         if not me_vs or not me_vs.channel:
             await ctx.send("I'm not connected to voice.")
@@ -491,7 +482,7 @@ class AudioPlus(commands.Cog):
                 lines.append(f"Track: `{getattr(vc.current, 'title', 'Unknown')}`")
         state = await self._fetch_player_state(ctx.guild.id)
         if state:
-            s = state.get("state", {})
+            s = state.get("state", {}) or {}
             lines.append(f"Lavalink: playing=`{not state.get('paused', False)}` pos=`{s.get('position', 0)}` vol=`{state.get('volume')}`")
         await ctx.send("\n".join(lines))
 
