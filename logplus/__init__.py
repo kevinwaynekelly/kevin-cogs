@@ -996,7 +996,7 @@ class LogPlus(redcommands.Cog):
             e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(guild, e)
 
-    @commands.Cog.listener())
+    @commands.Cog.listener()
     async def on_guild_stickers_update(self, guild: discord.Guild, before, after):
         g = await self.config.guild(guild).all()
         if g["server"]["sticker_update"]:
