@@ -1,10 +1,9 @@
-# path: cogs/meowplus/__init__.py
+# path: cogs/owoplus/__init__.py
 from __future__ import annotations
 
 import difflib
 import random
 import re
-import time
 from typing import Dict, List, Optional, Tuple
 
 import discord
@@ -15,52 +14,51 @@ from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import box
 
 __red_end_user_data_statement__ = (
-    "This cog stores per-guild preferences for webhook-based message transformation (enable flags, channel scope, "
-    "1-in-N owo probability, cooldown seconds, per-user overrides, exemption lists, intensity, and owner bypass). "
+    "This cog stores per-guild preferences for webhook-based message transformation "
+    "(enable flag, 1-in-N owo probability, per-user overrides, intensity, and owner bypass). "
     "It does not store message contents."
 )
 
 DEFAULTS_GUILD = {
     "enabled": False,
-    "channels": [],
     "one_in": 1000,
-    "cooldown_seconds": 5,
     "user_probs": {},
-    "exempt_roles": [],
-    "exempt_users": [],
     "intensity": 1,        # 1..5
-    "owner_bypass": True,  # when True, bot owner is never processed
+    "owner_bypass": True,
 }
 
-NOW_WORD = re.compile(r"\b(now)\b", re.IGNORECASE)
-MEOW_WORD = re.compile(r"\b(meow)\b", re.IGNORECASE)
+KEY_MAP: Dict[str, str] = {
+    "now": "meow",
+    "bro": "bwo",
+    "dude": "duwde",
+    "bud": "bwud",
+}
+KEY_RX = re.compile(r"\b(" + "|".join(map(re.escape, KEY_MAP.keys())) + r")\b", re.IGNORECASE)
+TARGETS = sorted({v for v in KEY_MAP.values()})
+
 CODE_SPLIT = re.compile(r"(```[\s\S]*?```|`[^`]*?`)", re.MULTILINE)
 
 OWO_FACES = ["uwu", "owo", ">w<", "^w^", "x3", "~", "nya~", "(⁄˘⁄⁄ ω⁄ ⁄˘⁄)♡"]
 EXTRA_FACES = ["rawr x3", "owo~", "uwu~", "^^", "(>w<)"]
 
-EMO = {"ok": "✅", "bad": "⚠️", "core": "🛠️", "channels": "🧵", "msg": "💬", "prob": "🎲", "ex": "🚫", "diag": "🧪", "spark": "✨"}
+EMO = {"ok": "✅", "bad": "⚠️", "core": "🛠️", "msg": "💬", "prob": "🎲", "diag": "🧪", "spark": "✨"}
+
 
 def _embed(title: str, *, color: int | discord.Color = discord.Color.blurple(), desc: Optional[str] = None) -> discord.Embed:
     return discord.Embed(title=title, description=desc, color=color)
 
-def _fmt_channels(g: discord.Guild, ids: List[int]) -> str:
-    return "**all**" if not ids else ", ".join(f"<#{c}>" for c in ids)
 
 def _bool_emoji(v: bool) -> str:
     return "🟢" if v else "🔴"
 
 
-class MeowPlus(redcommands.Cog):
-    """
-    Webhook-only meow/owo replacer with adjustable intensity and owner-bypass toggle.
-    """
+class OwoPlus(redcommands.Cog):
+    """Webhook-only cute/owo replacer with adjustable intensity. No channel scope, no cooldown, no exemptions."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
         self.config: Config = Config.get_conf(self, identifier=0x5E0F1A, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
-        self._cooldown: Dict[int, float] = {}
         self._wh_cache: Dict[int, discord.Webhook] = {}
 
     # ---------- transforms ----------
@@ -68,34 +66,9 @@ class MeowPlus(redcommands.Cog):
     def _case_like(src: str, repl: str) -> str:
         if src.isupper():
             return repl.upper()
-        if src[0].isupper():
+        if src and src[0].isupper():
             return repl.capitalize()
         return repl
-
-    @staticmethod
-    def _replace_now(text: str, italic: bool) -> str:
-        def repl(m: re.Match) -> str:
-            s = MeowPlus._case_like(m.group(1), "meow")
-            return f"*{s}*" if italic else s
-        return NOW_WORD.sub(repl, text)
-
-    @staticmethod
-    def _ensure_meow_italic(text: str) -> str:
-        parts: List[str] = []
-        i = 0
-        for m in MEOW_WORD.finditer(text):
-            start, end = m.span()
-            parts.append(text[i:start])
-            s_start, s_end = m.span(1)
-            before = text[s_start - 1] if s_start - 1 >= 0 else ""
-            after = text[s_end] if s_end < len(text) else ""
-            if before == "*" and after == "*":
-                parts.append(m.group(0))
-            else:
-                parts.append(f"*{MeowPlus._case_like(m.group(1), 'meow')}*")
-            i = end
-        parts.append(text[i:])
-        return "".join(parts)
 
     @staticmethod
     def _split_code_segments(text: str) -> List[Tuple[str, bool]]:
@@ -109,6 +82,14 @@ class MeowPlus(redcommands.Cog):
         if i < len(text):
             segs.append((text[i:], False))
         return segs
+
+    @staticmethod
+    def _apply_key_map(text: str) -> str:
+        def repl(m: re.Match) -> str:
+            src = m.group(1)
+            tgt = KEY_MAP[src.lower()]
+            return OwoPlus._case_like(src, tgt)
+        return KEY_RX.sub(repl, text)
 
     @staticmethod
     def _stutter(word: str, prob: float) -> str:
@@ -126,8 +107,8 @@ class MeowPlus(redcommands.Cog):
     def _owoify_plain(text: str, intensity: int) -> str:
         intensity = max(1, min(5, int(intensity)))
         stutter_prob = [0.10, 0.15, 0.20, 0.28, 0.35][intensity - 1]
-        elong_prob = [0.00, 0.08, 0.12, 0.18, 0.25][intensity - 1]
-        tilde_prob = [0.00, 0.10, 0.18, 0.25, 0.33][intensity - 1]
+        elong_prob   = [0.00, 0.08, 0.12, 0.18, 0.25][intensity - 1]
+        tilde_prob   = [0.00, 0.10, 0.18, 0.25, 0.33][intensity - 1]
         extra_face_prob = [0.00, 0.08, 0.12, 0.18, 0.25][intensity - 1]
 
         def transliterate(s: str) -> str:
@@ -142,8 +123,8 @@ class MeowPlus(redcommands.Cog):
 
             def tweak_word(w: str) -> str:
                 if w.isalpha():
-                    w = MeowPlus._stutter(w, stutter_prob)
-                    w = MeowPlus._elongate_vowels(w, elong_prob)
+                    w = OwoPlus._stutter(w, stutter_prob)
+                    w = OwoPlus._elongate_vowels(w, elong_prob)
                 return w
 
             words = re.split(r"(\s+)", s)
@@ -169,7 +150,7 @@ class MeowPlus(redcommands.Cog):
                 pass
             return s
 
-        return "".join(seg if is_code else transliterate(seg) for seg, is_code in MeowPlus._split_code_segments(text))
+        return "".join(seg if is_code else transliterate(seg) for seg, is_code in OwoPlus._split_code_segments(text))
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
@@ -183,6 +164,49 @@ class MeowPlus(redcommands.Cog):
                     out.append(f"*{seg}*")
         return "".join(out)
 
+    @staticmethod
+    def _build_var_regex(token: str) -> re.Pattern:
+        m = re.search(r"[aeiouAEIOU]", token)
+        first = re.escape(token[0])
+        if not m:
+            core = re.escape(token)
+            return re.compile(rf"\b(?:{first}-)?{core}\b", re.IGNORECASE)
+        i = m.start()
+        pre = re.escape(token[:i])
+        vow = re.escape(token[i])
+        post = re.escape(token[i + 1 :])
+        return re.compile(rf"\b(?:{first}-)?{pre}{vow}{{1,2}}{post}\b", re.IGNORECASE)
+
+    @staticmethod
+    def _inside_italics(s: str, start: int, end: int) -> bool:
+        left = s.rfind("*", 0, start)
+        right = s.find("*", end)
+        return left != -1 and right != -1 and left < start < right
+
+    @staticmethod
+    def _ensure_targets_italic(text: str) -> str:
+        patterns = [OwoPlus._build_var_regex(t) for t in TARGETS]
+        def apply(seg: str) -> str:
+            for pat in patterns:
+                out: List[str] = []
+                i = 0
+                for m in pat.finditer(seg):
+                    start, end = m.span()
+                    out.append(seg[i:start])
+                    out.append(m.group(0) if OwoPlus._inside_italics(seg, start, end) else f"*{m.group(0)}*")
+                    i = end
+                out.append(seg[i:])
+                seg = "".join(out)
+            return seg
+        parts: List[str] = []
+        for seg, is_code in OwoPlus._split_code_segments(text):
+            parts.append(seg if is_code else apply(seg))
+        return "".join(parts)
+
+    @staticmethod
+    def _has_key_trigger(text: str) -> bool:
+        return any(KEY_RX.search(seg) for seg, is_code in OwoPlus._split_code_segments(text) if not is_code)
+
     def _render_message(self, raw: str, apply_owo: bool, *, intensity: int) -> str:
         result: List[str] = []
         for seg, is_code in self._split_code_segments(raw):
@@ -190,25 +214,24 @@ class MeowPlus(redcommands.Cog):
                 result.append(seg)
                 continue
             if not apply_owo:
-                result.append(self._replace_now(seg, italic=True))
+                result.append(seg)
                 continue
-            meow_plain = self._replace_now(seg, italic=False)
-            owo = self._owoify_plain(meow_plain, intensity=intensity)
-            marked = self._italicize_changes(meow_plain, owo)
-            marked = self._ensure_meow_italic(marked)
+            seed = self._apply_key_map(seg)
+            owo = self._owoify_plain(seed, intensity=intensity)
+            marked = self._italicize_changes(seed, owo)
+            marked = self._ensure_targets_italic(marked)
             result.append(marked)
         return "".join(result)
 
     # ---------- gating ----------
     @staticmethod
     def _starts_with_prefixes(text: str, prefixes: List[str]) -> bool:
-        return any(p and text.startswith(p) for p in prefixes)
+        return any(p and (text.startswith(p) or text.startswith(p + " ")) for p in prefixes)
 
     async def _should_process(self, message: discord.Message) -> bool:
         if not message.guild or message.author.bot or message.webhook_id:
             return False
         conf = await self.config.guild(message.guild).all()
-        # Only bypass owner if enabled
         try:
             if conf.get("owner_bypass", True) and await self.bot.is_owner(message.author):
                 return False
@@ -216,21 +239,11 @@ class MeowPlus(redcommands.Cog):
             pass
         if not conf["enabled"]:
             return False
-        chs: List[int] = conf["channels"]
-        if chs and message.channel.id not in chs:
-            return False
-        if message.author.id in set(conf["exempt_users"]):
-            return False
-        if {r.id for r in getattr(message.author, "roles", [])}.intersection(set(conf["exempt_roles"])):
-            return False
         try:
             prefixes = await self.bot.get_valid_prefixes(message.guild)
         except Exception:
             prefixes = []
         if self._starts_with_prefixes(message.content or "", prefixes):
-            return False
-        cd = max(0, int(conf.get("cooldown_seconds", 0)))
-        if cd and (time.time() - self._cooldown.get(message.author.id, 0.0)) < cd:
             return False
         return True
 
@@ -263,7 +276,7 @@ class MeowPlus(redcommands.Cog):
 
         try:
             hooks = await base_ch.webhooks()
-            hook = hooks[0] if hooks else await base_ch.create_webhook(name="MeowPlus", reason="MeowPlus")
+            hook = hooks[0] if hooks else await base_ch.create_webhook(name="OwoPlus", reason="OwoPlus")
         except discord.Forbidden:
             return None
         except Exception:
@@ -291,7 +304,7 @@ class MeowPlus(redcommands.Cog):
         if content:
             kwargs["content"] = content
         if isinstance(channel, discord.Thread):
-            kwargs["thread"] = channel
+            kwargs["thread"] = channel  # why: ensure correct thread routing
         if files:
             kwargs["files"] = files
         return await hook.send(**kwargs)
@@ -300,80 +313,71 @@ class MeowPlus(redcommands.Cog):
     async def _status_embed(self, g: discord.Guild) -> discord.Embed:
         cfg = await self.config.guild(g).all()
         e = _embed(
-            f"MeowPlus — Status {_bool_emoji(cfg['enabled'])}",
-            desc="now → *meow* always • owo intensity 1–5 • random owo with probability 1/N.",
+            f"OwoPlus — Status {_bool_emoji(cfg['enabled'])}",
+            desc="uwu pipeline maps now/bro/dude/bud → *meow*/*bwo*/*duwde*/*bwud* • any of these words force uwu • intensity 1–5 • random owo 1/N otherwise.",
         )
         e.add_field(
             name=f"{EMO['core']} Core",
             value=box(
                 f"enabled = {cfg['enabled']}\n"
                 f"one_in  = 1/{cfg['one_in']}\n"
-                f"cooldown= {cfg['cooldown_seconds']}s\n"
                 f"intensity= {cfg['intensity']}\n"
                 f"owner_bypass= {cfg['owner_bypass']}",
                 lang="ini",
             ),
             inline=False,
         )
-        e.add_field(name=f"{EMO['channels']} Channels", value=_fmt_channels(g, cfg["channels"]), inline=False)
         e.add_field(
-            name=f"{EMO['ex']} Exemptions",
-            value=(f"users={len(cfg['exempt_users'])} • roles={len(cfg['exempt_roles'])} • user_overrides={len(cfg['user_probs'])}"),
+            name=f"{EMO['prob']} Overrides",
+            value=(f"user_overrides={len(cfg['user_probs'])}"),
             inline=False,
         )
-        e.set_footer(text="Use `[p]meowplus help` for commands.")
+        e.set_footer(text="Use `[p]owoplus help` for commands.")
         return e
 
     # ---------- commands ----------
-    @redcommands.group(name="meowplus", invoke_without_command=True)
+    @redcommands.group(name="owoplus", invoke_without_command=True)
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def meowplus(self, ctx: redcommands.Context) -> None:
+    async def owoplus(self, ctx: redcommands.Context) -> None:
         e = await self._status_embed(ctx.guild)
         await ctx.send(embed=e)
 
-    @meowplus.command(name="help")
-    async def meowplus_help(self, ctx: redcommands.Context) -> None:
+    @owoplus.command(name="help")
+    async def owoplus_help(self, ctx: redcommands.Context) -> None:
         p = ctx.clean_prefix
-        e = _embed("MeowPlus — Commands", desc=f"{EMO['spark']} Examples use `{p}` as prefix.")
+        e = _embed("OwoPlus — Commands", desc=f"{EMO['spark']} Examples use `{p}` as prefix.")
         e.add_field(
             name=f"{EMO['core']} Core",
             value=(
-                f"• `{p}meowplus` • `{p}meowplus help` • `{p}meowplus diag`\n"
-                f"• `{p}meowplus enable` [#channel] • `{p}meowplus disable` [#channel]\n"
-                f"• `{p}meowplus test` • `{p}meowplus preview <text>`"
+                f"• `{p}owoplus` • `{p}owoplus help` • `{p}owoplus diag`\n"
+                f"• `{p}owoplus enable` • `{p}owoplus disable`\n"
+                f"• `{p}owoplus test` • `{p}owoplus preview <text>`"
             ),
             inline=False,
         )
         e.add_field(
-            name=f"{EMO['prob']} Probability & Cooldown",
+            name=f"{EMO['prob']} Probability",
             value=(
-                f"• `{p}meowplus onein <N>` (default 1000)\n"
-                f"• `{p}meowplus cooldown <sec>`\n"
-                f"• `{p}meowplus prob add @user <N>` • `remove @user` • `list`"
+                f"• `{p}owoplus onein <N>` (default 1000)\n"
+                f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"
             ),
             inline=False,
         )
         e.add_field(
             name="OWO Style",
-            value=(f"• `{p}meowplus intensity <1..5>` — more OWO at higher levels (default 1)"),
+            value=(f"• `{p}owoplus intensity <1..5>` — more OWO at higher levels (default 1)"),
             inline=False,
         )
         e.add_field(
             name="Owner Bypass",
-            value=(f"• `{p}meowplus ownerbypass <on|off>` — when on, Red owner is never processed (default on)"),
-            inline=False,
-        )
-        e.add_field(
-            name=f"{EMO['ex']} Exemptions",
-            value=(f"• `{p}meowplus exempt user add|remove @user` • `list`\n" f"• `{p}meowplus exempt role add|remove @role` • `list`"),
+            value=(f"• `{p}owoplus ownerbypass <on|off>` — when on, Red owner is never processed (default on)"),
             inline=False,
         )
         await ctx.send(embed=e)
 
-    @meowplus.command(name="ownerbypass")
-    async def meowplus_ownerbypass(self, ctx: redcommands.Context, state: Optional[str] = None) -> None:
-        """Toggle whether the Red owner is bypassed (on/off)."""
+    @owoplus.command(name="ownerbypass")
+    async def owoplus_ownerbypass(self, ctx: redcommands.Context, state: Optional[str] = None) -> None:
         if state is None:
             cur = await self.config.guild(ctx.guild).owner_bypass()
             return await ctx.send(embed=_embed(f"Owner bypass is **{'on' if cur else 'off'}**"))
@@ -381,8 +385,8 @@ class MeowPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).owner_bypass.set(val)
         await ctx.tick()
 
-    @meowplus.command(name="intensity")
-    async def meowplus_intensity(self, ctx: redcommands.Context, level: Optional[int] = None) -> None:
+    @owoplus.command(name="intensity")
+    async def owoplus_intensity(self, ctx: redcommands.Context, level: Optional[int] = None) -> None:
         if level is None:
             cur = await self.config.guild(ctx.guild).intensity()
             return await ctx.send(embed=_embed(f"Current intensity: **{cur}**"))
@@ -391,90 +395,29 @@ class MeowPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).intensity.set(int(level))
         await ctx.tick()
 
-    @meowplus.group(name="channels")
-    async def meowplus_channels(self, ctx: redcommands.Context) -> None:
-        pass
+    @owoplus.command(name="enable")
+    async def owoplus_enable(self, ctx: redcommands.Context) -> None:
+        await self.config.guild(ctx.guild).enabled.set(True)
+        await ctx.send(embed=_embed(f"{EMO['ok']} OwoPlus enabled (guild-wide).", color=discord.Color.green()))
 
-    @meowplus_channels.command(name="add")
-    async def meowplus_channels_add(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
-        ch = channel or (ctx.channel if isinstance(ctx.channel, discord.TextChannel) else None)
-        if not isinstance(ch, discord.TextChannel):
-            return await ctx.send(embed=_embed("Pick a text channel.", color=discord.Color.orange()))
-        data = await self.config.guild(ctx.guild).channels()
-        if ch.id in data:
-            return await ctx.send(embed=_embed(f"{EMO['bad']} {ch.mention} already in the list.", color=discord.Color.orange()))
-        data.append(ch.id)
-        await self.config.guild(ctx.guild).channels.set(data)
-        await ctx.send(embed=_embed(f"{EMO['ok']} Added {ch.mention}.", color=discord.Color.green()))
+    @owoplus.command(name="disable")
+    async def owoplus_disable(self, ctx: redcommands.Context) -> None:
+        await self.config.guild(ctx.guild).enabled.set(False)
+        await ctx.send(embed=_embed(f"{EMO['ok']} OwoPlus disabled (guild-wide).", color=discord.Color.green()))
 
-    @meowplus_channels.command(name="remove")
-    async def meowplus_channels_remove(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
-        ch = channel or (ctx.channel if isinstance(ctx.channel, discord.TextChannel) else None)
-        if not isinstance(ch, discord.TextChannel):
-            return await ctx.send(embed=_embed("Pick a text channel.", color=discord.Color.orange()))
-        data = await self.config.guild(ctx.guild).channels()
-        if ch.id not in data:
-            return await ctx.send(embed=_embed(f"{EMO['bad']} {ch.mention} not in the list.", color=discord.Color.orange()))
-        data = [c for c in data if c != ch.id]
-        await self.config.guild(ctx.guild).channels.set(data)
-        await ctx.send(embed=_embed(f"{EMO['ok']} Removed {ch.mention}.", color=discord.Color.green()))
-
-    @meowplus_channels.command(name="clear")
-    async def meowplus_channels_clear(self, ctx: redcommands.Context) -> None:
-        await self.config.guild(ctx.guild).channels.set([])
-        await ctx.send(embed=_embed(f"{EMO['ok']} Cleared — active in **all channels**.", color=discord.Color.green()))
-
-    @meowplus_channels.command(name="list")
-    async def meowplus_channels_list(self, ctx: redcommands.Context) -> None:
-        data = await self.config.guild(ctx.guild).channels()
-        e = _embed("MeowPlus — Channels")
-        e.add_field(name="Scope", value=_fmt_channels(ctx.guild, data), inline=False)
-        await ctx.send(embed=e)
-
-    @meowplus.command(name="enable")
-    async def meowplus_enable(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
-        if channel is None:
-            await self.config.guild(ctx.guild).enabled.set(True)
-            await ctx.send(embed=_embed(f"{EMO['ok']} MeowPlus enabled (guild-wide).", color=discord.Color.green()))
-        else:
-            data = await self.config.guild(ctx.guild).channels()
-            if channel.id not in data:
-                data.append(channel.id)
-                await self.config.guild(ctx.guild).channels.set(data)
-            await self.config.guild(ctx.guild).enabled.set(True)
-            await ctx.send(embed=_embed(f"{EMO['ok']} Enabled for {channel.mention}.", color=discord.Color.green()))
-
-    @meowplus.command(name="disable")
-    async def meowplus_disable(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None) -> None:
-        if channel is None:
-            await self.config.guild(ctx.guild).enabled.set(False)
-            await ctx.send(embed=_embed(f"{EMO['ok']} MeowPlus disabled (guild-wide).", color=discord.Color.green()))
-        else:
-            data = await self.config.guild(ctx.guild).channels()
-            data = [c for c in data if c != channel.id]
-            await self.config.guild(ctx.guild).channels.set(data)
-            await ctx.send(embed=_embed(f"{EMO['ok']} Disabled for {channel.mention}.", color=discord.Color.green()))
-
-    @meowplus.command(name="onein")
-    async def meowplus_onein(self, ctx: redcommands.Context, n: int) -> None:
+    @owoplus.command(name="onein")
+    async def owoplus_onein(self, ctx: redcommands.Context, n: int) -> None:
         if n < 1 or n > 1_000_000:
             return await ctx.send(embed=_embed("Use 1..1,000,000 (probability = 1/N).", color=discord.Color.orange()))
         await self.config.guild(ctx.guild).one_in.set(int(n))
         await ctx.tick()
 
-    @meowplus.command(name="cooldown")
-    async def meowplus_cooldown(self, ctx: redcommands.Context, seconds: int) -> None:
-        if seconds < 0 or seconds > 3600:
-            return await ctx.send(embed=_embed("Cooldown must be 0–3600s.", color=discord.Color.orange()))
-        await self.config.guild(ctx.guild).cooldown_seconds.set(int(seconds))
-        await ctx.tick()
-
-    @meowplus.group(name="prob")
-    async def meowplus_prob(self, ctx: redcommands.Context) -> None:
+    @owoplus.group(name="prob")
+    async def owoplus_prob(self, ctx: redcommands.Context) -> None:
         pass
 
-    @meowplus_prob.command(name="add")
-    async def meowplus_prob_add(self, ctx: redcommands.Context, member: discord.Member, n: int) -> None:
+    @owoplus_prob.command(name="add")
+    async def owoplus_prob_add(self, ctx: redcommands.Context, member: discord.Member, n: int) -> None:
         if n < 1 or n > 1_000_000:
             return await ctx.send(embed=_embed("Use 1..1,000,000 (probability = 1/N).", color=discord.Color.orange()))
         data = await self.config.guild(ctx.guild).user_probs()
@@ -482,16 +425,16 @@ class MeowPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).user_probs.set(data)
         await ctx.send(embed=_embed(f"{EMO['ok']} Set {member.mention} to 1/{n}.", color=discord.Color.green()))
 
-    @meowplus_prob.command(name="remove")
-    async def meowplus_prob_remove(self, ctx: redcommands.Context, member: discord.Member) -> None:
+    @owoplus_prob.command(name="remove")
+    async def owoplus_prob_remove(self, ctx: redcommands.Context, member: discord.Member) -> None:
         data = await self.config.guild(ctx.guild).user_probs()
         removed = data.pop(str(member.id), None) is not None
         await self.config.guild(ctx.guild).user_probs.set(data)
         msg = "Removed." if removed else "No override was set."
         await ctx.send(embed=_embed(msg, color=discord.Color.green() if removed else discord.Color.orange()))
 
-    @meowplus_prob.command(name="list")
-    async def meowplus_prob_list(self, ctx: redcommands.Context) -> None:
+    @owoplus_prob.command(name="list")
+    async def owoplus_prob_list(self, ctx: redcommands.Context) -> None:
         data = await self.config.guild(ctx.guild).user_probs()
         if not data:
             return await ctx.send(embed=_embed("No overrides.", color=discord.Color.orange()))
@@ -501,92 +444,31 @@ class MeowPlus(redcommands.Cog):
             out.append(f"- {(m.mention if m else uid)}: 1/{n}")
         await ctx.send(embed=_embed("Probability Overrides", desc=box("\n".join(out), lang="ini")))
 
-    @meowplus.group(name="exempt")
-    async def meowplus_exempt(self, ctx: redcommands.Context) -> None:
-        pass
-
-    @meowplus_exempt.group(name="role")
-    async def meowplus_exempt_role(self, ctx: redcommands.Context) -> None:
-        pass
-
-    @meowplus_exempt_role.command(name="add")
-    async def meowplus_exempt_role_add(self, ctx: redcommands.Context, role: discord.Role) -> None:
-        data = await self.config.guild(ctx.guild).exempt_roles()
-        if role.id in data:
-            return await ctx.send(embed=_embed("Role already exempt.", color=discord.Color.orange()))
-        data.append(role.id)
-        await self.config.guild(ctx.guild).exempt_roles.set(data)
-        await ctx.tick()
-
-    @meowplus_exempt_role.command(name="remove")
-    async def meowplus_exempt_role_remove(self, ctx: redcommands.Context, role: discord.Role) -> None:
-        data = await self.config.guild(ctx.guild).exempt_roles()
-        if role.id not in data:
-            return await ctx.send(embed=_embed("Role not exempt.", color=discord.Color.orange()))
-        data = [r for r in data if r != role.id]
-        await self.config.guild(ctx.guild).exempt_roles.set(data)
-        await ctx.tick()
-
-    @meowplus_exempt_role.command(name="list")
-    async def meowplus_exempt_role_list(self, ctx: redcommands.Context) -> None:
-        ids = await self.config.guild(ctx.guild).exempt_roles()
-        roles = [ctx.guild.get_role(r).mention for r in ids if ctx.guild.get_role(r)] or ["none"]
-        await ctx.send(embed=_embed("Exempt Roles", desc=", ".join(roles)))
-
-    @meowplus_exempt.group(name="user")
-    async def meowplus_exempt_user(self, ctx: redcommands.Context) -> None:
-        pass
-
-    @meowplus_exempt_user.command(name="add")
-    async def meowplus_exempt_user_add(self, ctx: redcommands.Context, member: discord.Member) -> None:
-        data = await self.config.guild(ctx.guild).exempt_users()
-        if member.id in data:
-            return await ctx.send(embed=_embed("User already exempt.", color=discord.Color.orange()))
-        data.append(member.id)
-        await self.config.guild(ctx.guild).exempt_users.set(data)
-        await ctx.tick()
-
-    @meowplus_exempt_user.command(name="remove")
-    async def meowplus_exempt_user_remove(self, ctx: redcommands.Context, member: discord.Member) -> None:
-        data = await self.config.guild(ctx.guild).exempt_users()
-        if member.id not in data:
-            return await ctx.send(embed=_embed("User not exempt.", color=discord.Color.orange()))
-        data = [u for u in data if u != member.id]
-        await self.config.guild(ctx.guild).exempt_users.set(data)
-        await ctx.tick()
-
-    @meowplus_exempt_user.command(name="list")
-    async def meowplus_exempt_user_list(self, ctx: redcommands.Context) -> None:
-        ids = await self.config.guild(ctx.guild).exempt_users()
-        names = [ctx.guild.get_member(uid).mention if ctx.guild.get_member(uid) else f"`{uid}`" for uid in ids]
-        await ctx.send(embed=_embed("Exempt Users", desc=("none" if not names else ", ".join(names))))
-
-    @meowplus.command(name="preview")
-    async def meowplus_preview(self, ctx: redcommands.Context, *, text: str) -> None:
+    @owoplus.command(name="preview")
+    async def owoplus_preview(self, ctx: redcommands.Context, *, text: str) -> None:
         g = await self.config.guild(ctx.guild).all()
         meow_only = self._render_message(text, apply_owo=False, intensity=g["intensity"])
         meow_owo = self._render_message(text, apply_owo=True, intensity=g["intensity"])
-        e = _embed("MeowPlus — Preview")
+        e = _embed("OwoPlus — Preview")
         e.add_field(name="MEOW", value=box(meow_only, lang="ini"), inline=False)
         e.add_field(name="OWO", value=box(meow_owo, lang="ini"), inline=False)
         await ctx.send(embed=e)
 
-    @meowplus.command(name="diag")
-    async def meowplus_diag(self, ctx: redcommands.Context) -> None:
+    @owoplus.command(name="diag")
+    async def owoplus_diag(self, ctx: redcommands.Context) -> None:
         g = await self.config.guild(ctx.guild).all()
         perms = ctx.channel.permissions_for(ctx.guild.me) if isinstance(ctx.channel, (discord.TextChannel, discord.Thread)) else None  # type: ignore
         payload = "\n".join(
             [
-                f"enabled={g['enabled']} one_in=1/{g['one_in']} cooldown={g['cooldown_seconds']}s intensity={g['intensity']} owner_bypass={g['owner_bypass']}",
-                f"channels={ 'all' if not g['channels'] else ', '.join(f'<#{c}>' for c in g['channels']) }",
+                f"enabled={g['enabled']} one_in=1/{g['one_in']} intensity={g['intensity']} owner_bypass={g['owner_bypass']}",
                 f"here perms: view={getattr(perms,'view_channel',None)} send={getattr(perms,'send_messages',None)} manage_messages={getattr(perms,'manage_messages',None)} manage_webhooks={getattr(perms,'manage_webhooks',None)}",
-                f"overrides={len(g['user_probs'])} exempts: users={len(g['exempt_users'])} roles={len(g['exempt_roles'])}",
+                f"overrides={len(g['user_probs'])}",
             ]
         )
-        await ctx.send(embed=_embed("MeowPlus — Diag", desc=box(payload, lang="ini")))
+        await ctx.send(embed=_embed("OwoPlus — Diag", desc=box(payload, lang="ini")))
 
-    @meowplus.command(name="test")
-    async def meowplus_test(self, ctx: redcommands.Context) -> None:
+    @owoplus.command(name="test")
+    async def owoplus_test(self, ctx: redcommands.Context) -> None:
         try:
             prefixes = await self.bot.get_valid_prefixes(ctx.guild)
         except Exception:
@@ -605,16 +487,16 @@ class MeowPlus(redcommands.Cog):
             f"last_msg={'found' if last else 'not found'}",
         ]
         if not last:
-            return await ctx.send(embed=_embed("MeowPlus — Test", desc=box("\n".join(lines), lang="ini")))
+            return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
 
         if not (last.content and last.content.strip()):
             lines.append("skip: last message has no text (attachments-only)")
-            return await ctx.send(embed=_embed("MeowPlus — Test", desc=box("\n").join(lines), lang="ini"))
+            return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
 
         hook = await self._ensure_webhook(ch)
         if not hook:
             lines.append("hook: none (missing Manage Webhooks?)")
-            return await ctx.send(embed=_embed("MeowPlus — Test", desc=box("\n".join(lines), lang="ini")))
+            return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
         lines.append(f"hook: {hook.id}:{hook.name}")
 
         g = await self.config.guild(ctx.guild).all()
@@ -632,7 +514,7 @@ class MeowPlus(redcommands.Cog):
             lines.append("send: OK")
         except Exception as e:
             lines.append(f"send: FAIL {type(e).__name__}: {e}")
-            return await ctx.send(embed=_embed("MeowPlus — Test", desc=box("\n".join(lines), lang="ini")))
+            return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
 
         try:
             await last.delete()
@@ -642,26 +524,24 @@ class MeowPlus(redcommands.Cog):
         except Exception as e:
             lines.append(f"delete: FAIL {type(e).__name__}:{e}")
 
-        await ctx.send(embed=_embed("MeowPlus — Test", desc=box("\n".join(lines), lang="ini")))
+        await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
 
     # ---------- listener ----------
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         if not await self._should_process(message):
             return
-        conf = await self.config.guild(message.guild).all()
-        cd = max(0, int(conf.get("cooldown_seconds", 0)))
-        if cd:
-            self._cooldown[message.author.id] = time.time()
 
         original = (message.content or "").strip()
         if not original:
             return
 
+        conf = await self.config.guild(message.guild).all()
+        forced = self._has_key_trigger(original)
         n = self._one_in(message.author, conf)
-        apply_owo = (n <= 1) or (random.randrange(n) == 0)
-        content = self._render_message(original, apply_owo=apply_owo, intensity=conf["intensity"]).strip()
+        apply_owo = forced or (n <= 1) or (random.randrange(n) == 0)
 
+        content = self._render_message(original, apply_owo=apply_owo, intensity=conf["intensity"]).strip()
         if content == original:
             return
 
@@ -689,4 +569,4 @@ class MeowPlus(redcommands.Cog):
 
 
 async def setup(bot: Red) -> None:
-    await bot.add_cog(MeowPlus(bot))
+    await bot.add_cog(OwoPlus(bot))
