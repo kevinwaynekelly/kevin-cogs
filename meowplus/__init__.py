@@ -4,7 +4,7 @@ from __future__ import annotations
 import difflib
 import random
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import discord
 from discord.ext import commands
@@ -98,15 +98,22 @@ class OwoPlus(redcommands.Cog):
         return re.sub(r"([aeiouAEIOU])(?=[a-zA-Z])", r"\1\1", word, count=1)
 
     @staticmethod
-    def _sub_prob(s: str, pattern: str, repl: str | Callable[[re.Match], str], prob: float, flags: int = 0) -> str:
-        """Per-match probabilistic replacement (why: sprinkle on longer texts)."""
+    def _sub_prob(
+        s: str,
+        pattern: str,
+        repl: str | Callable[[re.Match], str],
+        prob: float,
+        flags: int = 0,
+    ) -> str:
+        """Per-match probabilistic replacement. Expands backrefs for string repls."""
         if prob <= 0.0:
             return s
         rx = re.compile(pattern, flags)
 
         def _choose(m: re.Match) -> str:
             if random.random() < prob:
-                return repl(m) if callable(repl) else repl
+                # IMPORTANT: expand backrefs like \1 or \g<1> when repl is a string.
+                return m.expand(repl) if isinstance(repl, str) else repl(m)
             return m.group(0)
 
         return rx.sub(_choose, s)
@@ -131,7 +138,7 @@ class OwoPlus(redcommands.Cog):
         def transliterate(s: str) -> str:
             s = OwoPlus._sub_prob(s, r"[rl]", "w", prof["rl"])
             s = OwoPlus._sub_prob(s, r"[RL]", "W", prof["rl"])
-            s = OwoPlus._sub_prob(s, r"(?i)n([aeiou])", r"ny\1", prof["ny"])
+            s = OwoPlus._sub_prob(s, r"(?i)n([aeiou])", r"ny\1", prof["ny"])  # backref expanded via m.expand
             s = OwoPlus._sub_prob(s, r"(?i)ove", "uv", prof["uv"])
             s = OwoPlus._sub_prob(s, r"(?i)th", lambda m: "d" if m.group(0).islower() else "D", prof["th"])
             s = OwoPlus._sub_prob(s, r"(?i)tt", lambda m: "dd" if m.group(0).islower() else "DD", prof["tt"])
@@ -165,7 +172,7 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
-        """Italicize replacements/deletions with word chars; copy inserts/punct as-is."""
+        # only italicize replacements/deletions containing word chars
         out: List[str] = []
         wordish = re.compile(r"[A-Za-z0-9]")
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
@@ -225,7 +232,6 @@ class OwoPlus(redcommands.Cog):
     # ---------- auto intensity 1..5 ----------
     @staticmethod
     def _auto_intensity(nchars: int) -> int:
-        """Shorter ⇒ stronger; longer ⇒ lighter-but-still-cute."""
         if nchars <= 80:   return 5
         if nchars <= 160:  return 4
         if nchars <= 400:  return 3
@@ -585,11 +591,8 @@ class OwoPlus(redcommands.Cog):
 
         try:
             await last.delete()
-            lines.append("delete: OK")
         except discord.Forbidden:
-            lines.append("delete: Forbidden (need Manage Messages)")
-        except Exception as e:
-            lines.append(f"delete: FAIL {type(e).__name__}:{e}")
+            pass
 
         await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
 
