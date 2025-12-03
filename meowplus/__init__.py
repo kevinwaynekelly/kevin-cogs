@@ -15,7 +15,7 @@ from redbot.core.utils.chat_formatting import box
 
 __red_end_user_data_statement__ = (
     "This cog stores per-guild preferences for webhook-based message transformation "
-    "(enable flag, 1-in-N owo probability, per-user overrides, intensity, and owner bypass). "
+    "(enable flag, 1-in-N owo probability, per-user overrides, and owner bypass). "
     "It does not store message contents."
 )
 
@@ -23,7 +23,6 @@ DEFAULTS_GUILD = {
     "enabled": False,
     "one_in": 1000,
     "user_probs": {},
-    "intensity": 1,        # 1..5
     "owner_bypass": True,
 }
 
@@ -35,7 +34,6 @@ TARGETS = sorted({v for v in KEY_MAP.values()})
 CODE_SPLIT = re.compile(r"(```[\s\S]*?```|`[^`]*?`)", re.MULTILINE)
 
 OWO_FACES = ["uwu", "owo", ">w<", "^w^", "x3", "~", "nya~", "(⁄˘⁄⁄ ω⁄ ⁄˘⁄)♡"]
-EXTRA_FACES = ["rawr x3", "owo~", "uwu~", "^^", "(>w<)"]
 
 EMO = {"ok": "✅", "bad": "⚠️", "core": "🛠️", "msg": "💬", "prob": "🎲", "diag": "🧪", "spark": "✨"}
 
@@ -49,7 +47,7 @@ def _bool_emoji(v: bool) -> str:
 
 
 class OwoPlus(redcommands.Cog):
-    """Webhook-only cute/owo replacer with adjustable intensity. No channels, no cooldown, no exemptions."""
+    """Webhook-only cute/owo replacer with auto-intensity (shorter ⇒ stronger). No channels/cooldown/exemptions."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -104,8 +102,8 @@ class OwoPlus(redcommands.Cog):
         intensity = max(1, min(5, int(intensity)))
         stutter_prob = [0.10, 0.15, 0.20, 0.28, 0.35][intensity - 1]
         elong_prob   = [0.00, 0.08, 0.12, 0.18, 0.25][intensity - 1]
-        tilde_prob   = [0.00, 0.10, 0.18, 0.25, 0.33][intensity - 1]
-        extra_face_prob = [0.00, 0.08, 0.12, 0.18, 0.25][intensity - 1]
+        face_prob    = [0.20, 0.30, 0.40, 0.50, 0.60][intensity - 1]  # ≤1 face per sentence
+        tilde_prob   = [0.05, 0.10, 0.15, 0.22, 0.28][intensity - 1]
 
         def transliterate(s: str) -> str:
             s = re.sub(r"[rl]", "w", s)
@@ -130,15 +128,14 @@ class OwoPlus(redcommands.Cog):
             def punct(m: re.Match) -> str:
                 p = m.group(1)
                 out = p
-                out += " " + random.choice(OWO_FACES)
-                if random.random() < extra_face_prob:
-                    out += " " + random.choice(EXTRA_FACES)
+                if random.random() < face_prob:
+                    out += " " + random.choice(OWO_FACES)
                 if random.random() < tilde_prob:
                     out += "~"
                 return out
 
-            s = re.sub(r"([.!?])", punct, s)
-            s = re.sub(r"!+", lambda m: m.group(0) + "~", s)
+            s = re.sub(r"([.!?]+)", punct, s)
+            s = re.sub(r"~{2,}", "~", s)
             try:
                 if len(s) > 1:
                     s = s[0].lower() + s[1:]
@@ -150,18 +147,17 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
-        """Wrap changed runs in *…*, but skip pure-punctuation diffs (why: avoid `*~*`, `*!!*`)."""
+        """Wrap changed runs in *…*; skip punctuation-only diffs and all inserts."""
         out: List[str] = []
         wordish = re.compile(r"[A-Za-z0-9]")
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
             if tag == "equal":
                 out.append(transformed[j1:j2])
-            else:
+            elif tag == "insert":
+                out.append(transformed[j1:j2])
+            else:  # replace/delete
                 seg = transformed[j1:j2]
-                if seg and wordish.search(seg):  # only italicize if it contains letters/digits
-                    out.append(f"*{seg}*")
-                else:
-                    out.append(seg)
+                out.append(f"*{seg}*" if seg and wordish.search(seg) else seg)
         return "".join(out)
 
     # ---------- italics helpers ----------
@@ -208,16 +204,26 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _sanitize_italics_and_ticks(text: str) -> str:
-        """De-glue * next to backticks and keep italics away from code fences (why: readability)."""
-        # add a space between '*' and '`' in either order
-        text = text.replace("*`", "* `").replace("`*", "` *")
-        return text
+        """De-glue * next to backticks (why: readability)."""
+        return text.replace("*`", "* `").replace("`*", "` *")
 
+    # ---------- auto intensity ----------
     @staticmethod
-    def _has_key_trigger(text: str) -> bool:
-        return any(KEY_RX.search(seg) for seg, is_code in OwoPlus._split_code_segments(text) if not is_code)
+    def _auto_intensity(nchars: int) -> int:
+        """Shorter ⇒ stronger; longer ⇒ lighter (why: readability)."""
+        if nchars <= 60:
+            return 5
+        if nchars <= 120:
+            return 4
+        if nchars <= 240:
+            return 3
+        if nchars <= 480:
+            return 2
+        return 1
 
-    def _render_message(self, raw: str, apply_owo: bool, *, intensity: int) -> str:
+    def _render_message(self, raw: str, apply_owo: bool) -> str:
+        length = len(raw or "")
+        intensity = self._auto_intensity(length)
         result: List[str] = []
         for seg, is_code in self._split_code_segments(raw):
             if is_code:
@@ -232,8 +238,76 @@ class OwoPlus(redcommands.Cog):
             marked = self._ensure_targets_italic(marked)
             result.append(marked)
         final = "".join(result)
-        final = self._sanitize_italics_and_ticks(final)
-        return final
+        return self._sanitize_italics_and_ticks(final)
+
+    # ---------- chunking ----------
+    @staticmethod
+    def _find_breakpoint(window: str) -> int:
+        """Prefer sentence end, then newline, then space; fallback to window length."""
+        candidates: List[int] = []
+        for m in re.finditer(r"[.!?](?:\s|$)", window):
+            candidates.append(m.end())
+        nl = window.rfind("\n")
+        if nl != -1:
+            candidates.append(nl + 1)
+        sp = window.rfind(" ")
+        if sp != -1:
+            candidates.append(sp + 1)
+        return max(candidates) if candidates else len(window)
+
+    def _chunk_message(self, text: str, limit: int = 2000) -> List[str]:
+        """Split output into ≤limit chunks; keep code segments intact; avoid splitting italics/backticks when possible."""
+        chunks: List[str] = []
+        cur = ""
+        for seg, is_code in self._split_code_segments(text):
+            piece = seg
+            if is_code:
+                if len(cur) + len(piece) <= limit:
+                    cur += piece
+                else:
+                    if cur:
+                        chunks.append(cur)
+                        cur = ""
+                    if len(piece) <= limit:
+                        cur = piece
+                    else:
+                        # split code by newline if it still exceeds limit
+                        start = 0
+                        while start < len(piece):
+                            take = piece.find("\n", start, start + limit)
+                            if take == -1 or take <= start:
+                                take = min(start + limit, len(piece))
+                            chunks.append(piece[start:take])
+                            start = take
+            else:
+                remaining = piece
+                while remaining:
+                    space = limit - len(cur)
+                    if space <= 0:
+                        chunks.append(cur)
+                        cur = ""
+                        space = limit
+                    if len(remaining) <= space:
+                        cur += remaining
+                        remaining = ""
+                    else:
+                        window = remaining[:space]
+                        cut = self._find_breakpoint(window)
+                        # try to keep stars/backticks balanced in chunk
+                        candidate = remaining[:cut]
+                        if (candidate.count("*") % 2) or (candidate.count("`") % 2):
+                            # move cut back to last whitespace to avoid splitting a pair
+                            fallback = candidate.rfind(" ")
+                            if fallback > 0:
+                                cut = fallback + 1
+                        cur += remaining[:cut].rstrip()
+                        chunks.append(cur)
+                        cur = ""
+                        remaining = remaining[cut:].lstrip()
+        if cur:
+            chunks.append(cur)
+        # final guarantee
+        return [c[:limit] for c in chunks]  # hard clamp if needed
 
     # ---------- gating ----------
     @staticmethod
@@ -304,7 +378,7 @@ class OwoPlus(redcommands.Cog):
         channel: discord.abc.Messageable,
         author: discord.abc.User,
         content: str,
-        files: List[discord.File],
+        files: List[discord.File] | None,
         wait: bool,
     ):
         kwargs = {
@@ -326,14 +400,13 @@ class OwoPlus(redcommands.Cog):
         cfg = await self.config.guild(g).all()
         e = _embed(
             f"OwoPlus — Status {_bool_emoji(cfg['enabled'])}",
-            desc="uwu pipeline maps now/bro/dude/bud → *meow*/*bwo*/*duwde*/*bwud* • any of these words force uwu • intensity 1–5 • random owo 1/N otherwise.",
+            desc="uwu pipeline maps now/bro/dude/bud → *meow*/*bwo*/*duwde*/*bwud* • any of these words force uwu • random owo 1/N otherwise • intensity auto-scales by message length.",
         )
         e.add_field(
             name=f"{EMO['core']} Core",
             value=box(
                 f"enabled = {cfg['enabled']}\n"
                 f"one_in  = 1/{cfg['one_in']}\n"
-                f"intensity= {cfg['intensity']}\n"
                 f"owner_bypass= {cfg['owner_bypass']}",
                 lang="ini",
             ),
@@ -369,8 +442,16 @@ class OwoPlus(redcommands.Cog):
             value=(f"• `{p}owoplus onein <N>` (default 1000)\n" f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"),
             inline=False,
         )
-        e.add_field(name="OWO Style", value=(f"• `{p}owoplus intensity <1..5>` — more OWO at higher levels (default 1)"), inline=False)
-        e.add_field(name="Owner Bypass", value=(f"• `{p}owoplus ownerbypass <on|off>` — when on, Red owner is never processed (default on)"), inline=False)
+        e.add_field(
+            name="Auto Intensity",
+            value="Shorter messages → higher intensity; longer → lower for readability.",
+            inline=False,
+        )
+        e.add_field(
+            name="Owner Bypass",
+            value=(f"• `{p}owoplus ownerbypass <on|off>` — when on, Red owner is never processed (default on)"),
+            inline=False,
+        )
         await ctx.send(embed=e)
 
     @owoplus.command(name="ownerbypass")
@@ -380,16 +461,6 @@ class OwoPlus(redcommands.Cog):
             return await ctx.send(embed=_embed(f"Owner bypass is **{'on' if cur else 'off'}**"))
         val = state.lower() in {"on", "true", "yes", "1"}
         await self.config.guild(ctx.guild).owner_bypass.set(val)
-        await ctx.tick()
-
-    @owoplus.command(name="intensity")
-    async def owoplus_intensity(self, ctx: redcommands.Context, level: Optional[int] = None) -> None:
-        if level is None:
-            cur = await self.config.guild(ctx.guild).intensity()
-            return await ctx.send(embed=_embed(f"Current intensity: **{cur}**"))
-        if level < 1 or level > 5:
-            return await ctx.send(embed=_embed("Use 1..5.", color=discord.Color.orange()))
-        await self.config.guild(ctx.guild).intensity.set(int(level))
         await ctx.tick()
 
     @owoplus.command(name="enable")
@@ -443,10 +514,10 @@ class OwoPlus(redcommands.Cog):
 
     @owoplus.command(name="preview")
     async def owoplus_preview(self, ctx: redcommands.Context, *, text: str) -> None:
-        g = await self.config.guild(ctx.guild).all()
-        meow_only = self._render_message(text, apply_owo=False, intensity=g["intensity"])
-        meow_owo = self._render_message(text, apply_owo=True, intensity=g["intensity"])
-        e = _embed("OwoPlus — Preview")
+        meow_only = self._render_message(text, apply_owo=False)
+        meow_owo = self._render_message(text, apply_owo=True)
+        used = self._auto_intensity(len(text))
+        e = _embed("OwoPlus — Preview", desc=f"Auto intensity for this text: **{used}**")
         e.add_field(name="MEOW", value=box(meow_only, lang="ini"), inline=False)
         e.add_field(name="OWO", value=box(meow_owo, lang="ini"), inline=False)
         await ctx.send(embed=e)
@@ -457,7 +528,7 @@ class OwoPlus(redcommands.Cog):
         perms = ctx.channel.permissions_for(ctx.guild.me) if isinstance(ctx.channel, (discord.TextChannel, discord.Thread)) else None  # type: ignore
         payload = "\n".join(
             [
-                f"enabled={g['enabled']} one_in=1/{g['one_in']} intensity={g['intensity']} owner_bypass={g['owner_bypass']}",
+                f"enabled={g['enabled']} one_in=1/{g['one_in']} owner_bypass={g['owner_bypass']}",
                 f"here perms: view={getattr(perms,'view_channel',None)} send={getattr(perms,'send_messages',None)} manage_messages={getattr(perms,'manage_messages',None)} manage_webhooks={getattr(perms,'manage_webhooks',None)}",
                 f"overrides={len(g['user_probs'])}",
             ]
@@ -496,8 +567,13 @@ class OwoPlus(redcommands.Cog):
             return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
         lines.append(f"hook: {hook.id}:{hook.name}")
 
-        g = await self.config.guild(ctx.guild).all()
-        content = self._render_message(last.content or "", apply_owo=True, intensity=g["intensity"])
+        conf = await self.config.guild(ctx.guild).all()
+        forced = self._has_key_trigger(last.content or "")
+        n = self._one_in(last.author, conf)
+        apply_owo = forced or (n <= 1) or (random.randrange(n) == 0)
+
+        content_full = self._render_message(last.content or "", apply_owo=apply_owo)
+        parts = self._chunk_message(content_full)
 
         files: List[discord.File] = []
         for a in last.attachments[:5]:
@@ -507,8 +583,16 @@ class OwoPlus(redcommands.Cog):
                 lines.append(f"attach_fail:{a.id}:{type(e).__name__}")
 
         try:
-            await self._send_via_webhook(hook, channel=ch, author=last.author, content=content, files=files, wait=True)
-            lines.append("send: OK")
+            for idx, part in enumerate(parts):
+                await self._send_via_webhook(
+                    hook,
+                    channel=ch,
+                    author=last.author,
+                    content=part,
+                    files=files if idx == 0 else None,  # why: attach only once
+                    wait=False,
+                )
+            lines.append(f"send: OK ({len(parts)} part{'s' if len(parts)!=1 else ''})")
         except Exception as e:
             lines.append(f"send: FAIL {type(e).__name__}: {e}")
             return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
@@ -538,8 +622,8 @@ class OwoPlus(redcommands.Cog):
         n = self._one_in(message.author, conf)
         apply_owo = forced or (n <= 1) or (random.randrange(n) == 0)
 
-        content = self._render_message(original, apply_owo=apply_owo, intensity=conf["intensity"]).strip()
-        if content == original:
+        content_full = self._render_message(original, apply_owo=apply_owo).strip()
+        if content_full == original:
             return
 
         hook = await self._ensure_webhook(message.channel)
@@ -553,8 +637,17 @@ class OwoPlus(redcommands.Cog):
             except Exception:
                 pass
 
+        parts = self._chunk_message(content_full)
         try:
-            await self._send_via_webhook(hook, channel=message.channel, author=message.author, content=content, files=files, wait=False)
+            for idx, part in enumerate(parts):
+                await self._send_via_webhook(
+                    hook,
+                    channel=message.channel,
+                    author=message.author,
+                    content=part,
+                    files=files if idx == 0 else None,  # attach only on first
+                    wait=False,
+                )
         except Exception:
             self._wh_cache.pop(getattr(message.channel, "id", 0), None)
             return
