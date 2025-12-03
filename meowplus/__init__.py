@@ -105,24 +105,21 @@ class OwoPlus(redcommands.Cog):
         prob: float,
         flags: int = 0,
     ) -> str:
-        """Per-match probabilistic replacement. Expands backrefs for string repls."""
+        """Per-match probabilistic replacement. Expands backrefs when repl is a string."""
         if prob <= 0.0:
             return s
         rx = re.compile(pattern, flags)
 
         def _choose(m: re.Match) -> str:
             if random.random() < prob:
-                # IMPORTANT: expand backrefs like \1 or \g<1> when repl is a string.
-                return m.expand(repl) if isinstance(repl, str) else repl(m)
+                return m.expand(repl) if isinstance(repl, str) else repl(m)  # why: handle \1 etc.
             return m.group(0)
 
         return rx.sub(_choose, s)
 
     @staticmethod
     def _owoify_plain(text: str, intensity: int) -> str:
-        # Re-tuned 1..5. Levels 1–2 are still visibly cute.
         prof = {
-            # per-match probs for rl/ny/uv/th/tt; others are per-word/per-sentence
             1: dict(rl=0.35, ny=0.85, uv=0.85, th=0.30, tt=0.15, lc_first=False,
                     stutter=0.08, elong=0.06, face=0.18, tilde=0.08),
             2: dict(rl=0.55, ny=0.95, uv=0.95, th=0.40, tt=0.25, lc_first=False,
@@ -138,7 +135,7 @@ class OwoPlus(redcommands.Cog):
         def transliterate(s: str) -> str:
             s = OwoPlus._sub_prob(s, r"[rl]", "w", prof["rl"])
             s = OwoPlus._sub_prob(s, r"[RL]", "W", prof["rl"])
-            s = OwoPlus._sub_prob(s, r"(?i)n([aeiou])", r"ny\1", prof["ny"])  # backref expanded via m.expand
+            s = OwoPlus._sub_prob(s, r"(?i)n([aeiou])", r"ny\1", prof["ny"])
             s = OwoPlus._sub_prob(s, r"(?i)ove", "uv", prof["uv"])
             s = OwoPlus._sub_prob(s, r"(?i)th", lambda m: "d" if m.group(0).islower() else "D", prof["th"])
             s = OwoPlus._sub_prob(s, r"(?i)tt", lambda m: "dd" if m.group(0).islower() else "DD", prof["tt"])
@@ -172,17 +169,35 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
-        # only italicize replacements/deletions containing word chars
+        """
+        Italicize replacements/deletions that contain word chars.
+        IMPORTANT: keep leading/trailing whitespace OUTSIDE the stars to avoid ' * now' artifacts.
+        """
         out: List[str] = []
         wordish = re.compile(r"[A-Za-z0-9]")
+
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
             if tag == "equal":
                 out.append(transformed[j1:j2])
-            elif tag == "insert":
-                out.append(transformed[j1:j2])
-            else:
-                seg = transformed[j1:j2]
-                out.append(f"*{seg}*" if seg and wordish.search(seg) else seg)
+                continue
+            if tag == "insert":
+                out.append(transformed[j1:j2])  # faces/extra inserts remain plain
+                continue
+
+            seg = transformed[j1:j2]
+            if not seg or not wordish.search(seg):
+                out.append(seg)
+                continue
+
+            # pull whitespace out of the italic span
+            left_ws_len = len(seg) - len(seg.lstrip())
+            right_ws_len = len(seg) - len(seg.rstrip())
+            left_ws = seg[:left_ws_len]
+            core = seg[left_ws_len:len(seg) - right_ws_len] if right_ws_len else seg[left_ws_len:]
+            right_ws = seg[len(seg) - right_ws_len:] if right_ws_len else ""
+
+            out.append(f"{left_ws}*{core}*{right_ws}")
+
         return "".join(out)
 
     # ---------- italics helpers ----------
