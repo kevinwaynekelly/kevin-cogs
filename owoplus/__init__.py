@@ -47,6 +47,155 @@ def _bool_emoji(v: bool) -> str:
     return "🟢" if v else "🔴"
 
 
+# ===================== Haiku detection (CMUdict + heuristic) =====================
+
+class HaikuMeter:
+    """Use CMUdict when present; fallback to heuristic. Why: better accuracy without a hard dependency."""
+    _cmu_ready = False
+    _use_pronouncing = False
+    _use_nltk = False
+    _nltk_d = None
+    _cache: Dict[str, int] = {}
+
+    try:
+        import pronouncing as _pronouncing  # type: ignore
+        _use_pronouncing = True
+        _cmu_ready = True
+    except Exception:
+        try:
+            from nltk.corpus import cmudict as _cmudict  # type: ignore
+            _nltk_d = _cmudict.dict()
+            _use_nltk = True
+            _cmu_ready = True
+        except Exception:
+            _cmu_ready = False
+
+    _SPECIALS = {
+        "the": 1, "queue": 1, "people": 2, "business": 2, "beautiful": 3,
+        "everyone": 3, "breathe": 1, "every": 2, "evening": 3, "gentle": 2,
+        "quiet": 2, "deploys": 2, "bro": 1, "dude": 1, "now": 1, "bud": 1,
+    }
+
+    @classmethod
+    def _cmu_syllables(cls, word: str) -> Optional[int]:
+        w = word.lower()
+        if w in cls._SPECIALS:
+            return cls._SPECIALS[w]
+        if not cls._cmu_ready:
+            return None
+        try:
+            if cls._use_pronouncing:
+                phones = cls._pronouncing.phones_for_word(w)  # type: ignore[attr-defined]
+                if not phones and w.endswith("s") and len(w) > 3:
+                    phones = cls._pronouncing.phones_for_word(w[:-1])  # type: ignore[attr-defined]
+                if not phones:
+                    return None
+                return min((sum(p[-1].isdigit() for p in ph.split()) for ph in phones), default=None)
+            if cls._use_nltk and cls._nltk_d is not None:
+                entries = cls._nltk_d.get(w) or (cls._nltk_d.get(w[:-1]) if w.endswith("s") and len(w) > 3 else None)
+                if not entries:
+                    return None
+                return min((sum(1 for y in e if y[-1].isdigit()) for e in entries), default=None)
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _heuristic_syllables(word: str) -> int:
+        w = re.sub(r"[^a-z']", "", word.lower())
+        if not w:
+            return 0
+        if w in HaikuMeter._SPECIALS:
+            return HaikuMeter._SPECIALS[w]
+
+        cons_le = 1 if re.search(r"[^aeiouy]le$", w) else 0
+        core = w if cons_le else re.sub(r"e\b", "", w)
+        base = len(re.findall(r"[aeiouy]+", core))
+        hiatus = 1 if re.search(r"(ui|ie|ia|io|ea|eo|ua|uo)", core) else 0
+
+        return max(1, base + cons_le + hiatus)
+
+    @classmethod
+    def count(cls, word: str) -> int:
+        w = word.lower()
+        if w in cls._cache:
+            return cls._cache[w]
+        val = cls._cmu_syllables(w) or cls._heuristic_syllables(w)
+        cls._cache[w] = val
+        return val
+
+
+class Haiku:
+    _WORD_RX = re.compile(r"[A-Za-z']+")
+    _DASHES_RX = re.compile(r"[\u2010-\u2015\u2212\-]+")
+
+    @staticmethod
+    def normalize_text(s: str) -> str:
+        s = Haiku._DASHES_RX.sub(" ", s)
+        s = s.replace("\n", " ")
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    @staticmethod
+    def words(text: str) -> List[str]:
+        return Haiku._WORD_RX.findall(text)
+
+    @staticmethod
+    def detect_breaks(text: str) -> Optional[Tuple[int, int]]:
+        t = Haiku.normalize_text(text)
+        words = Haiku.words(t)
+        if not (3 <= len(words) <= 32):
+            return None
+        if len(t) > 300:
+            return None
+        syl = [HaikuMeter.count(w) for w in words]
+
+        acc = i = 0
+        while i < len(syl) and acc < 5:
+            acc += syl[i]; i += 1
+        if acc != 5:
+            return None
+        cut1 = i
+
+        s2 = 0; j = cut1
+        while j < len(syl) and s2 < 7:
+            s2 += syl[j]; j += 1
+        if s2 != 7:
+            return None
+        cut2 = j
+
+        if sum(syl[cut2:]) != 5:
+            return None
+        return (cut1, cut2)
+
+    @staticmethod
+    def reflow(rendered: str, cuts: Tuple[int, int]) -> str:
+        words = list(Haiku._WORD_RX.finditer(rendered))
+        if len(words) < cuts[1]:
+            return rendered
+        parts: List[str] = []
+        last = 0
+        idx = 0
+        marks = {cuts[0], cuts[1]}
+        for m in words:
+            parts.append(rendered[last:m.start()])
+            parts.append(m.group(0))
+            idx += 1
+            if idx in marks:
+                parts.append("\n")
+            last = m.end()
+        parts.append(rendered[last:])
+        return "".join(parts).strip()
+
+
+# ---- thin wrappers so the class below can call staticmethods by name ----
+def _normalize_for_haiku(s: str) -> str: return Haiku.normalize_text(s)
+def _count_syllables(word: str) -> int: return HaikuMeter.count(word)
+def _detect_haiku_breaks(text: str) -> Optional[Tuple[int, int]]: return Haiku.detect_breaks(text)
+def _reflow_text_as_haiku(rendered: str, cuts: Tuple[int, int]) -> str: return Haiku.reflow(rendered, cuts)
+# ============================================================================
+
+
 class OwoPlus(redcommands.Cog):
     """Webhook-only cute/owo replacer with auto-intensity 1..5, keys-only fallback, and optional haiku formatting."""
 
@@ -106,16 +255,13 @@ class OwoPlus(redcommands.Cog):
         prob: float,
         flags: int = 0,
     ) -> str:
-        """Per-match probabilistic replacement. Expands backrefs when repl is a string."""
         if prob <= 0.0:
             return s
         rx = re.compile(pattern, flags)
-
         def _choose(m: re.Match) -> str:
             if random.random() < prob:
                 return m.expand(repl) if isinstance(repl, str) else repl(m)
             return m.group(0)
-
         return rx.sub(_choose, s)
 
     @staticmethod
@@ -239,11 +385,22 @@ class OwoPlus(redcommands.Cog):
         if nchars <= 1200: return 2
         return 1
 
-    # ---------- haiku detection ----------
+    # ---------- haiku wrappers (keep method names stable) ----------
     @staticmethod
     def _normalize_for_haiku(s: str) -> str:
-        s = re.sub(r"[\u2010-\u2015\u2212\-]+", " ", s)  # unicode dashes/hyphens → space
-        return s
+        return _normalize_for_haiku(s)
+
+    @staticmethod
+    def _count_syllables(word: str) -> int:
+        return _count_syllables(word)
+
+    @staticmethod
+    def _detect_haiku_breaks(text: str) -> Optional[Tuple[int, int]]:
+        return _detect_haiku_breaks(text)
+
+    @staticmethod
+    def _reflow_text_as_haiku(rendered: str, cuts: Tuple[int, int]) -> str:
+        return _reflow_text_as_haiku(rendered, cuts)
 
     @staticmethod
     def _plain_text_if_no_code(raw: str) -> Optional[str]:
@@ -253,61 +410,6 @@ class OwoPlus(redcommands.Cog):
         return "".join(s for s, _ in segs)
 
     @staticmethod
-    def _count_syllables(word: str) -> int:
-        w = word.lower()
-        w = re.sub(r"[^a-z']", "", w)
-        if not w:
-            return 0
-        specials = {"the":1, "queue":1, "people":2, "business":2, "beautiful":3, "everyone":3, "dude":1, "bro":1, "now":1}
-        if w in specials:
-            return specials[w]
-        w = re.sub(r"e\b", "", w)
-        groups = re.findall(r"[aeiouy]+", w)
-        return max(1, len(groups))
-
-    @staticmethod
-    def _detect_haiku_breaks(text: str) -> Optional[Tuple[int, int]]:
-        text = OwoPlus._normalize_for_haiku(text)
-        words = [w for w in re.findall(r"[A-Za-z']+", text)]
-        if not (3 <= len(words) <= 25):
-            return None
-        if "\n" in text or len(text) > 240:
-            return None
-        syl = [OwoPlus._count_syllables(w) for w in words]
-        s = 0; i = 0
-        while i < len(syl) and s < 5:
-            s += syl[i]; i += 1
-        if s != 5: return None
-        cut1 = i
-        s2 = 0; j = cut1
-        while j < len(syl) and s2 < 7:
-            s2 += syl[j]; j += 1
-        if s2 != 7: return None
-        cut2 = j
-        if sum(syl[cut2:]) != 5:
-            return None
-        return (cut1, cut2)
-
-    @staticmethod
-    def _reflow_text_as_haiku(rendered: str, cuts: Tuple[int, int]) -> str:
-        words = re.findall(r"[A-Za-z']+", rendered)
-        if len(words) < cuts[1]:
-            return rendered
-        pieces: List[str] = []
-        idx_word = 0
-        pos = 0
-        rx = re.compile(r"[A-Za-z']+")
-        for m in rx.finditer(rendered):
-            pieces.append(rendered[pos:m.start()])
-            pieces.append(m.group(0))
-            idx_word += 1
-            if idx_word == cuts[0] or idx_word == cuts[1]:
-                pieces.append("\n")
-            pos = m.end()
-        pieces.append(rendered[pos:])
-        return "".join(pieces).strip()
-
-    @staticmethod
     def _has_key_trigger(text: str) -> bool:
         return any(KEY_RX.search(seg) for seg, is_code in OwoPlus._split_code_segments(text) if not is_code)
 
@@ -315,7 +417,7 @@ class OwoPlus(redcommands.Cog):
     def _render_message_mode(self, raw: str, mode: str, *, use_haiku: bool) -> str:
         """
         mode: 'full' | 'keys' | 'none'
-        IMPORTANT: If haiku is detected and enabled, we return the original text 5/7/5 (no OWO at all).
+        IMPORTANT: If haiku is detected and enabled, return original 5/7/5 (no OWO).
         """
         if use_haiku:
             plain = self._plain_text_if_no_code(raw)
@@ -341,7 +443,8 @@ class OwoPlus(redcommands.Cog):
                 marked = self._ensure_targets_italic(marked)
                 result.append(marked)
         final = "".join(result)
-        return self._sanitize_italics_and_ticks(final)
+        final = self._sanitize_italics_and_ticks(final)
+        return final
 
     # ---------- chunking ----------
     @staticmethod
@@ -549,7 +652,7 @@ class OwoPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).owner_bypass.set(val)
         await ctx.tick()
 
-    # ------- NEW: poem group (replaces conflicting 'haiku') -------
+    # ------- poem group (haiku tools) -------
     @owoplus.group(name="poem", invoke_without_command=True)
     async def owoplus_poem(self, ctx: redcommands.Context) -> None:
         cur = await self.config.guild(ctx.guild).haiku_enabled()
@@ -594,11 +697,11 @@ class OwoPlus(redcommands.Cog):
         ]
         out = text
         if cuts:
-            out = self._reflow_text_as_haiku(text, cuts)
+            out = self._reflow_text_as_haiku(self._normalize_for_haiku(text), cuts)
         e = _embed("OwoPlus — Haiku Diag", desc=box("\n".join(lines), lang="ini"))
         e.add_field(name="Haiku Render", value=box(out, lang="ini"), inline=False)
         await ctx.send(embed=e)
-    # ---------------------------------------------------------------
+    # ---------------------------------------
 
     @owoplus.command(name="enable")
     async def owoplus_enable(self, ctx: redcommands.Context) -> None:
@@ -757,12 +860,45 @@ class OwoPlus(redcommands.Cog):
             return
 
         conf = await self.config.guild(message.guild).all()
+
+        # Haiku early exit (never OWO). Why: readability & explicit user request.
+        if conf.get("haiku_enabled", True):
+            plain = self._plain_text_if_no_code(original)
+            if plain:
+                cuts = self._detect_haiku_breaks(plain)
+                if cuts:
+                    content = self._reflow_text_as_haiku(plain, cuts)
+                    hook = await self._ensure_webhook(message.channel)
+                    if not hook:
+                        return
+                    files: List[discord.File] = []
+                    for a in message.attachments[:5]:
+                        try:
+                            files.append(await a.to_file())
+                        except Exception:
+                            pass
+                    parts = self._chunk_message(content)
+                    try:
+                        for idx, part in enumerate(parts):
+                            await self._send_via_webhook(
+                                hook, channel=message.channel, author=message.author,
+                                content=part, files=files if idx == 0 else None, wait=False
+                            )
+                    except Exception:
+                        self._wh_cache.pop(getattr(message.channel, "id", 0), None)
+                        return
+                    try:
+                        await message.delete()
+                    except discord.Forbidden:
+                        pass
+                    return
+
         has_key = self._has_key_trigger(original)
         n = self._one_in(message.author, conf)
         full = (n <= 1) or (random.randrange(n) == 0)
         mode = "full" if full else ("keys" if has_key else "none")
 
-        content = self._render_message_mode(original, mode=mode, use_haiku=bool(conf.get("haiku_enabled", True))).strip()
+        content = self._render_message_mode(original, mode=mode, use_haiku=False).strip()
         if content == original:
             return
 
