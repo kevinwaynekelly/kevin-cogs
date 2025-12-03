@@ -31,7 +31,6 @@ KEY_MAP: Dict[str, str] = {"now": "meow", "bro": "bwo", "dude": "duwde", "bud": 
 KEY_RX = re.compile(r"\b(" + "|".join(map(re.escape, KEY_MAP.keys())) + r")\b", re.IGNORECASE)
 TARGETS = sorted({v for v in KEY_MAP.values()})
 
-# code/inline-code splitter (keeps code untouched)
 CODE_SPLIT = re.compile(r"(```[\s\S]*?```|`[^`]*?`)", re.MULTILINE)
 
 OWO_FACES = ["uwu", "owo", ">w<", "^w^", "x3", "~", "nya~", "(⁄˘⁄⁄ ω⁄ ⁄˘⁄)♡"]
@@ -100,62 +99,76 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _owoify_plain(text: str, intensity: int) -> str:
-        intensity = max(1, min(5, int(intensity)))
-        stutter_prob = [0.10, 0.15, 0.20, 0.28, 0.35][intensity - 1]
-        elong_prob   = [0.00, 0.08, 0.12, 0.18, 0.25][intensity - 1]
-        face_prob    = [0.20, 0.30, 0.40, 0.50, 0.60][intensity - 1]  # ≤1 face per sentence
-        tilde_prob   = [0.05, 0.10, 0.15, 0.22, 0.28][intensity - 1]
+        # profile: which transforms are active at this intensity (why: readability)
+        prof = {
+            1: dict(rl=False, ny=False, uv=False, th=False, tt=False, lc_first=False,
+                    stutter=0.00, elong=0.00, face=0.05, tilde=0.00),
+            2: dict(rl=False, ny=False, uv=False, th=False, tt=False, lc_first=False,
+                    stutter=0.03, elong=0.02, face=0.10, tilde=0.03),
+            3: dict(rl=False, ny=True,  uv=True,  th=False, tt=False, lc_first=False,
+                    stutter=0.06, elong=0.05, face=0.15, tilde=0.06),
+            4: dict(rl=True,  ny=True,  uv=True,  th=True,  tt=False, lc_first=True,
+                    stutter=0.10, elong=0.10, face=0.18, tilde=0.08),
+            5: dict(rl=True,  ny=True,  uv=True,  th=True,  tt=True,  lc_first=True,
+                    stutter=0.14, elong=0.16, face=0.22, tilde=0.12),
+        }[max(1, min(5, int(intensity)))]
 
         def transliterate(s: str) -> str:
-            s = re.sub(r"[rl]", "w", s)
-            s = re.sub(r"[RL]", "W", s)
-            s = re.sub(r"(?i)n([aeiou])", r"ny\1", s)
-            s = re.sub(r"(?i)ove", "uv", s)
-            if intensity >= 2:
+            # letter-level toggles (why: heavy ones off at low intensity)
+            if prof["rl"]:
+                s = re.sub(r"[rl]", "w", s)
+                s = re.sub(r"[RL]", "W", s)
+            if prof["ny"]:
+                s = re.sub(r"(?i)n([aeiou])", r"ny\1", s)
+            if prof["uv"]:
+                s = re.sub(r"(?i)ove", "uv", s)
+            if prof["th"]:
                 s = re.sub(r"(?i)th", lambda m: "d" if m.group(0).islower() else "D", s)
-            if intensity >= 3:
+            if prof["tt"]:
                 s = re.sub(r"(?i)tt", lambda m: "dd" if m.group(0).islower() else "DD", s)
 
             def tweak_word(w: str) -> str:
                 if w.isalpha():
-                    w = OwoPlus._stutter(w, stutter_prob)
-                    w = OwoPlus._elongate_vowels(w, elong_prob)
+                    w = OwoPlus._stutter(w, prof["stutter"])
+                    w = OwoPlus._elongate_vowels(w, prof["elong"])
                 return w
 
             words = re.split(r"(\s+)", s)
             words = [tweak_word(w) if (i % 2 == 0) else w for i, w in enumerate(words)]
             s = "".join(words)
 
+            # ≤1 decoration per sentence; mild probabilities
             def punct(m: re.Match) -> str:
                 p = m.group(1)
                 out = p
-                if random.random() < face_prob:
+                if random.random() < prof["face"]:
                     out += " " + random.choice(OWO_FACES)
-                if random.random() < tilde_prob:
+                if random.random() < prof["tilde"]:
                     out += "~"
                 return out
 
             s = re.sub(r"([.!?]+)", punct, s)
             s = re.sub(r"~{2,}", "~", s)
-            try:
-                if len(s) > 1:
-                    s = s[0].lower() + s[1:]
-            except Exception:
-                pass
+            if prof["lc_first"]:
+                try:
+                    if len(s) > 1:
+                        s = s[0].lower() + s[1:]
+                except Exception:
+                    pass
             return s
 
         return "".join(seg if is_code else transliterate(seg) for seg, is_code in OwoPlus._split_code_segments(text))
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
-        """Italicize replacements/deletions that contain word chars; copy inserts/punct as-is."""
+        # only italicize replacements/deletions containing word chars (why: readability)
         out: List[str] = []
         wordish = re.compile(r"[A-Za-z0-9]")
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
             if tag == "equal":
                 out.append(transformed[j1:j2])
             elif tag == "insert":
-                out.append(transformed[j1:j2])  # faces/nyas not italic
+                out.append(transformed[j1:j2])
             else:
                 seg = transformed[j1:j2]
                 out.append(f"*{seg}*" if seg and wordish.search(seg) else seg)
@@ -164,7 +177,6 @@ class OwoPlus(redcommands.Cog):
     # ---------- italics helpers ----------
     @staticmethod
     def _build_var_regex(token: str) -> re.Pattern:
-        # match optional stutter + one extra first vowel
         m = re.search(r"[aeiouAEIOU]", token)
         first = re.escape(token[0])
         if not m:
@@ -184,7 +196,6 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _ensure_targets_italic(text: str) -> str:
-        # ensure meow/bwo/duwde/bwud variants are entire-word italic (outside code)
         patterns = [OwoPlus._build_var_regex(t) for t in TARGETS]
         def apply(seg: str) -> str:
             for pat in patterns:
@@ -205,7 +216,6 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _sanitize_italics_and_ticks(text: str) -> str:
-        # avoid * touching backticks for readability
         return text.replace("*`", "* `").replace("`*", "` *")
 
     # ---------- auto intensity ----------
@@ -219,7 +229,6 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _has_key_trigger(text: str) -> bool:
-        """True if any trigger word (now/bro/dude/bud) appears outside code."""
         return any(KEY_RX.search(seg) for seg, is_code in OwoPlus._split_code_segments(text) if not is_code)
 
     def _render_message(self, raw: str, apply_owo: bool) -> str:
@@ -228,11 +237,9 @@ class OwoPlus(redcommands.Cog):
         result: List[str] = []
         for seg, is_code in self._split_code_segments(raw):
             if is_code:
-                result.append(seg)
-                continue
+                result.append(seg); continue
             if not apply_owo:
-                result.append(seg)
-                continue
+                result.append(seg); continue
             seed = self._apply_key_map(seg)
             owo = self._owoify_plain(seed, intensity=intensity)
             marked = self._italicize_changes(seed, owo)
@@ -244,16 +251,13 @@ class OwoPlus(redcommands.Cog):
     # ---------- chunking ----------
     @staticmethod
     def _find_breakpoint(window: str) -> int:
-        # prefer sentence end, then newline, then space
         candidates: List[int] = []
         for m in re.finditer(r"[.!?](?:\s|$)", window):
             candidates.append(m.end())
         nl = window.rfind("\n")
-        if nl != -1:
-            candidates.append(nl + 1)
+        if nl != -1: candidates.append(nl + 1)
         sp = window.rfind(" ")
-        if sp != -1:
-            candidates.append(sp + 1)
+        if sp != -1: candidates.append(sp + 1)
         return max(candidates) if candidates else len(window)
 
     def _chunk_message(self, text: str, limit: int = 2000) -> List[str]:
@@ -265,8 +269,7 @@ class OwoPlus(redcommands.Cog):
                 if len(cur) + len(piece) <= limit:
                     cur += piece
                 else:
-                    if cur:
-                        chunks.append(cur); cur = ""
+                    if cur: chunks.append(cur); cur = ""
                     if len(piece) <= limit:
                         cur = piece
                     else:
@@ -275,8 +278,7 @@ class OwoPlus(redcommands.Cog):
                             take = piece.find("\n", start, start + limit)
                             if take == -1 or take <= start:
                                 take = min(start + limit, len(piece))
-                            chunks.append(piece[start:take])
-                            start = take
+                            chunks.append(piece[start:take]); start = take
             else:
                 remaining = piece
                 while remaining:
@@ -289,16 +291,13 @@ class OwoPlus(redcommands.Cog):
                         window = remaining[:space]
                         cut = self._find_breakpoint(window)
                         candidate = remaining[:cut]
-                        # avoid splitting unmatched * or `
                         if (candidate.count("*") % 2) or (candidate.count("`") % 2):
-                            fallback = candidate.rfind(" ")
-                            if fallback > 0:
-                                cut = fallback + 1
+                            fb = candidate.rfind(" ")
+                            if fb > 0: cut = fb + 1
                         cur += remaining[:cut].rstrip()
                         chunks.append(cur); cur = ""
                         remaining = remaining[cut:].lstrip()
-        if cur:
-            chunks.append(cur)
+        if cur: chunks.append(cur)
         return [c[:limit] for c in chunks]
 
     # ---------- gating ----------
@@ -382,7 +381,7 @@ class OwoPlus(redcommands.Cog):
         if content:
             kwargs["content"] = content
         if isinstance(channel, discord.Thread):
-            kwargs["thread"] = channel  # ensure correct thread routing
+            kwargs["thread"] = channel  # why: ensure correct thread routing
         if files:
             kwargs["files"] = files
         return await hook.send(**kwargs)
@@ -392,7 +391,7 @@ class OwoPlus(redcommands.Cog):
         cfg = await self.config.guild(g).all()
         e = _embed(
             f"OwoPlus — Status {_bool_emoji(cfg['enabled'])}",
-            desc="Maps now/bro/dude/bud → *meow*/*bwo*/*duwde*/*bwud* • any trigger forces uwu • random owo 1/N otherwise • intensity auto-scales by length.",
+            desc="Triggers now/bro/dude/bud → *meow/bwo/duwde/bwud* • any trigger forces uwu • random owo 1/N • intensity auto-scales by length (readable on long texts).",
         )
         e.add_field(
             name=f"{EMO['core']} Core",
@@ -434,16 +433,8 @@ class OwoPlus(redcommands.Cog):
             value=(f"• `{p}owoplus onein <N>` (default 1000)\n" f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"),
             inline=False,
         )
-        e.add_field(
-            name="Auto Intensity",
-            value="Shorter messages → higher intensity; longer → lower.",
-            inline=False,
-        )
-        e.add_field(
-            name="Owner Bypass",
-            value=(f"• `{p}owoplus ownerbypass <on|off>` — when on, Red owner is never processed (default on)"),
-            inline=False,
-        )
+        e.add_field(name="Auto Intensity", value="Short → cute; Long → readable.", inline=False)
+        e.add_field(name="Owner Bypass", value=f"• `{p}owoplus ownerbypass <on|off>`", inline=False)
         await ctx.send(embed=e)
 
     @owoplus.command(name="ownerbypass")
@@ -536,8 +527,7 @@ class OwoPlus(redcommands.Cog):
         last: Optional[discord.Message] = None
         async for m in ctx.channel.history(limit=50, before=ctx.message.created_at):  # type: ignore
             if m.author.id == ctx.author.id and not m.author.bot and not m.webhook_id and not self._starts_with_prefixes(m.content or "", prefixes):
-                last = m
-                break
+                last = m; break
 
         ch = ctx.channel
         perms = ch.permissions_for(ctx.guild.me) if isinstance(ch, (discord.TextChannel, discord.Thread)) else None  # type: ignore
@@ -548,7 +538,6 @@ class OwoPlus(redcommands.Cog):
         ]
         if not last:
             return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
-
         if not (last.content and last.content.strip()):
             lines.append("skip: last message has no text (attachments-only)")
             return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
@@ -576,14 +565,7 @@ class OwoPlus(redcommands.Cog):
 
         try:
             for idx, part in enumerate(parts):
-                await self._send_via_webhook(
-                    hook,
-                    channel=ch,
-                    author=last.author,
-                    content=part,
-                    files=files if idx == 0 else None,  # attach only once
-                    wait=False,
-                )
+                await self._send_via_webhook(hook, channel=ch, author=last.author, content=part, files=files if idx == 0 else None, wait=False)
             lines.append(f"send: OK ({len(parts)} part{'s' if len(parts)!=1 else ''})")
         except Exception as e:
             lines.append(f"send: FAIL {type(e).__name__}: {e}")
