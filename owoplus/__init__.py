@@ -15,7 +15,7 @@ from redbot.core.utils.chat_formatting import box
 
 __red_end_user_data_statement__ = (
     "This cog stores per-guild preferences for webhook-based message transformation "
-    "(enable flag, 1-in-N owo probability, per-user overrides, and owner bypass). "
+    "(enable flag, 1-in-N owo probability, per-user overrides, owner bypass, and haiku toggle). "
     "It does not store message contents."
 )
 
@@ -24,6 +24,7 @@ DEFAULTS_GUILD = {
     "one_in": 1000,
     "user_probs": {},
     "owner_bypass": True,
+    "haiku_enabled": True,
 }
 
 # ---------- mapping & triggers ----------
@@ -47,7 +48,7 @@ def _bool_emoji(v: bool) -> str:
 
 
 class OwoPlus(redcommands.Cog):
-    """Webhook-only cute/owo replacer with auto-intensity 1..5 (short ⇒ stronger, long ⇒ lighter-but-cute)."""
+    """Webhook-only cute/owo replacer with auto-intensity 1..5, keys-only fallback, and optional haiku formatting."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -112,7 +113,7 @@ class OwoPlus(redcommands.Cog):
 
         def _choose(m: re.Match) -> str:
             if random.random() < prob:
-                return m.expand(repl) if isinstance(repl, str) else repl(m)  # why: handle \1 etc.
+                return m.expand(repl) if isinstance(repl, str) else repl(m)
             return m.group(0)
 
         return rx.sub(_choose, s)
@@ -169,35 +170,20 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
-        """
-        Italicize replacements/deletions that contain word chars.
-        IMPORTANT: keep leading/trailing whitespace OUTSIDE the stars to avoid ' * now' artifacts.
-        """
         out: List[str] = []
         wordish = re.compile(r"[A-Za-z0-9]")
-
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
             if tag == "equal":
-                out.append(transformed[j1:j2])
-                continue
+                out.append(transformed[j1:j2]); continue
             if tag == "insert":
-                out.append(transformed[j1:j2])  # faces/extra inserts remain plain
-                continue
-
+                out.append(transformed[j1:j2]); continue
             seg = transformed[j1:j2]
             if not seg or not wordish.search(seg):
-                out.append(seg)
-                continue
-
-            # pull whitespace out of the italic span
-            left_ws_len = len(seg) - len(seg.lstrip())
-            right_ws_len = len(seg) - len(seg.rstrip())
-            left_ws = seg[:left_ws_len]
-            core = seg[left_ws_len:len(seg) - right_ws_len] if right_ws_len else seg[left_ws_len:]
-            right_ws = seg[len(seg) - right_ws_len:] if right_ws_len else ""
-
-            out.append(f"{left_ws}*{core}*{right_ws}")
-
+                out.append(seg); continue
+            l = len(seg) - len(seg.lstrip())
+            r = len(seg) - len(seg.rstrip())
+            left = seg[:l]; core = seg[l:len(seg)-r] if r else seg[l:]; right = seg[len(seg)-r:] if r else ""
+            out.append(f"{left}*{core}*{right}")
         return "".join(out)
 
     # ---------- italics helpers ----------
@@ -253,26 +239,114 @@ class OwoPlus(redcommands.Cog):
         if nchars <= 1200: return 2
         return 1
 
+    # ---------- haiku detection ----------
+    @staticmethod
+    def _normalize_for_haiku(s: str) -> str:
+        # replace unicode dashes & hyphens with space so words split cleanly
+        s = re.sub(r"[\u2010-\u2015\u2212\-]+", " ", s)
+        return s
+
+    @staticmethod
+    def _plain_text_if_no_code(raw: str) -> Optional[str]:
+        segs = OwoPlus._split_code_segments(raw)
+        if any(is_code for _, is_code in segs):
+            return None
+        return "".join(s for s, _ in segs)
+
+    @staticmethod
+    def _count_syllables(word: str) -> int:
+        w = word.lower()
+        w = re.sub(r"[^a-z']", "", w)
+        if not w:
+            return 0
+        specials = {"the":1, "queue":1, "people":2, "business":2, "beautiful":3, "everyone":3, "dude":1, "bro":1, "now":1}
+        if w in specials:
+            return specials[w]
+        w = re.sub(r"e\b", "", w)
+        groups = re.findall(r"[aeiouy]+", w)
+        return max(1, len(groups))
+
+    @staticmethod
+    def _detect_haiku_breaks(text: str) -> Optional[Tuple[int, int]]:
+        text = OwoPlus._normalize_for_haiku(text)
+        words = [w for w in re.findall(r"[A-Za-z']+", text)]
+        if not (3 <= len(words) <= 25):
+            return None
+        if "\n" in text or len(text) > 240:
+            return None
+        syl = [OwoPlus._count_syllables(w) for w in words]
+        s = 0; i = 0
+        while i < len(syl) and s < 5:
+            s += syl[i]; i += 1
+        if s != 5: return None
+        cut1 = i
+        s2 = 0; j = cut1
+        while j < len(syl) and s2 < 7:
+            s2 += syl[j]; j += 1
+        if s2 != 7: return None
+        cut2 = j
+        if sum(syl[cut2:]) != 5:
+            return None
+        return (cut1, cut2)
+
+    @staticmethod
+    def _reflow_text_as_haiku(rendered: str, cuts: Tuple[int, int]) -> str:
+        words = re.findall(r"[A-Za-z']+", rendered)
+        if len(words) < cuts[1]:
+            return rendered
+        pieces: List[str] = []
+        idx_word = 0
+        pos = 0
+        rx = re.compile(r"[A-Za-z']+")
+        for m in rx.finditer(rendered):
+            pieces.append(rendered[pos:m.start()])
+            pieces.append(m.group(0))
+            idx_word += 1
+            if idx_word == cuts[0] or idx_word == cuts[1]:
+                pieces.append("\n")
+            pos = m.end()
+        pieces.append(rendered[pos:])
+        return "".join(pieces).strip()
+
     @staticmethod
     def _has_key_trigger(text: str) -> bool:
         return any(KEY_RX.search(seg) for seg, is_code in OwoPlus._split_code_segments(text) if not is_code)
 
-    def _render_message(self, raw: str, apply_owo: bool) -> str:
-        length = len(raw or "")
-        intensity = self._auto_intensity(length)
+    # ---------- render modes ----------
+    def _render_message_mode(self, raw: str, mode: str, *, use_haiku: bool) -> str:
+        """
+        mode: 'full' | 'keys' | 'none'
+        IMPORTANT: If haiku is detected and enabled, we **return the original text reflowed** as 5/7/5.
+        No keys-only mapping, no full OWO, no italics.
+        """
+        # Haiku early-exit (never OWO if haiku)
+        if use_haiku:
+            plain = self._plain_text_if_no_code(raw)
+            if plain:
+                cuts = self._detect_haiku_breaks(plain)
+                if cuts:
+                    return self._reflow_text_as_haiku(plain, cuts)
+
+        # Normal rendering
         result: List[str] = []
+        intensity = self._auto_intensity(len(raw or ""))
         for seg, is_code in self._split_code_segments(raw):
-            if is_code:
-                result.append(seg); continue
-            if not apply_owo:
-                result.append(seg); continue
-            seed = self._apply_key_map(seg)
-            owo = self._owoify_plain(seed, intensity=intensity)
-            marked = self._italicize_changes(seed, owo)
-            marked = self._ensure_targets_italic(marked)
-            result.append(marked)
+            if is_code or mode == "none":
+                result.append(seg)
+                continue
+            if mode == "keys":
+                mapped = self._apply_key_map(seg)
+                mapped = self._ensure_targets_italic(mapped)
+                result.append(mapped)
+            else:
+                seed = self._apply_key_map(seg)
+                owo = self._owoify_plain(seed, intensity=intensity)
+                marked = self._italicize_changes(seed, owo)
+                marked = self._ensure_targets_italic(marked)
+                result.append(marked)
         final = "".join(result)
-        return self._sanitize_italics_and_ticks(final)
+        final = self._sanitize_italics_and_ticks(final)
+        return final
 
     # ---------- chunking ----------
     @staticmethod
@@ -417,14 +491,15 @@ class OwoPlus(redcommands.Cog):
         cfg = await self.config.guild(g).all()
         e = _embed(
             f"OwoPlus — Status {_bool_emoji(cfg['enabled'])}",
-            desc="Triggers now/bro/dude/bud → *meow/bwo/duwde/bwud* • any trigger forces uwu • random owo 1/N • auto-intensity 1..5 (1 still cute).",
+            desc="Keys → *meow/bwo/duwde/bwud*. RNG hit ⇒ full OWO; else keys-only. Haiku (5/7/5) overrides all and outputs a clean three-line poem.",
         )
         e.add_field(
             name=f"{EMO['core']} Core",
             value=box(
                 f"enabled = {cfg['enabled']}\n"
                 f"one_in  = 1/{cfg['one_in']}\n"
-                f"owner_bypass= {cfg['owner_bypass']}",
+                f"owner_bypass= {cfg['owner_bypass']}\n"
+                f"haiku_enabled= {cfg['haiku_enabled']}",
                 lang="ini",
             ),
             inline=False,
@@ -459,8 +534,12 @@ class OwoPlus(redcommands.Cog):
             value=(f"• `{p}owoplus onein <N>` (default 1000)\n" f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"),
             inline=False,
         )
-        e.add_field(name="Auto Intensity", value="Short → strong; Long → light (still cute).", inline=False)
-        e.add_field(name="Owner Bypass", value=f"• `{p}owoplus ownerbypass <on|off>`", inline=False)
+        e.add_field(
+            name="Toggles",
+            value=(f"• `{p}owoplus ownerbypass <on|off>` • `{p}owoplus haiku <on|off>` • `{p}owoplus haiku diag <text>`"),
+            inline=False,
+        )
+        e.add_field(name="Behavior", value="Haiku detected ⇒ NO OWO at all, just 5/7/5 reflow.", inline=False)
         await ctx.send(embed=e)
 
     @owoplus.command(name="ownerbypass")
@@ -471,6 +550,58 @@ class OwoPlus(redcommands.Cog):
         val = state.lower() in {"on", "true", "yes", "1"}
         await self.config.guild(ctx.guild).owner_bypass.set(val)
         await ctx.tick()
+
+    @owoplus.command(name="haiku")
+    async def owoplus_haiku(self, ctx: redcommands.Context, state: Optional[str] = None) -> None:
+        """Toggle haiku auto-formatting (5/7/5) per guild."""
+        if state is None:
+            cur = await self.config.guild(ctx.guild).haiku_enabled()
+            return await ctx.send(embed=_embed(f"Haiku formatting is **{'on' if cur else 'off'}**"))
+        val = state.lower() in {"on", "true", "yes", "1"}
+        await self.config.guild(ctx.guild).haiku_enabled.set(val)
+        await ctx.tick()
+
+    @owoplus.group(name="haiku", invoke_without_command=True)
+    async def owoplus_haiku_group(self, ctx: redcommands.Context) -> None:
+        """`owoplus haiku on|off` or `owoplus haiku diag <text>`"""
+        await self.owoplus_help(ctx)
+
+    @owoplus_haiku_group.command(name="diag")
+    async def owoplus_haiku_diag(self, ctx: redcommands.Context, *, text: str) -> None:
+        """Show syllables, cumulative sums, and where the 5/7/5 breaks fall (if any)."""
+        norm = self._normalize_for_haiku(text)
+        words = [w for w in re.findall(r"[A-Za-z']+", norm)]
+        syl = [self._count_syllables(w) for w in words]
+        cum = []
+        c = 0
+        for s in syl:
+            c += s
+            cum.append(c)
+        cuts = self._detect_haiku_breaks(text)
+        cut1, cut2 = (cuts if cuts else (-1, -1))
+        # Build a preview line with markers
+        preview_tokens = []
+        for i, w in enumerate(words, 1):
+            token = w
+            if i == cut1 or i == cut2:
+                token += " |"  # marker at boundary
+            preview_tokens.append(token)
+        preview = " ".join(preview_tokens)
+        lines = [
+            f"words={len(words)} syllables_total={sum(syl)}",
+            f"word_list={words}",
+            f"syllables={syl}",
+            f"cumulative={cum}",
+            f"breaks=(cut1={cut1}, cut2={cut2})",
+            f"preview={preview}",
+        ]
+        # If it is a haiku, show the reflowed original (never-owo)
+        out = text
+        if cuts:
+            out = self._reflow_text_as_haiku(text, cuts)
+        e = _embed("OwoPlus — Haiku Diag", desc=box("\n".join(lines), lang="ini"))
+        e.add_field(name="Haiku Render", value=box(out, lang="ini"), inline=False)
+        await ctx.send(embed=e)
 
     @owoplus.command(name="enable")
     async def owoplus_enable(self, ctx: redcommands.Context) -> None:
@@ -523,12 +654,18 @@ class OwoPlus(redcommands.Cog):
 
     @owoplus.command(name="preview")
     async def owoplus_preview(self, ctx: redcommands.Context, *, text: str) -> None:
-        meow_only = self._render_message(text, apply_owo=False)
-        meow_owo = self._render_message(text, apply_owo=True)
-        used = self._auto_intensity(len(text))
-        e = _embed("OwoPlus — Preview", desc=f"Auto intensity for this text: **{used}**")
-        e.add_field(name="MEOW", value=box(meow_only, lang="ini"), inline=False)
-        e.add_field(name="OWO", value=box(meow_owo, lang="ini"), inline=False)
+        conf = await self.config.guild(ctx.guild).all()
+        n = conf["one_in"]
+        forced = self._has_key_trigger(text)
+        roll = 0 if n <= 1 else random.randrange(n)
+        full = (n <= 1) or (roll == 0)
+        mode = "full" if full else ("keys" if forced else "none")
+        meow = self._render_message_mode(text, mode=mode, use_haiku=bool(conf.get("haiku_enabled", True)))
+        e = _embed(
+            "OwoPlus — Preview",
+            desc=f"mode={mode} (n=1/{n}{', key seen' if forced else ''}) • haiku={'on' if conf.get('haiku_enabled', True) else 'off'}",
+        )
+        e.add_field(name="OUTPUT", value=box(meow, lang="ini"), inline=False)
         await ctx.send(embed=e)
 
     @owoplus.command(name="diag")
@@ -537,7 +674,7 @@ class OwoPlus(redcommands.Cog):
         perms = ctx.channel.permissions_for(ctx.guild.me) if isinstance(ctx.channel, (discord.TextChannel, discord.Thread)) else None  # type: ignore
         payload = "\n".join(
             [
-                f"enabled={g['enabled']} one_in=1/{g['one_in']} owner_bypass={g['owner_bypass']}",
+                f"enabled={g['enabled']} one_in=1/{g['one_in']} owner_bypass={g['owner_bypass']} haiku_enabled={g.get('haiku_enabled', True)}",
                 f"here perms: view={getattr(perms,'view_channel',None)} send={getattr(perms,'send_messages',None)} manage_messages={getattr(perms,'manage_messages',None)} manage_webhooks={getattr(perms,'manage_webhooks',None)}",
                 f"overrides={len(g['user_probs'])}",
             ]
@@ -577,9 +714,10 @@ class OwoPlus(redcommands.Cog):
         conf = await self.config.guild(ctx.guild).all()
         forced = self._has_key_trigger(last.content or "")
         n = self._one_in(last.author, conf)
-        apply_owo = forced or (n <= 1) or (random.randrange(n) == 0)
+        full = (n <= 1) or (random.randrange(n) == 0)
+        mode = "full" if full else ("keys" if forced else "none")
 
-        content_full = self._render_message(last.content or "", apply_owo=apply_owo)
+        content_full = self._render_message_mode(last.content or "", mode=mode, use_haiku=bool(conf.get("haiku_enabled", True)))
         parts = self._chunk_message(content_full)
 
         files: List[discord.File] = []
@@ -599,7 +737,7 @@ class OwoPlus(redcommands.Cog):
                     files=files if idx == 0 else None,
                     wait=False,
                 )
-            lines.append(f"send: OK ({len(parts)} part{'s' if len(parts)!=1 else ''})")
+            lines.append(f"send: OK ({len(parts)} part{'s' if len(parts)!=1 else ''}) mode={mode} haiku={conf.get('haiku_enabled', True)}")
         except Exception as e:
             lines.append(f"send: FAIL {type(e).__name__}: {e}")
             return await ctx.send(embed=_embed("OwoPlus — Test", desc=box("\n".join(lines), lang="ini")))
@@ -622,12 +760,13 @@ class OwoPlus(redcommands.Cog):
             return
 
         conf = await self.config.guild(message.guild).all()
-        forced = self._has_key_trigger(original)
+        has_key = self._has_key_trigger(original)
         n = self._one_in(message.author, conf)
-        apply_owo = forced or (n <= 1) or (random.randrange(n) == 0)
+        full = (n <= 1) or (random.randrange(n) == 0)
+        mode = "full" if full else ("keys" if has_key else "none")
 
-        content_full = self._render_message(original, apply_owo=apply_owo).strip()
-        if content_full == original:
+        content = self._render_message_mode(original, mode=mode, use_haiku=bool(conf.get("haiku_enabled", True))).strip()
+        if content == original:
             return
 
         hook = await self._ensure_webhook(message.channel)
@@ -641,7 +780,7 @@ class OwoPlus(redcommands.Cog):
             except Exception:
                 pass
 
-        parts = self._chunk_message(content_full)
+        parts = self._chunk_message(content)
         try:
             for idx, part in enumerate(parts):
                 await self._send_via_webhook(
