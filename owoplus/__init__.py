@@ -124,6 +124,7 @@ class HaikuMeter:
         return val
 
 
+# Replace the Haiku.reflow method with this version
 class Haiku:
     _WORD_RX = re.compile(r"[A-Za-z']+")
     _DASHES_RX = re.compile(r"[\u2010-\u2015\u2212\-]+")
@@ -169,9 +170,17 @@ class Haiku:
 
     @staticmethod
     def reflow(rendered: str, cuts: Tuple[int, int]) -> str:
+        """
+        Insert line breaks at word boundaries, then STANDARDIZE spacing:
+        - trim leading/trailing spaces per line
+        - collapse internal runs of whitespace to one space
+        """
         words = list(Haiku._WORD_RX.finditer(rendered))
         if len(words) < cuts[1]:
-            return rendered
+            # Fallback: normalize whole string to a single-spaced line block of 3 lines anyway
+            out = re.sub(r"\s+", " ", rendered).strip()
+            return out
+
         parts: List[str] = []
         last = 0
         idx = 0
@@ -184,7 +193,16 @@ class Haiku:
                 parts.append("\n")
             last = m.end()
         parts.append(rendered[last:])
-        return "".join(parts).strip()
+        out = "".join(parts)
+
+        # --- STANDARDIZE LINES ---
+        lines = out.split("\n")
+        norm_lines = [re.sub(r"\s+", " ", ln.strip()) for ln in lines if ln.strip() != ""]
+        # Clamp to exactly three lines if possible (some punctuation could create extras)
+        if len(norm_lines) >= 3:
+            norm_lines = norm_lines[:3]
+        return "\n".join(norm_lines).strip()
+
 
 def _normalize_for_haiku(s: str) -> str: return Haiku.normalize_text(s)
 def _count_syllables(word: str) -> int: return HaikuMeter.count(word)
