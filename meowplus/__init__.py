@@ -27,12 +27,8 @@ DEFAULTS_GUILD = {
     "owner_bypass": True,
 }
 
-KEY_MAP: Dict[str, str] = {
-    "now": "meow",
-    "bro": "bwo",
-    "dude": "duwde",
-    "bud": "bwud",
-}
+# ---------- mapping & triggers ----------
+KEY_MAP: Dict[str, str] = {"now": "meow", "bro": "bwo", "dude": "duwde", "bud": "bwud"}
 KEY_RX = re.compile(r"\b(" + "|".join(map(re.escape, KEY_MAP.keys())) + r")\b", re.IGNORECASE)
 TARGETS = sorted({v for v in KEY_MAP.values()})
 
@@ -53,7 +49,7 @@ def _bool_emoji(v: bool) -> str:
 
 
 class OwoPlus(redcommands.Cog):
-    """Webhook-only cute/owo replacer with adjustable intensity. No channel scope, no cooldown, no exemptions."""
+    """Webhook-only cute/owo replacer with adjustable intensity. No channels, no cooldown, no exemptions."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -154,18 +150,24 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
+        """Wrap changed runs in *…*, but skip pure-punctuation diffs (why: avoid `*~*`, `*!!*`)."""
         out: List[str] = []
+        wordish = re.compile(r"[A-Za-z0-9]")
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
             if tag == "equal":
                 out.append(transformed[j1:j2])
             else:
                 seg = transformed[j1:j2]
-                if seg:
+                if seg and wordish.search(seg):  # only italicize if it contains letters/digits
                     out.append(f"*{seg}*")
+                else:
+                    out.append(seg)
         return "".join(out)
 
+    # ---------- italics helpers ----------
     @staticmethod
     def _build_var_regex(token: str) -> re.Pattern:
+        """Allow optional stutter and single extra first vowel to catch cute variants."""
         m = re.search(r"[aeiouAEIOU]", token)
         first = re.escape(token[0])
         if not m:
@@ -185,6 +187,7 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _ensure_targets_italic(text: str) -> str:
+        """Ensure meow/bwo/duwde/bwud variants are italicized (outside code)."""
         patterns = [OwoPlus._build_var_regex(t) for t in TARGETS]
         def apply(seg: str) -> str:
             for pat in patterns:
@@ -204,6 +207,13 @@ class OwoPlus(redcommands.Cog):
         return "".join(parts)
 
     @staticmethod
+    def _sanitize_italics_and_ticks(text: str) -> str:
+        """De-glue * next to backticks and keep italics away from code fences (why: readability)."""
+        # add a space between '*' and '`' in either order
+        text = text.replace("*`", "* `").replace("`*", "` *")
+        return text
+
+    @staticmethod
     def _has_key_trigger(text: str) -> bool:
         return any(KEY_RX.search(seg) for seg, is_code in OwoPlus._split_code_segments(text) if not is_code)
 
@@ -221,7 +231,9 @@ class OwoPlus(redcommands.Cog):
             marked = self._italicize_changes(seed, owo)
             marked = self._ensure_targets_italic(marked)
             result.append(marked)
-        return "".join(result)
+        final = "".join(result)
+        final = self._sanitize_italics_and_ticks(final)
+        return final
 
     # ---------- gating ----------
     @staticmethod
@@ -327,11 +339,7 @@ class OwoPlus(redcommands.Cog):
             ),
             inline=False,
         )
-        e.add_field(
-            name=f"{EMO['prob']} Overrides",
-            value=(f"user_overrides={len(cfg['user_probs'])}"),
-            inline=False,
-        )
+        e.add_field(name=f"{EMO['prob']} Overrides", value=(f"user_overrides={len(cfg['user_probs'])}"), inline=False)
         e.set_footer(text="Use `[p]owoplus help` for commands.")
         return e
 
@@ -358,22 +366,11 @@ class OwoPlus(redcommands.Cog):
         )
         e.add_field(
             name=f"{EMO['prob']} Probability",
-            value=(
-                f"• `{p}owoplus onein <N>` (default 1000)\n"
-                f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"
-            ),
+            value=(f"• `{p}owoplus onein <N>` (default 1000)\n" f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"),
             inline=False,
         )
-        e.add_field(
-            name="OWO Style",
-            value=(f"• `{p}owoplus intensity <1..5>` — more OWO at higher levels (default 1)"),
-            inline=False,
-        )
-        e.add_field(
-            name="Owner Bypass",
-            value=(f"• `{p}owoplus ownerbypass <on|off>` — when on, Red owner is never processed (default on)"),
-            inline=False,
-        )
+        e.add_field(name="OWO Style", value=(f"• `{p}owoplus intensity <1..5>` — more OWO at higher levels (default 1)"), inline=False)
+        e.add_field(name="Owner Bypass", value=(f"• `{p}owoplus ownerbypass <on|off>` — when on, Red owner is never processed (default on)"), inline=False)
         await ctx.send(embed=e)
 
     @owoplus.command(name="ownerbypass")
