@@ -31,6 +31,7 @@ KEY_MAP: Dict[str, str] = {"now": "meow", "bro": "bwo", "dude": "duwde", "bud": 
 KEY_RX = re.compile(r"\b(" + "|".join(map(re.escape, KEY_MAP.keys())) + r")\b", re.IGNORECASE)
 TARGETS = sorted({v for v in KEY_MAP.values()})
 
+# code/inline-code splitter (keeps code untouched)
 CODE_SPLIT = re.compile(r"(```[\s\S]*?```|`[^`]*?`)", re.MULTILINE)
 
 OWO_FACES = ["uwu", "owo", ">w<", "^w^", "x3", "~", "nya~", "(⁄˘⁄⁄ ω⁄ ⁄˘⁄)♡"]
@@ -47,7 +48,7 @@ def _bool_emoji(v: bool) -> str:
 
 
 class OwoPlus(redcommands.Cog):
-    """Webhook-only cute/owo replacer with auto-intensity (shorter ⇒ stronger). No channels/cooldown/exemptions."""
+    """Webhook-only cute/owo replacer with auto-intensity (shorter ⇒ stronger)."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -147,15 +148,15 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
-        """Wrap changed runs in *…*; skip punctuation-only diffs and all inserts."""
+        """Italicize replacements/deletions that contain word chars; copy inserts/punct as-is."""
         out: List[str] = []
         wordish = re.compile(r"[A-Za-z0-9]")
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
             if tag == "equal":
                 out.append(transformed[j1:j2])
             elif tag == "insert":
-                out.append(transformed[j1:j2])
-            else:  # replace/delete
+                out.append(transformed[j1:j2])  # faces/nyas not italic
+            else:
                 seg = transformed[j1:j2]
                 out.append(f"*{seg}*" if seg and wordish.search(seg) else seg)
         return "".join(out)
@@ -163,7 +164,7 @@ class OwoPlus(redcommands.Cog):
     # ---------- italics helpers ----------
     @staticmethod
     def _build_var_regex(token: str) -> re.Pattern:
-        """Allow optional stutter and single extra first vowel to catch cute variants."""
+        # match optional stutter + one extra first vowel
         m = re.search(r"[aeiouAEIOU]", token)
         first = re.escape(token[0])
         if not m:
@@ -183,7 +184,7 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _ensure_targets_italic(text: str) -> str:
-        """Ensure meow/bwo/duwde/bwud variants are italicized (outside code)."""
+        # ensure meow/bwo/duwde/bwud variants are entire-word italic (outside code)
         patterns = [OwoPlus._build_var_regex(t) for t in TARGETS]
         def apply(seg: str) -> str:
             for pat in patterns:
@@ -204,22 +205,22 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _sanitize_italics_and_ticks(text: str) -> str:
-        """De-glue * next to backticks (why: readability)."""
+        # avoid * touching backticks for readability
         return text.replace("*`", "* `").replace("`*", "` *")
 
     # ---------- auto intensity ----------
     @staticmethod
     def _auto_intensity(nchars: int) -> int:
-        """Shorter ⇒ stronger; longer ⇒ lighter (why: readability)."""
-        if nchars <= 60:
-            return 5
-        if nchars <= 120:
-            return 4
-        if nchars <= 240:
-            return 3
-        if nchars <= 480:
-            return 2
+        if nchars <= 60:   return 5
+        if nchars <= 120:  return 4
+        if nchars <= 240:  return 3
+        if nchars <= 480:  return 2
         return 1
+
+    @staticmethod
+    def _has_key_trigger(text: str) -> bool:
+        """True if any trigger word (now/bro/dude/bud) appears outside code."""
+        return any(KEY_RX.search(seg) for seg, is_code in OwoPlus._split_code_segments(text) if not is_code)
 
     def _render_message(self, raw: str, apply_owo: bool) -> str:
         length = len(raw or "")
@@ -243,7 +244,7 @@ class OwoPlus(redcommands.Cog):
     # ---------- chunking ----------
     @staticmethod
     def _find_breakpoint(window: str) -> int:
-        """Prefer sentence end, then newline, then space; fallback to window length."""
+        # prefer sentence end, then newline, then space
         candidates: List[int] = []
         for m in re.finditer(r"[.!?](?:\s|$)", window):
             candidates.append(m.end())
@@ -256,7 +257,6 @@ class OwoPlus(redcommands.Cog):
         return max(candidates) if candidates else len(window)
 
     def _chunk_message(self, text: str, limit: int = 2000) -> List[str]:
-        """Split output into ≤limit chunks; keep code segments intact; avoid splitting italics/backticks when possible."""
         chunks: List[str] = []
         cur = ""
         for seg, is_code in self._split_code_segments(text):
@@ -266,12 +266,10 @@ class OwoPlus(redcommands.Cog):
                     cur += piece
                 else:
                     if cur:
-                        chunks.append(cur)
-                        cur = ""
+                        chunks.append(cur); cur = ""
                     if len(piece) <= limit:
                         cur = piece
                     else:
-                        # split code by newline if it still exceeds limit
                         start = 0
                         while start < len(piece):
                             take = piece.find("\n", start, start + limit)
@@ -284,30 +282,24 @@ class OwoPlus(redcommands.Cog):
                 while remaining:
                     space = limit - len(cur)
                     if space <= 0:
-                        chunks.append(cur)
-                        cur = ""
-                        space = limit
+                        chunks.append(cur); cur = ""; space = limit
                     if len(remaining) <= space:
-                        cur += remaining
-                        remaining = ""
+                        cur += remaining; remaining = ""
                     else:
                         window = remaining[:space]
                         cut = self._find_breakpoint(window)
-                        # try to keep stars/backticks balanced in chunk
                         candidate = remaining[:cut]
+                        # avoid splitting unmatched * or `
                         if (candidate.count("*") % 2) or (candidate.count("`") % 2):
-                            # move cut back to last whitespace to avoid splitting a pair
                             fallback = candidate.rfind(" ")
                             if fallback > 0:
                                 cut = fallback + 1
                         cur += remaining[:cut].rstrip()
-                        chunks.append(cur)
-                        cur = ""
+                        chunks.append(cur); cur = ""
                         remaining = remaining[cut:].lstrip()
         if cur:
             chunks.append(cur)
-        # final guarantee
-        return [c[:limit] for c in chunks]  # hard clamp if needed
+        return [c[:limit] for c in chunks]
 
     # ---------- gating ----------
     @staticmethod
@@ -378,7 +370,7 @@ class OwoPlus(redcommands.Cog):
         channel: discord.abc.Messageable,
         author: discord.abc.User,
         content: str,
-        files: List[discord.File] | None,
+        files: Optional[List[discord.File]],
         wait: bool,
     ):
         kwargs = {
@@ -390,7 +382,7 @@ class OwoPlus(redcommands.Cog):
         if content:
             kwargs["content"] = content
         if isinstance(channel, discord.Thread):
-            kwargs["thread"] = channel  # why: ensure correct thread routing
+            kwargs["thread"] = channel  # ensure correct thread routing
         if files:
             kwargs["files"] = files
         return await hook.send(**kwargs)
@@ -400,7 +392,7 @@ class OwoPlus(redcommands.Cog):
         cfg = await self.config.guild(g).all()
         e = _embed(
             f"OwoPlus — Status {_bool_emoji(cfg['enabled'])}",
-            desc="uwu pipeline maps now/bro/dude/bud → *meow*/*bwo*/*duwde*/*bwud* • any of these words force uwu • random owo 1/N otherwise • intensity auto-scales by message length.",
+            desc="Maps now/bro/dude/bud → *meow*/*bwo*/*duwde*/*bwud* • any trigger forces uwu • random owo 1/N otherwise • intensity auto-scales by length.",
         )
         e.add_field(
             name=f"{EMO['core']} Core",
@@ -444,7 +436,7 @@ class OwoPlus(redcommands.Cog):
         )
         e.add_field(
             name="Auto Intensity",
-            value="Shorter messages → higher intensity; longer → lower for readability.",
+            value="Shorter messages → higher intensity; longer → lower.",
             inline=False,
         )
         e.add_field(
@@ -589,7 +581,7 @@ class OwoPlus(redcommands.Cog):
                     channel=ch,
                     author=last.author,
                     content=part,
-                    files=files if idx == 0 else None,  # why: attach only once
+                    files=files if idx == 0 else None,  # attach only once
                     wait=False,
                 )
             lines.append(f"send: OK ({len(parts)} part{'s' if len(parts)!=1 else ''})")
@@ -645,7 +637,7 @@ class OwoPlus(redcommands.Cog):
                     channel=message.channel,
                     author=message.author,
                     content=part,
-                    files=files if idx == 0 else None,  # attach only on first
+                    files=files if idx == 0 else None,
                     wait=False,
                 )
         except Exception:
