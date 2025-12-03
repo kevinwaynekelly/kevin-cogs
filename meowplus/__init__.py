@@ -4,7 +4,7 @@ from __future__ import annotations
 import difflib
 import random
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import discord
 from discord.ext import commands
@@ -47,7 +47,7 @@ def _bool_emoji(v: bool) -> str:
 
 
 class OwoPlus(redcommands.Cog):
-    """Webhook-only cute/owo replacer with auto-intensity profiles (short ⇒ strong, long ⇒ gentle)."""
+    """Webhook-only cute/owo replacer with auto-intensity 1..5 (short ⇒ stronger, long ⇒ lighter-but-cute)."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -98,37 +98,37 @@ class OwoPlus(redcommands.Cog):
         return re.sub(r"([aeiouAEIOU])(?=[a-zA-Z])", r"\1\1", word, count=1)
 
     @staticmethod
-    def _sub_prob(s: str, pattern: str, repl: str, prob: float, flags: int = 0) -> str:
-        """Replace matches with probability per match (why: gentle sprinkle on long texts)."""
+    def _sub_prob(s: str, pattern: str, repl: str | Callable[[re.Match], str], prob: float, flags: int = 0) -> str:
+        """Per-match probabilistic replacement (why: sprinkle on longer texts)."""
         if prob <= 0.0:
             return s
         rx = re.compile(pattern, flags)
 
         def _choose(m: re.Match) -> str:
-            return repl if random.random() < prob else m.group(0)
+            if random.random() < prob:
+                return repl(m) if callable(repl) else repl
+            return m.group(0)
 
         return rx.sub(_choose, s)
 
     @staticmethod
     def _owoify_plain(text: str, intensity: int) -> str:
-        # Probabilistic profile per intensity
+        # Re-tuned 1..5. Levels 1–2 are still visibly cute.
         prof = {
-            # rl/ny/uv/th/tt are per-match probabilities (0..1)
-            # faces/tilde are per-sentence caps; ≤1 face per sentence retained elsewhere
-            1: dict(rl=0.00, ny=0.60, uv=0.60, th=0.00, tt=0.00, lc_first=False,
-                    stutter=0.03, elong=0.03, face=0.12, tilde=0.05),
-            2: dict(rl=0.15, ny=0.80, uv=0.80, th=0.00, tt=0.00, lc_first=False,
-                    stutter=0.05, elong=0.05, face=0.14, tilde=0.07),
-            3: dict(rl=0.25, ny=1.00, uv=1.00, th=0.20, tt=0.00, lc_first=False,
-                    stutter=0.08, elong=0.08, face=0.16, tilde=0.10),
-            4: dict(rl=0.75, ny=1.00, uv=1.00, th=0.60, tt=0.00, lc_first=True,
-                    stutter=0.10, elong=0.12, face=0.18, tilde=0.12),
+            # per-match probs for rl/ny/uv/th/tt; others are per-word/per-sentence
+            1: dict(rl=0.35, ny=0.85, uv=0.85, th=0.30, tt=0.15, lc_first=False,
+                    stutter=0.08, elong=0.06, face=0.18, tilde=0.08),
+            2: dict(rl=0.55, ny=0.95, uv=0.95, th=0.40, tt=0.25, lc_first=False,
+                    stutter=0.10, elong=0.10, face=0.20, tilde=0.10),
+            3: dict(rl=0.75, ny=1.00, uv=1.00, th=0.60, tt=0.45, lc_first=True,
+                    stutter=0.14, elong=0.14, face=0.22, tilde=0.12),
+            4: dict(rl=0.90, ny=1.00, uv=1.00, th=0.80, tt=0.65, lc_first=True,
+                    stutter=0.18, elong=0.18, face=0.25, tilde=0.14),
             5: dict(rl=1.00, ny=1.00, uv=1.00, th=1.00, tt=1.00, lc_first=True,
-                    stutter=0.14, elong=0.16, face=0.22, tilde=0.14),
+                    stutter=0.22, elong=0.24, face=0.28, tilde=0.16),
         }[max(1, min(5, int(intensity)))]
 
         def transliterate(s: str) -> str:
-            # probabilistic letter-level tweaks
             s = OwoPlus._sub_prob(s, r"[rl]", "w", prof["rl"])
             s = OwoPlus._sub_prob(s, r"[RL]", "W", prof["rl"])
             s = OwoPlus._sub_prob(s, r"(?i)n([aeiou])", r"ny\1", prof["ny"])
@@ -165,14 +165,14 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
-        """Italicize replacements/deletions that contain word chars; copy inserts/punct as-is."""
+        """Italicize replacements/deletions with word chars; copy inserts/punct as-is."""
         out: List[str] = []
         wordish = re.compile(r"[A-Za-z0-9]")
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
             if tag == "equal":
                 out.append(transformed[j1:j2])
             elif tag == "insert":
-                out.append(transformed[j1:j2])  # faces/nyas not italic
+                out.append(transformed[j1:j2])
             else:
                 seg = transformed[j1:j2]
                 out.append(f"*{seg}*" if seg and wordish.search(seg) else seg)
@@ -222,15 +222,15 @@ class OwoPlus(redcommands.Cog):
     def _sanitize_italics_and_ticks(text: str) -> str:
         return text.replace("*`", "* `").replace("`*", "` *")
 
-    # ---------- auto intensity ----------
+    # ---------- auto intensity 1..5 ----------
     @staticmethod
     def _auto_intensity(nchars: int) -> int:
-        """Shorter ⇒ stronger; long ⇒ gentle but not zero."""
+        """Shorter ⇒ stronger; longer ⇒ lighter-but-still-cute."""
         if nchars <= 80:   return 5
         if nchars <= 160:  return 4
         if nchars <= 400:  return 3
         if nchars <= 1200: return 2
-        return 1  # mega-walls still get light sprinkle (profile 1)
+        return 1
 
     @staticmethod
     def _has_key_trigger(text: str) -> bool:
@@ -396,7 +396,7 @@ class OwoPlus(redcommands.Cog):
         cfg = await self.config.guild(g).all()
         e = _embed(
             f"OwoPlus — Status {_bool_emoji(cfg['enabled'])}",
-            desc="Triggers now/bro/dude/bud → *meow/bwo/duwde/bwud* • any trigger forces uwu • random owo 1/N • auto-intensity with probabilistic transforms.",
+            desc="Triggers now/bro/dude/bud → *meow/bwo/duwde/bwud* • any trigger forces uwu • random owo 1/N • auto-intensity 1..5 (1 still cute).",
         )
         e.add_field(
             name=f"{EMO['core']} Core",
@@ -438,7 +438,7 @@ class OwoPlus(redcommands.Cog):
             value=(f"• `{p}owoplus onein <N>` (default 1000)\n" f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"),
             inline=False,
         )
-        e.add_field(name="Auto Intensity", value="Short → strong; Long → gentle (still cute).", inline=False)
+        e.add_field(name="Auto Intensity", value="Short → strong; Long → light (still cute).", inline=False)
         e.add_field(name="Owner Bypass", value=f"• `{p}owoplus ownerbypass <on|off>`", inline=False)
         await ctx.send(embed=e)
 
