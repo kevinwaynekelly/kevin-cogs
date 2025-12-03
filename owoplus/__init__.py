@@ -242,8 +242,7 @@ class OwoPlus(redcommands.Cog):
     # ---------- haiku detection ----------
     @staticmethod
     def _normalize_for_haiku(s: str) -> str:
-        # replace unicode dashes & hyphens with space so words split cleanly
-        s = re.sub(r"[\u2010-\u2015\u2212\-]+", " ", s)
+        s = re.sub(r"[\u2010-\u2015\u2212\-]+", " ", s)  # unicode dashes/hyphens → space
         return s
 
     @staticmethod
@@ -316,10 +315,8 @@ class OwoPlus(redcommands.Cog):
     def _render_message_mode(self, raw: str, mode: str, *, use_haiku: bool) -> str:
         """
         mode: 'full' | 'keys' | 'none'
-        IMPORTANT: If haiku is detected and enabled, we **return the original text reflowed** as 5/7/5.
-        No keys-only mapping, no full OWO, no italics.
+        IMPORTANT: If haiku is detected and enabled, we return the original text 5/7/5 (no OWO at all).
         """
-        # Haiku early-exit (never OWO if haiku)
         if use_haiku:
             plain = self._plain_text_if_no_code(raw)
             if plain:
@@ -327,7 +324,6 @@ class OwoPlus(redcommands.Cog):
                 if cuts:
                     return self._reflow_text_as_haiku(plain, cuts)
 
-        # Normal rendering
         result: List[str] = []
         intensity = self._auto_intensity(len(raw or ""))
         for seg, is_code in self._split_code_segments(raw):
@@ -345,8 +341,7 @@ class OwoPlus(redcommands.Cog):
                 marked = self._ensure_targets_italic(marked)
                 result.append(marked)
         final = "".join(result)
-        final = self._sanitize_italics_and_ticks(final)
-        return final
+        return self._sanitize_italics_and_ticks(final)
 
     # ---------- chunking ----------
     @staticmethod
@@ -531,15 +526,18 @@ class OwoPlus(redcommands.Cog):
         )
         e.add_field(
             name=f"{EMO['prob']} Probability",
-            value=(f"• `{p}owoplus onein <N>` (default 1000)\n" f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"),
+            value=(f"• `{p}owoplus onein <N>` (default 1000)\n"
+                   f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"),
             inline=False,
         )
         e.add_field(
-            name="Toggles",
-            value=(f"• `{p}owoplus ownerbypass <on|off>` • `{p}owoplus haiku <on|off>` • `{p}owoplus haiku diag <text>`"),
+            name="Toggles & Tools",
+            value=(f"• `{p}owoplus ownerbypass <on|off>`\n"
+                   f"• `{p}owoplus poem on|off`  — toggle haiku reflow\n"
+                   f"• `{p}owoplus poem diag <text>` — syllables & breaks"),
             inline=False,
         )
-        e.add_field(name="Behavior", value="Haiku detected ⇒ NO OWO at all, just 5/7/5 reflow.", inline=False)
+        e.add_field(name="Behavior", value="Haiku detected ⇒ NO OWO; otherwise RNG full vs keys-only.", inline=False)
         await ctx.send(embed=e)
 
     @owoplus.command(name="ownerbypass")
@@ -551,24 +549,24 @@ class OwoPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).owner_bypass.set(val)
         await ctx.tick()
 
-    @owoplus.command(name="haiku")
-    async def owoplus_haiku(self, ctx: redcommands.Context, state: Optional[str] = None) -> None:
-        """Toggle haiku auto-formatting (5/7/5) per guild."""
-        if state is None:
-            cur = await self.config.guild(ctx.guild).haiku_enabled()
-            return await ctx.send(embed=_embed(f"Haiku formatting is **{'on' if cur else 'off'}**"))
-        val = state.lower() in {"on", "true", "yes", "1"}
-        await self.config.guild(ctx.guild).haiku_enabled.set(val)
+    # ------- NEW: poem group (replaces conflicting 'haiku') -------
+    @owoplus.group(name="poem", invoke_without_command=True)
+    async def owoplus_poem(self, ctx: redcommands.Context) -> None:
+        cur = await self.config.guild(ctx.guild).haiku_enabled()
+        await ctx.send(embed=_embed(f"Haiku formatting is **{'on' if cur else 'off'}**. Use `poem on|off` or `poem diag <text>`"))
+
+    @owoplus_poem.command(name="on")
+    async def owoplus_poem_on(self, ctx: redcommands.Context) -> None:
+        await self.config.guild(ctx.guild).haiku_enabled.set(True)
         await ctx.tick()
 
-    @owoplus.group(name="haiku", invoke_without_command=True)
-    async def owoplus_haiku_group(self, ctx: redcommands.Context) -> None:
-        """`owoplus haiku on|off` or `owoplus haiku diag <text>`"""
-        await self.owoplus_help(ctx)
+    @owoplus_poem.command(name="off")
+    async def owoplus_poem_off(self, ctx: redcommands.Context) -> None:
+        await self.config.guild(ctx.guild).haiku_enabled.set(False)
+        await ctx.tick()
 
-    @owoplus_haiku_group.command(name="diag")
-    async def owoplus_haiku_diag(self, ctx: redcommands.Context, *, text: str) -> None:
-        """Show syllables, cumulative sums, and where the 5/7/5 breaks fall (if any)."""
+    @owoplus_poem.command(name="diag")
+    async def owoplus_poem_diag(self, ctx: redcommands.Context, *, text: str) -> None:
         norm = self._normalize_for_haiku(text)
         words = [w for w in re.findall(r"[A-Za-z']+", norm)]
         syl = [self._count_syllables(w) for w in words]
@@ -579,12 +577,11 @@ class OwoPlus(redcommands.Cog):
             cum.append(c)
         cuts = self._detect_haiku_breaks(text)
         cut1, cut2 = (cuts if cuts else (-1, -1))
-        # Build a preview line with markers
         preview_tokens = []
         for i, w in enumerate(words, 1):
             token = w
             if i == cut1 or i == cut2:
-                token += " |"  # marker at boundary
+                token += " |"
             preview_tokens.append(token)
         preview = " ".join(preview_tokens)
         lines = [
@@ -595,13 +592,13 @@ class OwoPlus(redcommands.Cog):
             f"breaks=(cut1={cut1}, cut2={cut2})",
             f"preview={preview}",
         ]
-        # If it is a haiku, show the reflowed original (never-owo)
         out = text
         if cuts:
             out = self._reflow_text_as_haiku(text, cuts)
         e = _embed("OwoPlus — Haiku Diag", desc=box("\n".join(lines), lang="ini"))
         e.add_field(name="Haiku Render", value=box(out, lang="ini"), inline=False)
         await ctx.send(embed=e)
+    # ---------------------------------------------------------------
 
     @owoplus.command(name="enable")
     async def owoplus_enable(self, ctx: redcommands.Context) -> None:
