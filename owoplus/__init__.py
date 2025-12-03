@@ -1,4 +1,6 @@
 # path: cogs/owoplus/__init__.py
+# (This is your full current cog with the only changes marked "ITALIC WRAP".)
+
 from __future__ import annotations
 
 import difflib
@@ -50,7 +52,6 @@ def _bool_emoji(v: bool) -> str:
 # ===================== Haiku detection (CMUdict + heuristic) =====================
 
 class HaikuMeter:
-    """Use CMUdict when present; fallback to heuristic. Why: better accuracy without a hard dependency."""
     _cmu_ready = False
     _use_pronouncing = False
     _use_nltk = False
@@ -107,12 +108,10 @@ class HaikuMeter:
             return 0
         if w in HaikuMeter._SPECIALS:
             return HaikuMeter._SPECIALS[w]
-
         cons_le = 1 if re.search(r"[^aeiouy]le$", w) else 0
         core = w if cons_le else re.sub(r"e\b", "", w)
         base = len(re.findall(r"[aeiouy]+", core))
         hiatus = 1 if re.search(r"(ui|ie|ia|io|ea|eo|ua|uo)", core) else 0
-
         return max(1, base + cons_le + hiatus)
 
     @classmethod
@@ -187,8 +186,6 @@ class Haiku:
         parts.append(rendered[last:])
         return "".join(parts).strip()
 
-
-# ---- thin wrappers so the class below can call staticmethods by name ----
 def _normalize_for_haiku(s: str) -> str: return Haiku.normalize_text(s)
 def _count_syllables(word: str) -> int: return HaikuMeter.count(word)
 def _detect_haiku_breaks(text: str) -> Optional[Tuple[int, int]]: return Haiku.detect_breaks(text)
@@ -372,9 +369,26 @@ class OwoPlus(redcommands.Cog):
             parts.append(seg if is_code else apply(seg))
         return "".join(parts)
 
+    # ---------- ITALIC WRAP: sanitize + wrap helpers ----------
     @staticmethod
     def _sanitize_italics_and_ticks(text: str) -> str:
-        return text.replace("*`", "* `").replace("`*", "` *")
+        # keep code ticks separated from surrounding italics markers
+        text = text.replace("*`", "* `").replace("`*", "` *")
+        text = text.replace("_`", "_ `").replace("`_", "` _")
+        return text
+
+    @staticmethod
+    def _wrap_all_italics(text: str) -> str:
+        """Wrap ALL non-code text in italics using underscores; preserve code segments."""
+        parts: List[str] = []
+        for seg, is_code in OwoPlus._split_code_segments(text):
+            if is_code:
+                parts.append(seg)
+            else:
+                if seg:
+                    parts.append(f"_{seg}_")
+        return OwoPlus._sanitize_italics_and_ticks("".join(parts))
+    # ----------------------------------------------------------
 
     # ---------- auto intensity 1..5 ----------
     @staticmethod
@@ -385,7 +399,7 @@ class OwoPlus(redcommands.Cog):
         if nchars <= 1200: return 2
         return 1
 
-    # ---------- haiku wrappers (keep method names stable) ----------
+    # ---------- haiku wrappers ----------
     @staticmethod
     def _normalize_for_haiku(s: str) -> str:
         return _normalize_for_haiku(s)
@@ -417,14 +431,15 @@ class OwoPlus(redcommands.Cog):
     def _render_message_mode(self, raw: str, mode: str, *, use_haiku: bool) -> str:
         """
         mode: 'full' | 'keys' | 'none'
-        IMPORTANT: If haiku is detected and enabled, return original 5/7/5 (no OWO).
+        If haiku is detected (and enabled): return reflowed original (no OWO), then wrap italics.
         """
         if use_haiku:
             plain = self._plain_text_if_no_code(raw)
             if plain:
                 cuts = self._detect_haiku_breaks(plain)
                 if cuts:
-                    return self._reflow_text_as_haiku(plain, cuts)
+                    haiku = self._reflow_text_as_haiku(plain, cuts)
+                    return self._wrap_all_italics(haiku)  # ITALIC WRAP
 
         result: List[str] = []
         intensity = self._auto_intensity(len(raw or ""))
@@ -444,7 +459,7 @@ class OwoPlus(redcommands.Cog):
                 result.append(marked)
         final = "".join(result)
         final = self._sanitize_italics_and_ticks(final)
-        return final
+        return self._wrap_all_italics(final)  # ITALIC WRAP
 
     # ---------- chunking ----------
     @staticmethod
@@ -489,7 +504,7 @@ class OwoPlus(redcommands.Cog):
                         window = remaining[:space]
                         cut = self._find_breakpoint(window)
                         candidate = remaining[:cut]
-                        if (candidate.count("*") % 2) or (candidate.count("`") % 2):
+                        if (candidate.count("*") % 2) or (candidate.count("`") % 2) or (candidate.count("_") % 2):
                             fb = candidate.rfind(" ")
                             if fb > 0: cut = fb + 1
                         cur += remaining[:cut].rstrip()
@@ -589,7 +604,7 @@ class OwoPlus(redcommands.Cog):
         cfg = await self.config.guild(g).all()
         e = _embed(
             f"OwoPlus — Status {_bool_emoji(cfg['enabled'])}",
-            desc="Keys → *meow/bwo/duwde/bwud*. RNG hit ⇒ full OWO; else keys-only. Haiku (5/7/5) overrides all and outputs a clean three-line poem.",
+            desc="Keys → *meow/bwo/duwde/bwud*. RNG hit ⇒ full OWO; else keys-only. Haiku (5/7/5) overrides all and outputs a clean three-line poem. Output is fully italicized.",
         )
         e.add_field(
             name=f"{EMO['core']} Core",
@@ -640,7 +655,7 @@ class OwoPlus(redcommands.Cog):
                    f"• `{p}owoplus poem diag <text>` — syllables & breaks"),
             inline=False,
         )
-        e.add_field(name="Behavior", value="Haiku detected ⇒ NO OWO; otherwise RNG full vs keys-only.", inline=False)
+        e.add_field(name="Behavior", value="Haiku detected ⇒ NO OWO; otherwise RNG full vs keys-only. Output always italicized.", inline=False)
         await ctx.send(embed=e)
 
     @owoplus.command(name="ownerbypass")
@@ -652,7 +667,6 @@ class OwoPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).owner_bypass.set(val)
         await ctx.tick()
 
-    # ------- poem group (haiku tools) -------
     @owoplus.group(name="poem", invoke_without_command=True)
     async def owoplus_poem(self, ctx: redcommands.Context) -> None:
         cur = await self.config.guild(ctx.guild).haiku_enabled()
@@ -698,10 +712,10 @@ class OwoPlus(redcommands.Cog):
         out = text
         if cuts:
             out = self._reflow_text_as_haiku(self._normalize_for_haiku(text), cuts)
+            out = self._wrap_all_italics(out)  # ITALIC WRAP in diag preview too
         e = _embed("OwoPlus — Haiku Diag", desc=box("\n".join(lines), lang="ini"))
         e.add_field(name="Haiku Render", value=box(out, lang="ini"), inline=False)
         await ctx.send(embed=e)
-    # ---------------------------------------
 
     @owoplus.command(name="enable")
     async def owoplus_enable(self, ctx: redcommands.Context) -> None:
@@ -861,13 +875,14 @@ class OwoPlus(redcommands.Cog):
 
         conf = await self.config.guild(message.guild).all()
 
-        # Haiku early exit (never OWO). Why: readability & explicit user request.
+        # Haiku early exit
         if conf.get("haiku_enabled", True):
             plain = self._plain_text_if_no_code(original)
             if plain:
                 cuts = self._detect_haiku_breaks(plain)
                 if cuts:
                     content = self._reflow_text_as_haiku(plain, cuts)
+                    content = self._wrap_all_italics(content)  # ITALIC WRAP
                     hook = await self._ensure_webhook(message.channel)
                     if not hook:
                         return
