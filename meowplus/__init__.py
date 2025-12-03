@@ -47,7 +47,7 @@ def _bool_emoji(v: bool) -> str:
 
 
 class OwoPlus(redcommands.Cog):
-    """Webhook-only cute/owo replacer with auto-intensity (shorter ⇒ stronger)."""
+    """Webhook-only cute/owo replacer with auto-intensity profiles (short ⇒ strong, long ⇒ gentle)."""
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
@@ -98,34 +98,43 @@ class OwoPlus(redcommands.Cog):
         return re.sub(r"([aeiouAEIOU])(?=[a-zA-Z])", r"\1\1", word, count=1)
 
     @staticmethod
+    def _sub_prob(s: str, pattern: str, repl: str, prob: float, flags: int = 0) -> str:
+        """Replace matches with probability per match (why: gentle sprinkle on long texts)."""
+        if prob <= 0.0:
+            return s
+        rx = re.compile(pattern, flags)
+
+        def _choose(m: re.Match) -> str:
+            return repl if random.random() < prob else m.group(0)
+
+        return rx.sub(_choose, s)
+
+    @staticmethod
     def _owoify_plain(text: str, intensity: int) -> str:
-        # profile: which transforms are active at this intensity (why: readability)
+        # Probabilistic profile per intensity
         prof = {
-            1: dict(rl=False, ny=False, uv=False, th=False, tt=False, lc_first=False,
-                    stutter=0.00, elong=0.00, face=0.05, tilde=0.00),
-            2: dict(rl=False, ny=False, uv=False, th=False, tt=False, lc_first=False,
-                    stutter=0.03, elong=0.02, face=0.10, tilde=0.03),
-            3: dict(rl=False, ny=True,  uv=True,  th=False, tt=False, lc_first=False,
-                    stutter=0.06, elong=0.05, face=0.15, tilde=0.06),
-            4: dict(rl=True,  ny=True,  uv=True,  th=True,  tt=False, lc_first=True,
-                    stutter=0.10, elong=0.10, face=0.18, tilde=0.08),
-            5: dict(rl=True,  ny=True,  uv=True,  th=True,  tt=True,  lc_first=True,
-                    stutter=0.14, elong=0.16, face=0.22, tilde=0.12),
+            # rl/ny/uv/th/tt are per-match probabilities (0..1)
+            # faces/tilde are per-sentence caps; ≤1 face per sentence retained elsewhere
+            1: dict(rl=0.00, ny=0.60, uv=0.60, th=0.00, tt=0.00, lc_first=False,
+                    stutter=0.03, elong=0.03, face=0.12, tilde=0.05),
+            2: dict(rl=0.15, ny=0.80, uv=0.80, th=0.00, tt=0.00, lc_first=False,
+                    stutter=0.05, elong=0.05, face=0.14, tilde=0.07),
+            3: dict(rl=0.25, ny=1.00, uv=1.00, th=0.20, tt=0.00, lc_first=False,
+                    stutter=0.08, elong=0.08, face=0.16, tilde=0.10),
+            4: dict(rl=0.75, ny=1.00, uv=1.00, th=0.60, tt=0.00, lc_first=True,
+                    stutter=0.10, elong=0.12, face=0.18, tilde=0.12),
+            5: dict(rl=1.00, ny=1.00, uv=1.00, th=1.00, tt=1.00, lc_first=True,
+                    stutter=0.14, elong=0.16, face=0.22, tilde=0.14),
         }[max(1, min(5, int(intensity)))]
 
         def transliterate(s: str) -> str:
-            # letter-level toggles (why: heavy ones off at low intensity)
-            if prof["rl"]:
-                s = re.sub(r"[rl]", "w", s)
-                s = re.sub(r"[RL]", "W", s)
-            if prof["ny"]:
-                s = re.sub(r"(?i)n([aeiou])", r"ny\1", s)
-            if prof["uv"]:
-                s = re.sub(r"(?i)ove", "uv", s)
-            if prof["th"]:
-                s = re.sub(r"(?i)th", lambda m: "d" if m.group(0).islower() else "D", s)
-            if prof["tt"]:
-                s = re.sub(r"(?i)tt", lambda m: "dd" if m.group(0).islower() else "DD", s)
+            # probabilistic letter-level tweaks
+            s = OwoPlus._sub_prob(s, r"[rl]", "w", prof["rl"])
+            s = OwoPlus._sub_prob(s, r"[RL]", "W", prof["rl"])
+            s = OwoPlus._sub_prob(s, r"(?i)n([aeiou])", r"ny\1", prof["ny"])
+            s = OwoPlus._sub_prob(s, r"(?i)ove", "uv", prof["uv"])
+            s = OwoPlus._sub_prob(s, r"(?i)th", lambda m: "d" if m.group(0).islower() else "D", prof["th"])
+            s = OwoPlus._sub_prob(s, r"(?i)tt", lambda m: "dd" if m.group(0).islower() else "DD", prof["tt"])
 
             def tweak_word(w: str) -> str:
                 if w.isalpha():
@@ -137,7 +146,6 @@ class OwoPlus(redcommands.Cog):
             words = [tweak_word(w) if (i % 2 == 0) else w for i, w in enumerate(words)]
             s = "".join(words)
 
-            # ≤1 decoration per sentence; mild probabilities
             def punct(m: re.Match) -> str:
                 p = m.group(1)
                 out = p
@@ -149,26 +157,22 @@ class OwoPlus(redcommands.Cog):
 
             s = re.sub(r"([.!?]+)", punct, s)
             s = re.sub(r"~{2,}", "~", s)
-            if prof["lc_first"]:
-                try:
-                    if len(s) > 1:
-                        s = s[0].lower() + s[1:]
-                except Exception:
-                    pass
+            if prof["lc_first"] and len(s) > 1:
+                s = s[0].lower() + s[1:]
             return s
 
         return "".join(seg if is_code else transliterate(seg) for seg, is_code in OwoPlus._split_code_segments(text))
 
     @staticmethod
     def _italicize_changes(original: str, transformed: str) -> str:
-        # only italicize replacements/deletions containing word chars (why: readability)
+        """Italicize replacements/deletions that contain word chars; copy inserts/punct as-is."""
         out: List[str] = []
         wordish = re.compile(r"[A-Za-z0-9]")
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, original, transformed).get_opcodes():
             if tag == "equal":
                 out.append(transformed[j1:j2])
             elif tag == "insert":
-                out.append(transformed[j1:j2])
+                out.append(transformed[j1:j2])  # faces/nyas not italic
             else:
                 seg = transformed[j1:j2]
                 out.append(f"*{seg}*" if seg and wordish.search(seg) else seg)
@@ -221,11 +225,12 @@ class OwoPlus(redcommands.Cog):
     # ---------- auto intensity ----------
     @staticmethod
     def _auto_intensity(nchars: int) -> int:
-        if nchars <= 60:   return 5
-        if nchars <= 120:  return 4
-        if nchars <= 240:  return 3
-        if nchars <= 480:  return 2
-        return 1
+        """Shorter ⇒ stronger; long ⇒ gentle but not zero."""
+        if nchars <= 80:   return 5
+        if nchars <= 160:  return 4
+        if nchars <= 400:  return 3
+        if nchars <= 1200: return 2
+        return 1  # mega-walls still get light sprinkle (profile 1)
 
     @staticmethod
     def _has_key_trigger(text: str) -> bool:
@@ -381,7 +386,7 @@ class OwoPlus(redcommands.Cog):
         if content:
             kwargs["content"] = content
         if isinstance(channel, discord.Thread):
-            kwargs["thread"] = channel  # why: ensure correct thread routing
+            kwargs["thread"] = channel
         if files:
             kwargs["files"] = files
         return await hook.send(**kwargs)
@@ -391,7 +396,7 @@ class OwoPlus(redcommands.Cog):
         cfg = await self.config.guild(g).all()
         e = _embed(
             f"OwoPlus — Status {_bool_emoji(cfg['enabled'])}",
-            desc="Triggers now/bro/dude/bud → *meow/bwo/duwde/bwud* • any trigger forces uwu • random owo 1/N • intensity auto-scales by length (readable on long texts).",
+            desc="Triggers now/bro/dude/bud → *meow/bwo/duwde/bwud* • any trigger forces uwu • random owo 1/N • auto-intensity with probabilistic transforms.",
         )
         e.add_field(
             name=f"{EMO['core']} Core",
@@ -433,7 +438,7 @@ class OwoPlus(redcommands.Cog):
             value=(f"• `{p}owoplus onein <N>` (default 1000)\n" f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"),
             inline=False,
         )
-        e.add_field(name="Auto Intensity", value="Short → cute; Long → readable.", inline=False)
+        e.add_field(name="Auto Intensity", value="Short → strong; Long → gentle (still cute).", inline=False)
         e.add_field(name="Owner Bypass", value=f"• `{p}owoplus ownerbypass <on|off>`", inline=False)
         await ctx.send(embed=e)
 
@@ -565,7 +570,14 @@ class OwoPlus(redcommands.Cog):
 
         try:
             for idx, part in enumerate(parts):
-                await self._send_via_webhook(hook, channel=ch, author=last.author, content=part, files=files if idx == 0 else None, wait=False)
+                await self._send_via_webhook(
+                    hook,
+                    channel=ch,
+                    author=last.author,
+                    content=part,
+                    files=files if idx == 0 else None,
+                    wait=False,
+                )
             lines.append(f"send: OK ({len(parts)} part{'s' if len(parts)!=1 else ''})")
         except Exception as e:
             lines.append(f"send: FAIL {type(e).__name__}: {e}")
