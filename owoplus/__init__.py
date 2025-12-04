@@ -49,7 +49,7 @@ TARGETS = sorted({v for v in KEY_MAP.values()})
 CODE_SPLIT = re.compile(r"(```[\s\S]*?```|`[^`]*?`)", re.MULTILINE)
 
 OWO_FACES = ["uwu", "owo", ">w<", "^w^", "x3", "~", "nya~", "(⁄˘⁄⁄ ω⁄ ⁄˘⁄)♡"]
-HAIKU_SUFFIX = " 🌸"  # subtle end mark for haiku line 3
+HAIKU_SUFFIX = " 🌸"
 
 EMO = {"ok": "✅", "bad": "⚠️", "core": "🛠️", "msg": "💬", "prob": "🎲", "diag": "🧪", "spark": "✨"}
 
@@ -67,12 +67,10 @@ def _bool_emoji(v: bool) -> str:
 def _norm_word(w: str) -> str:
     return re.sub(r"[^a-z']", "", w.lower())
 
-# Patches for frequent pitfalls when dicts miss; conservative.
 _SPECIALS: Dict[str, int] = {
     "the": 1, "queue": 1, "people": 2, "business": 2, "beautiful": 3,
     "everyone": 3, "breathe": 1, "every": 2, "evening": 3, "gentle": 2,
     "quiet": 2, "deploys": 2, "bro": 1, "dude": 1, "now": 1, "bud": 1,
-    # Screenshot sample
     "failure": 2, "teaches": 2, "learn": 1, "strength": 1, "focus": 2,
 }
 
@@ -89,7 +87,6 @@ class _PronouncingBackend:
         try:
             phones = pronouncing.phones_for_word(w)  # type: ignore[attr-defined]
             if not phones and len(w) > 3:
-                # simple inflection strip to recover IV forms
                 for suf in ("'s", "es", "s", "ed", "ing", "er", "est"):
                     if w.endswith(suf) and len(w) - len(suf) >= 3:
                         phones = pronouncing.phones_for_word(w[:-len(suf)])  # type: ignore[attr-defined]
@@ -136,7 +133,6 @@ class _PyphenBackend:
             return None
 
 class _HeuristicBackend:
-    """Conservative vowel-group heuristic with English tweaks. Why: last-resort stability."""
     name = "heuristic"
     _vowels = "aeiouy"
     def count(self, word: str) -> Optional[int]:
@@ -161,7 +157,7 @@ class _HeuristicBackend:
         return max(1, count)
 
 class _SyllableEngine:
-    """Multi-backend ensemble; policy-ready (priority by default)."""
+    """Priority order: pronouncing → g2p_en → pyphen → heuristic."""
     def __init__(self) -> None:
         self.backends: List[object] = []
         if pronouncing: self.backends.append(_PronouncingBackend())
@@ -169,7 +165,6 @@ class _SyllableEngine:
         if pyphen: self.backends.append(_PyphenBackend())
         self.backends.append(_HeuristicBackend())
         self._cache: Dict[str, int] = {}
-
     def count(self, word: str) -> int:
         w = _norm_word(word)
         if not w:
@@ -178,7 +173,6 @@ class _SyllableEngine:
             return self._cache[w]
         if w in _SPECIALS:
             self._cache[w] = _SPECIALS[w]; return _SPECIALS[w]
-        # priority policy: first backend that returns an int
         for b in self.backends:
             try:
                 v = b.count(w)  # type: ignore[attr-defined]
@@ -208,6 +202,8 @@ class HaikuMeter:
 class Haiku:
     _WORD_RX = re.compile(r"[A-Za-z']+")
     _DASHES_RX = re.compile(r"[\u2010-\u2015\u2212\-]+")
+    # Keep punctuation that comes *immediately* after the last word on the same line
+    _PUNCT_TAIL_RX = re.compile(r"^([,.;:!?\u2026\)\]\}\u2019\u201D\"']+)(\s*)")
 
     @staticmethod
     def normalize_text(s: str) -> str:
@@ -219,6 +215,16 @@ class Haiku:
     @staticmethod
     def words(text: str) -> List[str]:
         return Haiku._WORD_RX.findall(text)
+
+    @staticmethod
+    def clean_lines(out: str) -> str:
+        """Final safeguard: per-line strip + whitespace normalization."""
+        lines = out.split("\n")
+        norm = [re.sub(r"\s+", " ", ln).strip() for ln in lines]
+        norm = [ln for ln in norm if ln]  # drop empties
+        if len(norm) >= 3:
+            norm = norm[:3]
+        return "\n".join(norm).strip()
 
     @staticmethod
     def detect_breaks(text: str) -> Optional[Tuple[int, int]]:
@@ -250,7 +256,7 @@ class Haiku:
 
     @staticmethod
     def reflow(rendered: str, cuts: Tuple[int, int]) -> str:
-        """Insert line breaks at word boundaries, then STANDARDIZE spacing."""
+        """Insert line breaks at word boundaries; keep trailing punctuation with the prior word."""
         words = list(Haiku._WORD_RX.finditer(rendered))
         if len(words) < cuts[1]:
             out = re.sub(r"\s+", " ", rendered).strip()
@@ -260,23 +266,27 @@ class Haiku:
         last = 0
         idx = 0
         marks = {cuts[0], cuts[1]}
+
         for m in words:
             parts.append(rendered[last:m.start()])
             parts.append(m.group(0))
             idx += 1
+
             if idx in marks:
+                tail = rendered[m.end():]
+                mv = Haiku._PUNCT_TAIL_RX.match(tail)
+                consumed = 0
+                if mv:
+                    parts.append(mv.group(1))  # punctuation stays on this line
+                    consumed = len(mv.group(0))  # also skip the spaces after it
                 parts.append("\n")
-            last = m.end()
+                last = m.end() + consumed
+            else:
+                last = m.end()
+
         parts.append(rendered[last:])
         out = "".join(parts)
-
-        # Normalize per-line: trim edges and collapse internal spaces
-        lines = out.split("\n")
-        norm_lines = [re.sub(r"\s+", " ", ln.strip()) for ln in lines if ln.strip() != ""]
-        if len(norm_lines) >= 3:
-            norm_lines = norm_lines[:3]
-        return "\n".join(norm_lines).strip()
-
+        return Haiku.clean_lines(out)  # ensure no leading spaces
 
 def _normalize_for_haiku(s: str) -> str: return Haiku.normalize_text(s)
 def _count_syllables(word: str) -> int: return HaikuMeter.count(word)
@@ -441,7 +451,6 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _add_haiku_suffix(text: str) -> str:
-        """Why: visibly mark haiku output without changing words."""
         lines = text.split("\n")
         if not lines:
             return text + HAIKU_SUFFIX
@@ -514,6 +523,11 @@ class OwoPlus(redcommands.Cog):
     def _reflow_text_as_haiku(rendered: str, cuts: Tuple[int, int]) -> str:
         return _reflow_text_as_haiku(rendered, cuts)
 
+    # NEW: final per-line cleanup
+    @staticmethod
+    def _format_haiku_lines(text: str) -> str:
+        return Haiku.clean_lines(text)
+
     @staticmethod
     def _plain_text_if_no_code(raw: str) -> Optional[str]:
         segs = OwoPlus._split_code_segments(raw)
@@ -529,7 +543,7 @@ class OwoPlus(redcommands.Cog):
     def _render_message_mode(self, raw: str, mode: str, *, use_haiku: bool) -> str:
         """
         mode: 'full' | 'keys' | 'none'
-        Haiku (when enabled) returns reflowed original (no OWO), fully italicized, ends with 🌸.
+        Haiku (when enabled) returns reflowed original (no OWO), fully italicized, and ends with 🌸.
         """
         if use_haiku:
             plain = self._plain_text_if_no_code(raw)
@@ -537,7 +551,9 @@ class OwoPlus(redcommands.Cog):
                 cuts = self._detect_haiku_breaks(plain)
                 if cuts:
                     haiku = self._reflow_text_as_haiku(plain, cuts)
+                    haiku = self._format_haiku_lines(haiku)        # strip leading spaces
                     haiku = self._add_haiku_suffix(haiku)
+                    haiku = self._format_haiku_lines(haiku)        # final pass
                     return self._wrap_all_italics(haiku)
 
         result: List[str] = []
@@ -791,7 +807,7 @@ class OwoPlus(redcommands.Cog):
         for s in syl:
             c += s
             cum.append(c)
-        cuts = self._detect_haiku_breaks(norm)  # normalized for consistency
+        cuts = self._detect_haiku_breaks(norm)
         cut1, cut2 = (cuts if cuts else (-1, -1))
         preview_tokens = []
         for i, w in enumerate(words, 1):
@@ -811,7 +827,9 @@ class OwoPlus(redcommands.Cog):
         out = text
         if cuts:
             out = self._reflow_text_as_haiku(norm, cuts)
-            out = self._add_haiku_suffix(out)  # show blossom in diag render too
+            out = self._format_haiku_lines(out)
+            out = self._add_haiku_suffix(out)
+            out = self._format_haiku_lines(out)
         e = _embed("OwoPlus — Haiku Diag", desc=box("\n".join(lines), lang="ini"))
         e.add_field(name="Haiku Render", value=box(out, lang="ini"), inline=False)
         await ctx.send(embed=e)
@@ -982,8 +1000,9 @@ class OwoPlus(redcommands.Cog):
                 cuts = self._detect_haiku_breaks(plain)
                 if cuts:
                     content = self._reflow_text_as_haiku(plain, cuts)
+                    content = self._format_haiku_lines(content)
                     content = self._add_haiku_suffix(content)
-                    content = self._wrap_all_italics(content)
+                    content = self._format_haiku_lines(content)
                     hook = await self._ensure_webhook(message.channel)
                     if not hook:
                         return
