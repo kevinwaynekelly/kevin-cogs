@@ -13,6 +13,20 @@ from redbot.core.bot import Red
 from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import box
 
+# Optional syllable libs (best-first). Soft imports keep cog usable without them.
+try:
+    import pronouncing  # type: ignore
+except Exception:
+    pronouncing = None  # type: ignore
+try:
+    from g2p_en import G2p  # type: ignore
+except Exception:
+    G2p = None  # type: ignore
+try:
+    import pyphen  # type: ignore
+except Exception:
+    pyphen = None  # type: ignore
+
 __red_end_user_data_statement__ = (
     "This cog stores per-guild preferences for webhook-based message transformation "
     "(enable flag, 1-in-N owo probability, per-user overrides, owner bypass, and haiku toggle). "
@@ -48,79 +62,147 @@ def _bool_emoji(v: bool) -> str:
     return "🟢" if v else "🔴"
 
 
-# ===================== Haiku detection (CMUdict + heuristic) =====================
+# ===================== Syllables: multi-backend engine =====================
 
-class HaikuMeter:
-    _cmu_ready = False
-    _use_pronouncing = False
-    _use_nltk = False
-    _nltk_d = None
-    _cache: Dict[str, int] = {}
+def _norm_word(w: str) -> str:
+    return re.sub(r"[^a-z']", "", w.lower())
 
-    try:
-        import pronouncing as _pronouncing  # type: ignore
-        _use_pronouncing = True
-        _cmu_ready = True
-    except Exception:
-        try:
-            from nltk.corpus import cmudict as _cmudict  # type: ignore
-            _nltk_d = _cmudict.dict()
-            _use_nltk = True
-            _cmu_ready = True
-        except Exception:
-            _cmu_ready = False
+# Patches for frequent pitfalls when dicts miss; conservative.
+_SPECIALS: Dict[str, int] = {
+    "the": 1, "queue": 1, "people": 2, "business": 2, "beautiful": 3,
+    "everyone": 3, "breathe": 1, "every": 2, "evening": 3, "gentle": 2,
+    "quiet": 2, "deploys": 2, "bro": 1, "dude": 1, "now": 1, "bud": 1,
+    # Screenshot sample
+    "failure": 2, "teaches": 2, "learn": 1, "strength": 1, "focus": 2,
+}
 
-    _SPECIALS = {
-        "the": 1, "queue": 1, "people": 2, "business": 2, "beautiful": 3,
-        "everyone": 3, "breathe": 1, "every": 2, "evening": 3, "gentle": 2,
-        "quiet": 2, "deploys": 2, "bro": 1, "dude": 1, "now": 1, "bud": 1,
-    }
-
-    @classmethod
-    def _cmu_syllables(cls, word: str) -> Optional[int]:
-        w = word.lower()
-        if w in cls._SPECIALS:
-            return cls._SPECIALS[w]
-        if not cls._cmu_ready:
+class _PronouncingBackend:
+    name = "pronouncing"
+    def count(self, word: str) -> Optional[int]:
+        if pronouncing is None:
             return None
-        try:
-            if cls._use_pronouncing:
-                phones = cls._pronouncing.phones_for_word(w)  # type: ignore[attr-defined]
-                if not phones and w.endswith("s") and len(w) > 3:
-                    phones = cls._pronouncing.phones_for_word(w[:-1])  # type: ignore[attr-defined]
-                if not phones:
-                    return None
-                return min((sum(p[-1].isdigit() for p in ph.split()) for ph in phones), default=None)
-            if cls._use_nltk and cls._nltk_d is not None:
-                entries = cls._nltk_d.get(w) or (cls._nltk_d.get(w[:-1]) if w.endswith("s") and len(w) > 3 else None)
-                if not entries:
-                    return None
-                return min((sum(1 for y in e if y[-1].isdigit()) for e in entries), default=None)
-        except Exception:
-            return None
-        return None
-
-    @staticmethod
-    def _heuristic_syllables(word: str) -> int:
-        w = re.sub(r"[^a-z']", "", word.lower())
+        w = _norm_word(word)
         if not w:
             return 0
-        if w in HaikuMeter._SPECIALS:
-            return HaikuMeter._SPECIALS[w]
-        cons_le = 1 if re.search(r"[^aeiouy]le$", w) else 0
-        core = w if cons_le else re.sub(r"e\b", "", w)
-        base = len(re.findall(r"[aeiouy]+", core))
-        hiatus = 1 if re.search(r"(ui|ie|ia|io|ea|eo|ua|uo)", core) else 0
-        return max(1, base + cons_le + hiatus)
+        if w in _SPECIALS:
+            return _SPECIALS[w]
+        try:
+            phones = pronouncing.phones_for_word(w)  # type: ignore[attr-defined]
+            if not phones and len(w) > 3:
+                # simple inflection strip to recover IV forms
+                for suf in ("'s", "es", "s", "ed", "ing", "er", "est"):
+                    if w.endswith(suf) and len(w) - len(suf) >= 3:
+                        phones = pronouncing.phones_for_word(w[:-len(suf)])  # type: ignore[attr-defined]
+                        if phones:
+                            break
+            if not phones:
+                return None
+            return min(sum(tok[-1].isdigit() for tok in ph.split()) for ph in phones)
+        except Exception:
+            return None
 
+class _G2PBackend:
+    name = "g2p_en"
+    def __init__(self) -> None:
+        self._g2p = G2p() if G2p else None
+    def count(self, word: str) -> Optional[int]:
+        if self._g2p is None:
+            return None
+        w = _norm_word(word)
+        if not w:
+            return 0
+        try:
+            toks = self._g2p(w)  # type: ignore[operator]
+            if not toks:
+                return None
+            return max(1, sum(1 for t in toks if any(d in t for d in "012")))
+        except Exception:
+            return None
+
+class _PyphenBackend:
+    name = "pyphen"
+    def __init__(self) -> None:
+        self._hyph = pyphen.Pyphen(lang="en_US") if pyphen else None
+    def count(self, word: str) -> Optional[int]:
+        if self._hyph is None:
+            return None
+        w = _norm_word(word)
+        if not w:
+            return 0
+        try:
+            s = self._hyph.inserted(w)
+            return max(1, s.count("-") + 1) if s else None
+        except Exception:
+            return None
+
+class _HeuristicBackend:
+    """Conservative vowel-group heuristic with English tweaks. Why: last-resort stability."""
+    name = "heuristic"
+    _vowels = "aeiouy"
+    def count(self, word: str) -> Optional[int]:
+        w = _norm_word(word)
+        if not w:
+            return 0
+        if w in _SPECIALS:
+            return _SPECIALS[w]
+        prev = False; count = 0
+        for ch in w:
+            v = ch in self._vowels
+            if v and not prev:
+                count += 1
+            prev = v
+        if w.endswith("e") and not w.endswith(("le", "ye")) and count > 1:
+            count -= 1
+        if w.endswith("ed") and len(w) > 3 and w[-3] not in self._vowels and count > 1:
+            count -= 1
+        if (w.endswith("es") and len(w) > 3 and w[-3] not in self._vowels
+            and not re.search(r"(ches|shes|xes|zes|sses)$", w) and count > 1):
+            count -= 1
+        return max(1, count)
+
+class _SyllableEngine:
+    """Multi-backend ensemble; policy-ready (priority by default)."""
+    def __init__(self) -> None:
+        self.backends: List[object] = []
+        if pronouncing: self.backends.append(_PronouncingBackend())
+        if G2p: self.backends.append(_G2PBackend())
+        if pyphen: self.backends.append(_PyphenBackend())
+        self.backends.append(_HeuristicBackend())
+        self._cache: Dict[str, int] = {}
+
+    def count(self, word: str) -> int:
+        w = _norm_word(word)
+        if not w:
+            return 0
+        if w in self._cache:
+            return self._cache[w]
+        if w in _SPECIALS:
+            self._cache[w] = _SPECIALS[w]; return _SPECIALS[w]
+        # priority policy: first backend that returns an int
+        for b in self.backends:
+            try:
+                v = b.count(w)  # type: ignore[attr-defined]
+            except Exception:
+                v = None
+            if isinstance(v, int):
+                self._cache[w] = max(1, v)
+                return self._cache[w]
+        self._cache[w] = 1
+        return 1
+
+# ===================== Haiku detection (engine wired) =====================
+
+class HaikuMeter:
+    _engine = _SyllableEngine()
+    _cache: Dict[str, int] = {}
     @classmethod
     def count(cls, word: str) -> int:
         w = word.lower()
         if w in cls._cache:
             return cls._cache[w]
-        val = cls._cmu_syllables(w) or cls._heuristic_syllables(w)
-        cls._cache[w] = val
-        return val
+        v = cls._engine.count(w)
+        cls._cache[w] = v
+        return v
 
 
 class Haiku:
@@ -359,7 +441,7 @@ class OwoPlus(redcommands.Cog):
 
     @staticmethod
     def _add_haiku_suffix(text: str) -> str:
-        """Append a subtle emoji to the last line of a haiku."""
+        """Why: visibly mark haiku output without changing words."""
         lines = text.split("\n")
         if not lines:
             return text + HAIKU_SUFFIX
@@ -447,7 +529,7 @@ class OwoPlus(redcommands.Cog):
     def _render_message_mode(self, raw: str, mode: str, *, use_haiku: bool) -> str:
         """
         mode: 'full' | 'keys' | 'none'
-        Haiku (when enabled) returns reflowed original (no OWO), fully italicized, and ends with 🌸.
+        Haiku (when enabled) returns reflowed original (no OWO), fully italicized, ends with 🌸.
         """
         if use_haiku:
             plain = self._plain_text_if_no_code(raw)
@@ -455,8 +537,8 @@ class OwoPlus(redcommands.Cog):
                 cuts = self._detect_haiku_breaks(plain)
                 if cuts:
                     haiku = self._reflow_text_as_haiku(plain, cuts)
-                    haiku = self._add_haiku_suffix(haiku)        # add 🌸 to line 3
-                    return self._wrap_all_italics(haiku)          # italicize haiku only
+                    haiku = self._add_haiku_suffix(haiku)
+                    return self._wrap_all_italics(haiku)
 
         result: List[str] = []
         intensity = self._auto_intensity(len(raw or ""))
@@ -709,7 +791,7 @@ class OwoPlus(redcommands.Cog):
         for s in syl:
             c += s
             cum.append(c)
-        cuts = self._detect_haiku_breaks(text)
+        cuts = self._detect_haiku_breaks(norm)  # normalized for consistency
         cut1, cut2 = (cuts if cuts else (-1, -1))
         preview_tokens = []
         for i, w in enumerate(words, 1):
@@ -728,7 +810,7 @@ class OwoPlus(redcommands.Cog):
         ]
         out = text
         if cuts:
-            out = self._reflow_text_as_haiku(self._normalize_for_haiku(text), cuts)
+            out = self._reflow_text_as_haiku(norm, cuts)
             out = self._add_haiku_suffix(out)  # show blossom in diag render too
         e = _embed("OwoPlus — Haiku Diag", desc=box("\n".join(lines), lang="ini"))
         e.add_field(name="Haiku Render", value=box(out, lang="ini"), inline=False)
