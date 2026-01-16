@@ -214,92 +214,97 @@ class CommunityPlus(redcommands.Cog):
             except discord.Forbidden:
                 pass
 
-    # ------------------------ stats helpers ------------------------
+    # ------------------------ stats helpers (OPTIMIZED) ------------------------
+    # REPLACED: Context manager usage to prevent race conditions and excessive writing
     async def _bump_stat(self, member: discord.Member, key: str, delta: int = 1) -> None:
-        stats = await self.config.member(member).stats()
-        stats[key] = int(stats.get(key, 0)) + delta
-        await self.config.member(member).stats.set(stats)
+        async with self.config.member(member).stats() as stats:
+            stats[key] = int(stats.get(key, 0)) + delta
 
-    async def _bump_nested(self, member: discord.Member, group: str, sub: str, delta: int = 1) -> None:
-        stats = await self.config.member(member).stats()
-        grp = dict(stats.get(group, {}))
-        grp[sub] = int(grp.get(sub, 0)) + delta
-        stats[group] = grp
-        await self.config.member(member).stats.set(stats)
-
-    async def _bump_game_name(self, member: discord.Member, name: str, delta: int = 1) -> None:
-        names = await self.config.member(member).activity_names()
-        names[name] = int(names.get(name, 0)) + delta
-        await self.config.member(member).activity_names.set(names)
-
-    # ------------------------ seen helpers ------------------------
     async def _seen_mark(self, member: discord.Member, *, kind: str, where: int = 0) -> None:
-        data = await self.config.member(member).seen()
-        if "presence" not in data:
-            merged = DEFAULTS_MEMBER["seen"].copy()
-            merged.update({k: data.get(k, merged.get(k)) for k in merged.keys()})
-            data = merged
+        async with self.config.member(member).seen() as data:
+            if "presence" not in data:
+                # Migrator if member data is old
+                merged = DEFAULTS_MEMBER["seen"].copy()
+                merged.update({k: data.get(k, merged.get(k)) for k in merged.keys()})
+                data.update(merged)
+                
+            now = self._now_ts()
+            data["any"] = now
+            data["kind"] = kind
+            if where:
+                data["where"] = where
+            if kind in {"message", "voice", "join", "leave"}:
+                data[kind] = now
+                if kind in {"message", "voice"}:
+                    data[f"{kind}_ch"] = where
+
+    # ------------------------ presence logic (HEAVILY OPTIMIZED) ------------------------
+    async def _handle_presence_update_logic(self, before: discord.Member, after: discord.Member) -> None:
+        """
+        Batches database writes for presence updates. 
+        Only writes if specific tracked data actually changes.
+        """
         now = self._now_ts()
-        data["any"] = now
-        data["kind"] = kind
-        if where:
-            data["where"] = where
-        if kind in {"message", "voice", "join", "leave"}:
-            data[kind] = now
-            if kind in {"message", "voice"}:
-                data[f"{kind}_ch"] = where
-        await self.config.member(member).seen.set(data)
-
-    async def _last_message_ts(self, member: discord.Member) -> int:
-        data = await self.config.member(member).seen()
-        return int(data.get("message", 0) or 0)
-
-    async def _seen_mark_presence(self, before: discord.Member, after: discord.Member) -> None:
-        data = await self.config.member(after).seen()
-        if "presence" not in data:
-            data = DEFAULTS_MEMBER["seen"].copy()
-        p = data["presence"]
         status = str(getattr(after, "status", "unknown"))
         desktop = str(getattr(after, "desktop_status", "unknown"))
         mobile = str(getattr(after, "mobile_status", "unknown"))
         web = str(getattr(after, "web_status", "unknown"))
-
-        now = self._now_ts()
-        if status != p.get("status"):
-            await self._bump_nested(after, "status_changes", status, 1)
-
+        
+        # Calculate Activity Diff
         before_set = {(a.type, getattr(a, "name", None)) for a in (before.activities or [])}
         after_set = {(a.type, getattr(a, "name", None)) for a in (after.activities or [])}
-        for typ, name in (after_set - before_set):
-            if typ == discord.ActivityType.playing:
-                await self._bump_nested(after, "activity_starts", "playing", 1)
-                await self._bump_stat(after, "game_launches", 1)
-                if name:
-                    await self._bump_game_name(after, str(name), 1)
-            elif typ == discord.ActivityType.streaming:
-                await self._bump_nested(after, "activity_starts", "streaming", 1)
-            elif typ == discord.ActivityType.listening:
-                await self._bump_nested(after, "activity_starts", "listening", 1)
-            elif typ == discord.ActivityType.watching:
-                await self._bump_nested(after, "activity_starts", "watching", 1)
-            elif typ == discord.ActivityType.competing:
-                await self._bump_nested(after, "activity_starts", "competing", 1)
-            elif typ == discord.ActivityType.custom:
-                await self._bump_nested(after, "activity_starts", "custom", 1)
+        new_activities = after_set - before_set
+        
+        # OPEN MEMBER CONFIG ONCE
+        async with self.config.member(after).all() as member_data:
+            # 1. Update Seen/Presence
+            seen_data = member_data.setdefault("seen", DEFAULTS_MEMBER["seen"].copy())
+            if "presence" not in seen_data: seen_data["presence"] = DEFAULTS_MEMBER["seen"]["presence"].copy()
+            
+            p = seen_data["presence"]
+            
+            # Check for changes to minimize writes if just a song change happens
+            should_update_seen = False
+            
+            if status != p.get("status"):
+                # BUMP STAT: Status Change
+                stats = member_data.setdefault("stats", DEFAULTS_MEMBER["stats"].copy())
+                sc = stats.setdefault("status_changes", DEFAULTS_MEMBER["stats"]["status_changes"].copy())
+                sc[status] = sc.get(status, 0) + 1
+                should_update_seen = True
 
-        p["status"] = status
-        p["since"] = now
-        p["desktop"] = desktop
-        p["mobile"] = mobile
-        p["web"] = web
-        if status != "offline":
-            p["last_online"] = now
-            data["any"] = max(data.get("any", 0), now)
-            data["kind"] = "presence"
-        else:
-            p["last_offline"] = now
-        data["presence"] = p
-        await self.config.member(after).seen.set(data)
+            # Process Activities
+            for typ, name in new_activities:
+                should_update_seen = True # If activity changed, we updated stats, so we should save
+                stats = member_data.setdefault("stats", DEFAULTS_MEMBER["stats"].copy())
+                acts = stats.setdefault("activity_starts", DEFAULTS_MEMBER["stats"]["activity_starts"].copy())
+                
+                if typ == discord.ActivityType.playing:
+                    acts["playing"] += 1
+                    stats["game_launches"] += 1
+                    if name:
+                        names = member_data.setdefault("activity_names", {})
+                        names[str(name)] = names.get(str(name), 0) + 1
+                elif typ == discord.ActivityType.streaming: acts["streaming"] += 1
+                elif typ == discord.ActivityType.listening: acts["listening"] += 1
+                elif typ == discord.ActivityType.watching: acts["watching"] += 1
+                elif typ == discord.ActivityType.competing: acts["competing"] += 1
+                elif typ == discord.ActivityType.custom: acts["custom"] += 1
+
+            # Update Presence Data
+            if should_update_seen or status != "offline":
+                p["status"] = status
+                p["since"] = now
+                p["desktop"] = desktop
+                p["mobile"] = mobile
+                p["web"] = web
+                
+                if status != "offline":
+                    p["last_online"] = now
+                    seen_data["any"] = max(seen_data.get("any", 0), now)
+                    seen_data["kind"] = "presence"
+                else:
+                    p["last_offline"] = now
 
     # ------------------------ commands root ------------------------
     @redcommands.group(name="com", invoke_without_command=True)
@@ -839,9 +844,11 @@ class CommunityPlus(redcommands.Cog):
         async def _job():
             try:
                 await asyncio.sleep(wait_s)
+                # Re-check channel state
                 ch = getattr(member.voice, "channel", None)
                 if not ch:
                     return
+                # Verify they are still alone
                 humans = [m for m in ch.members if not m.bot]
                 if len(humans) == 1 and humans[0].id == member.id:
                     try:
@@ -870,9 +877,11 @@ class CommunityPlus(redcommands.Cog):
         humans = [m for m in channel.members if not m.bot]
         if len(humans) == 1:
             await self._schedule_solo_disconnect(humans[0], int(gset["idle_seconds"]))
+            # Ensure no one else is targeted
             for m in [x for x in channel.members if not x.bot and x.id != humans[0].id]:
                 await self._cancel_task_for_member(m.id)
         else:
+            # More than 1 person? Cancel everyone's timer
             for m in humans:
                 await self._cancel_task_for_member(m.id)
 
@@ -905,10 +914,9 @@ class CommunityPlus(redcommands.Cog):
         if not await self.config.guild(after.guild).seen.enabled():
             return
         try:
-            await self._seen_mark_presence(before, after)
+            await self._handle_presence_update_logic(before, after)
         except Exception:
             pass
-
 
 async def setup(bot: Red) -> None:
     await bot.add_cog(CommunityPlus(bot))
