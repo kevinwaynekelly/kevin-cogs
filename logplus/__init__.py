@@ -46,6 +46,7 @@ EVENT_STYLE: Dict[str, Dict[str, object]] = {
     "invite_deleted": {"emoji": "❌", "color": discord.Color.red()},
     "member_joined": {"emoji": "➕", "color": discord.Color.green()},
     "member_left": {"emoji": "➖", "color": discord.Color.red()},
+    "member_kicked": {"emoji": "🥾", "color": discord.Color.dark_red()},
     "roles_changed": {"emoji": "🎭", "color": discord.Color.blurple()},
     "nick_changed": {"emoji": "✍️", "color": discord.Color.blurple()},
     "timeout_updated": {"emoji": "⏳", "color": discord.Color.orange()},
@@ -244,7 +245,12 @@ class LogPlus(redcommands.Cog):
                 if channel_id is not None:
                     extra_ch = getattr(getattr(entry, "extra", None), "channel", None)
                     if getattr(extra_ch, "id", None) != channel_id:
-                        continue
+                        if getattr(entry.target, "id", None) != channel_id:
+                            continue
+                
+                if entry.user.id == self.bot.user.id:
+                    return f"**{self.bot.user.name}** (My Cogs)"
+                    
                 return f"{entry.user} ({entry.user.id})"
         except Exception:
             return None
@@ -927,15 +933,25 @@ class LogPlus(redcommands.Cog):
             await self._send(channel.guild, e, getattr(channel, "id", None))
 
     @commands.Cog.listener()
-    async def on_guild_channel_update(self, before, after):
+    async def on_guild_channel_update(self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel):
+        # IMPROVED: Now checks WHAT changed
         g = await self.config.guild(after.guild).all()
         if g["server"]["channel_update"] and not await self._is_exempt(after.guild, after.id, "server"):
-            actor = await self._audit_actor_recent(
-                after.guild, discord.AuditLogAction.channel_update, target_id=getattr(after, "id", None)
-            )
-            e = await self._E(after.guild, "Channel updated", description=after.mention, etype="channel_updated")
+            changes = []
+            if before.name != after.name:
+                changes.append(f"**Name:** {before.name} -> {after.name}")
+            if hasattr(before, "topic") and hasattr(after, "topic") and before.topic != after.topic:
+                changes.append(f"**Topic:** Changed")
+            if hasattr(before, "nsfw") and hasattr(after, "nsfw") and before.nsfw != after.nsfw:
+                changes.append(f"**NSFW:** {before.nsfw} -> {after.nsfw}")
+            
+            if not changes: return # Don't log internal permission syncing if nothing visible changed
+            
+            actor = await self._audit_actor_recent(after.guild, discord.AuditLogAction.channel_update, target_id=after.id)
+            e = await self._E(after.guild, "Channel updated", description="\n".join(changes), etype="channel_updated")
+            e.add_field(name="Channel", value=after.mention, inline=True)
             e.add_field(name="By", value=actor or "Unknown", inline=True)
-            await self._send(after.guild, e, getattr(after, "id", None))
+            await self._send(after.guild, e, after.id)
 
     @commands.Cog.listener()
     async def on_guild_role_create(self, role: discord.Role):
@@ -1084,13 +1100,22 @@ class LogPlus(redcommands.Cog):
     async def on_member_remove(self, member: discord.Member):
         g = await self.config.guild(member.guild).all()
         if g["member"]["leave"]:
-            e = await self._E(member.guild, "Member left", description=f"{member} ({member.id})", etype="member_left")
-            e.add_field(name="By", value=f"{member} ({member.id})", inline=True)
+            # IMPROVED: Check for KICK
+            kick_actor = await self._audit_actor_recent(member.guild, discord.AuditLogAction.kick, target_id=member.id, lookback_s=10)
+            
+            if kick_actor:
+                e = await self._E(member.guild, "Member kicked", description=f"{member} ({member.id})", etype="member_kicked")
+                e.add_field(name="By", value=kick_actor, inline=True)
+            else:
+                e = await self._E(member.guild, "Member left", description=f"{member} ({member.id})", etype="member_left")
+            
             await self._send(member.guild, e)
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         g = await self.config.guild(after.guild).all()
+        
+        # Nicknames
         if before.nick != after.nick and g["member"]["nick_changed"]:
             actor = await self._audit_actor_recent(after.guild, discord.AuditLogAction.member_update, target_id=after.id)
             e = await self._E(after.guild, "Nickname changed", etype="nick_changed")
@@ -1099,19 +1124,31 @@ class LogPlus(redcommands.Cog):
             e.add_field(name="After", value=after.nick or "None", inline=True)
             e.add_field(name="By", value=actor or f"{after} (self / unknown)", inline=True)
             await self._send(after.guild, e)
+
+        # Roles - IMPROVED
         if set(before.roles) != set(after.roles) and g["member"]["roles_changed"]:
             actor = await self._audit_actor_recent(after.guild, discord.AuditLogAction.member_role_update, target_id=after.id)
-            e = await self._E(after.guild, "Roles changed", etype="roles_changed")
+            
+            added = set(after.roles) - set(before.roles)
+            removed = set(before.roles) - set(after.roles)
+            
+            desc = []
+            if added: desc.append(f"**Added:** {', '.join([r.mention for r in added])}")
+            if removed: desc.append(f"**Removed:** {', '.join([r.mention for r in removed])}")
+            
+            e = await self._E(after.guild, "Roles changed", description="\n".join(desc), etype="roles_changed")
             e.add_field(name="User", value=f"{after} ({after.id})", inline=False)
             e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(after.guild, e)
+            
+        # Timeout
         if g["member"]["timeout"] and before.timed_out_until != after.timed_out_until:
-            actor = await self._audit_actor_recent(after.guild, discord.AuditLogAction.member_update, target_id=after.id)
-            e = await self._E(after.guild, "Timeout updated", etype="timeout_updated")
-            e.add_field(name="User", value=f"{after} ({after.id})", inline=False)
-            e.add_field(name="Until", value=str(after.timed_out_until), inline=True)
-            e.add_field(name="By", value=actor or "Unknown", inline=True)
-            await self._send(after.guild, e)
+             actor = await self._audit_actor_recent(after.guild, discord.AuditLogAction.member_update, target_id=after.id)
+             e = await self._E(after.guild, "Timeout updated", etype="timeout_updated")
+             e.add_field(name="User", value=f"{after} ({after.id})", inline=False)
+             e.add_field(name="Until", value=str(after.timed_out_until), inline=True)
+             e.add_field(name="By", value=actor or "Unknown", inline=True)
+             await self._send(after.guild, e)
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User):
@@ -1135,61 +1172,69 @@ class LogPlus(redcommands.Cog):
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         g = await self.config.guild(member.guild).all()
         ch = await self._log_channel(member.guild)
-        if not ch:
-            return
+        if not ch: return
         rate = await self._rate_seconds(member.guild)
 
+        # Join
         if before.channel is None and after.channel is not None and g["voice"]["join"]:
-            e = await self._E(
-                member.guild, "Voice join", description=f"{member} → {after.channel.mention}", etype="voice_join"
-            )
-            e.add_field(name="By", value=f"{member} ({member.id})", inline=True)
+            e = await self._E(member.guild, "Voice join", description=f"{member} → {after.channel.mention}", etype="voice_join")
             await ch.send(embed=e)
             return
+            
+        # Leave
         if before.channel is not None and after.channel is None and g["voice"]["leave"]:
-            actor = await self._audit_actor_recent(
-                member.guild, getattr(discord.AuditLogAction, "member_disconnect", None), target_id=member.id, lookback_s=30
-            )
-            e = await self._E(
-                member.guild, "Voice leave", description=f"{member} ← {before.channel.mention}", etype="voice_leave"
-            )
+            actor = await self._audit_actor_recent(member.guild, discord.AuditLogAction.member_disconnect, target_id=member.id, lookback_s=5)
+            e = await self._E(member.guild, "Voice leave", description=f"{member} ← {before.channel.mention}", etype="voice_leave")
             e.add_field(name="By", value=actor or f"{member} (self)", inline=True)
             await ch.send(embed=e)
             return
+
+        # Move
         if before.channel and after.channel and before.channel.id != after.channel.id and g["voice"]["move"]:
-            actor = await self._audit_actor_recent(
-                member.guild, getattr(discord.AuditLogAction, "member_move", None), target_id=member.id, lookback_s=30
-            )
-            e = await self._E(
-                member.guild,
-                "Voice move",
-                description=f"{member}: {before.channel.mention} → {after.channel.mention}",
-                etype="voice_move",
-            )
+            actor = await self._audit_actor_recent(member.guild, discord.AuditLogAction.member_move, target_id=member.id, lookback_s=5)
+            e = await self._E(member.guild, "Voice move", description=f"{member}: {before.channel.mention} → {after.channel.mention}", etype="voice_move")
             e.add_field(name="By", value=actor or f"{member} (self)", inline=True)
             await ch.send(embed=e)
 
-        if g["voice"]["mute"] and (before.self_mute != after.self_mute or before.mute != after.mute):
-            if not self._should_suppress(f"v_mute:{member.guild.id}:{member.id}", rate):
-                actor = None
-                if before.mute != after.mute:
-                    actor = await self._audit_actor_recent(
-                        member.guild, discord.AuditLogAction.member_update, target_id=member.id, lookback_s=30
-                    )
-                e = await self._E(member.guild, "Mute state change", description=str(member), etype="voice_mute")
-                e.add_field(name="By", value=actor or f"{member} (self)", inline=True)
-                await ch.send(embed=e)
+        # Mute (Fixed Logic)
+        if g["voice"]["mute"]:
+            # Self Mute
+            if before.self_mute != after.self_mute:
+                if not self._should_suppress(f"v_smute:{member.guild.id}:{member.id}", rate):
+                    state = "Self Muted" if after.self_mute else "Self Unmuted"
+                    e = await self._E(member.guild, "Voice State", description=f"**{state}**", etype="voice_mute")
+                    e.add_field(name="User", value=str(member), inline=True)
+                    e.add_field(name="By", value=f"{member} (self)", inline=True)
+                    await ch.send(embed=e)
+            # Server Mute
+            if before.mute != after.mute:
+                if not self._should_suppress(f"v_mute:{member.guild.id}:{member.id}", rate):
+                    state = "Server Muted" if after.mute else "Server Unmuted"
+                    actor = await self._audit_actor_recent(member.guild, discord.AuditLogAction.member_update, target_id=member.id, lookback_s=10)
+                    e = await self._E(member.guild, "Voice State", description=f"**{state}**", etype="voice_mute")
+                    e.add_field(name="User", value=str(member), inline=True)
+                    e.add_field(name="By", value=actor or "Unknown (Audit log miss)", inline=True)
+                    await ch.send(embed=e)
 
-        if g["voice"]["deaf"] and (before.self_deaf != after.self_deaf or before.deaf != after.deaf):
-            if not self._should_suppress(f"v_deaf:{member.guild.id}:{member.id}", rate):
-                actor = None
-                if before.deaf != after.deaf:
-                    actor = await self._audit_actor_recent(
-                        member.guild, discord.AuditLogAction.member_update, target_id=member.id, lookback_s=30
-                    )
-                e = await self._E(member.guild, "Deaf state change", description=str(member), etype="voice_deaf")
-                e.add_field(name="By", value=actor or f"{member} (self)", inline=True)
-                await ch.send(embed=e)
+        # Deaf (Fixed Logic)
+        if g["voice"]["deaf"]:
+            # Self Deaf
+            if before.self_deaf != after.self_deaf:
+                if not self._should_suppress(f"v_sdeaf:{member.guild.id}:{member.id}", rate):
+                    state = "Self Deafened" if after.self_deaf else "Self Undeafened"
+                    e = await self._E(member.guild, "Voice State", description=f"**{state}**", etype="voice_deaf")
+                    e.add_field(name="User", value=str(member), inline=True)
+                    e.add_field(name="By", value=f"{member} (self)", inline=True)
+                    await ch.send(embed=e)
+            # Server Deaf
+            if before.deaf != after.deaf:
+                if not self._should_suppress(f"v_deaf:{member.guild.id}:{member.id}", rate):
+                    state = "Server Deafened" if after.deaf else "Server Undeafened"
+                    actor = await self._audit_actor_recent(member.guild, discord.AuditLogAction.member_update, target_id=member.id, lookback_s=10)
+                    e = await self._E(member.guild, "Voice State", description=f"**{state}**", etype="voice_deaf")
+                    e.add_field(name="User", value=str(member), inline=True)
+                    e.add_field(name="By", value=actor or "Unknown (Audit log miss)", inline=True)
+                    await ch.send(embed=e)
 
         if g["voice"]["video"] and (before.self_video != after.self_video):
             if not self._should_suppress(f"v_video:{member.guild.id}:{member.id}", rate):
