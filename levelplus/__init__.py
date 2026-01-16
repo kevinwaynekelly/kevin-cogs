@@ -51,7 +51,8 @@ WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
 
 def level_thresholds(curve: str, mult: float, max_level: int, linear_base: float, linear_inc: float) -> List[int]:
     curve = (curve or "linear").lower()
-    cap = max(1, max_level) if max_level > 0 else 200
+    # FIX: If max_level is 0 (infinite), calculate up to 5000 to prevent capping at 200.
+    cap = max(1, max_level) if max_level > 0 else 5000
     out: List[int] = [0]
     total: float = 0.0
     for lvl in range(1, cap + 1):
@@ -107,13 +108,12 @@ class LevelPlus(redcommands.Cog):
         return float(lin.get("base", 83.2)), float(lin.get("inc", 100.433))
 
     async def _remember_name(self, guild: discord.Guild, member: discord.Member) -> None:
-        # why: preserve leaderboard names for leavers
         try:
-            names = await self.config.guild(guild).names()
+            # OPTIMIZATION: Only write if changed to prevent DB spam
             dn = member.display_name
-            if names.get(str(member.id)) != dn:
-                names[str(member.id)] = dn
-                await self.config.guild(guild).names.set(names)
+            async with self.config.guild(guild).names() as names:
+                if names.get(str(member.id)) != dn:
+                    names[str(member.id)] = dn
         except Exception:
             pass
 
@@ -122,22 +122,30 @@ class LevelPlus(redcommands.Cog):
         return int(data.get(str(user_id), 0))
 
     async def _set_xp(self, guild: discord.Guild, user_id: int, value: int) -> None:
-        data = await self.config.guild(guild).xp()
-        data[str(user_id)] = int(max(0, value))
-        await self.config.guild(guild).xp.set(data)
+        async with self.config.guild(guild).xp() as data:
+            data[str(user_id)] = int(max(0, value))
 
     async def _add_xp(self, guild: discord.Guild, user: discord.abc.User, amount: int) -> Tuple[int, int]:
+        """
+        Adds XP safely using a context manager to prevent race conditions.
+        Returns (old_level, new_level).
+        """
         if amount <= 0:
-            g = await self._g(guild); base, inc = await self._lin(guild)
-            lvl = level_from_xp(await self._get_xp(guild, user.id), g["curve"], float(g["multiplier"]),
-                                int(g["max_level"]), base, inc)
+            # Read-only check
+            g = await self._g(guild)
+            base, inc = await self._lin(guild)
+            lvl = level_from_xp(await self._get_xp(guild, user.id), g["curve"], float(g["multiplier"]), int(g["max_level"]), base, inc)
             return lvl, lvl
+
+        # ATOMIC UPDATE START
+        async with self.config.guild(guild).xp() as data:
+            old_xp = int(data.get(str(user.id), 0))
+            new_xp = old_xp + int(amount)
+            data[str(user.id)] = new_xp
+        # ATOMIC UPDATE END
+
+        # Calculate levels after releasing lock
         gconf = await self._g(guild)
-        data = gconf["xp"]
-        old_xp = int(data.get(str(user.id), 0))
-        new_xp = old_xp + int(amount)
-        data[str(user.id)] = new_xp
-        await self.config.guild(guild).xp.set(data)
         base, inc = await self._lin(guild)
         old_lvl = level_from_xp(old_xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]), base, inc)
         new_lvl = level_from_xp(new_xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]), base, inc)
@@ -169,13 +177,13 @@ class LevelPlus(redcommands.Cog):
         u = type("U", (), {
             "mention": member.mention,
             "name": member.display_name,
-            "level": await self.current_level(guild, member.id),
+            "level": new,
             "xp": await self._get_xp(guild, member.id),
         })()
         try:
             msg = template.format(user=u)
         except Exception:
-            msg = f"{member.mention} has reached level **{u.level}**!"
+            msg = f"{member.mention} has reached level **{new}**!"
         try:
             await ch.send(msg)
         except discord.Forbidden:
@@ -188,21 +196,20 @@ class LevelPlus(redcommands.Cog):
             return
         guild = message.guild
         member = message.author
-        await self._remember_name(guild, member)
-
+        
         gconf = await self._g(guild)
         if not gconf["message"]["enabled"]:
             return
-        if message.channel.id in set(gconf["restrictions"]["no_channels"]):
-            return
+        
+        # Restrictions Checks
+        if message.channel.id in set(gconf["restrictions"]["no_channels"]): return
         role_ids = {r.id for r in getattr(member, "roles", [])}
-        if role_ids.intersection(set(gconf["restrictions"]["no_roles"])):
-            return
-        if isinstance(message.channel, discord.Thread) and not gconf["restrictions"]["thread_xp"]:
-            return
-        if getattr(message.channel, "is_forum", False) and not gconf["restrictions"]["forum_xp"]:
-            return
+        if role_ids.intersection(set(gconf["restrictions"]["no_roles"])): return
+        
+        if isinstance(message.channel, discord.Thread) and not gconf["restrictions"]["thread_xp"]: return
+        if getattr(message.channel, "is_forum", False) and not gconf["restrictions"]["forum_xp"]: return
 
+        # Cooldown
         key = (guild.id, member.id)
         cd = int(gconf["message"]["cooldown"])
         last = self._last_msg.get(key, 0.0)
@@ -210,9 +217,13 @@ class LevelPlus(redcommands.Cog):
             return
         self._last_msg[key] = time.time()
 
+        # Update Name Cache
+        await self._remember_name(guild, member)
+
         mode = (gconf["message"]["mode"] or "perword").lower()
         msg_min = int(gconf["message"]["min"])
         msg_max = max(int(gconf["message"]["max"]), msg_min)
+        
         if mode == "none":
             return
         elif mode == "random":
@@ -238,15 +249,10 @@ class LevelPlus(redcommands.Cog):
             if channel.id in set(gconf["restrictions"]["no_channels"]):
                 return
 
-        rx_min = int(gconf["reaction"]["min"])
-        rx_max = max(int(gconf["reaction"]["max"]), rx_min)
-        value = random.randint(rx_min, rx_max)
-
         reactor = guild.get_member(payload.user_id)
-        if reactor and reactor.bot:
-            reactor = None
+        if reactor and reactor.bot: reactor = None
+        
         if reactor:
-            await self._remember_name(guild, reactor)
             key_r = (guild.id, reactor.id)
             cd = int(gconf["reaction"]["cooldown"])
             if cd and time.time() - self._last_rxn.get(key_r, 0.0) < cd:
@@ -254,60 +260,103 @@ class LevelPlus(redcommands.Cog):
             else:
                 self._last_rxn[key_r] = time.time()
 
+        # OPTIMIZATION: Try cache first, fall back to fetch only if necessary
         author = None
-        try:
-            if isinstance(channel, (discord.TextChannel, discord.Thread)):
-                msg = await channel.fetch_message(payload.message_id)
+        awards = (gconf["reaction"]["awards"] or "both").lower()
+        
+        if awards in ("both", "author"):
+            try:
+                # Check cache first
+                msg = self.bot.get_message(payload.message_id) 
+                if not msg and isinstance(channel, (discord.TextChannel, discord.Thread)):
+                    msg = await channel.fetch_message(payload.message_id)
+                
                 if msg and msg.author and not msg.author.bot and isinstance(msg.author, discord.Member):
                     author = msg.author
-                    await self._remember_name(guild, author)
-        except Exception:
-            author = None
+            except Exception:
+                author = None
 
-        awards = (gconf["reaction"]["awards"] or "both").lower()
         targets: List[discord.Member] = []
         if awards in ("both", "reactor") and reactor:
             targets.append(reactor)
         if awards in ("both", "author") and author and author.id != payload.user_id:
             targets.append(author)
 
+        rx_min = int(gconf["reaction"]["min"])
+        rx_max = max(int(gconf["reaction"]["max"]), rx_min)
+        value = random.randint(rx_min, rx_max)
+
         for m in targets:
             role_ids = {r.id for r in getattr(m, "roles", [])}
             if role_ids.intersection(set(gconf["restrictions"]["no_roles"])):
                 continue
+            await self._remember_name(guild, m)
             old, new = await self._add_xp(guild, m, value)
             await self.maybe_announce_levelup(guild, m, old, new)
 
     @tasks.loop(seconds=20.0)
     async def voice_tick(self):
+        """
+        BATCH UPDATES: Opens config once per guild, updates all users, saves once.
+        Prevents DB locking on large servers.
+        """
         await self.bot.wait_until_red_ready()
+        
         for guild in list(self.bot.guilds):
             try:
                 gconf = await self._g(guild)
             except Exception:
                 continue
+                
             vconf = gconf["voice"]
             if not vconf["enabled"]:
                 continue
+            
             tick = max(15, int(vconf["cooldown"]))
+            min_mem = int(vconf["min_members"])
+            
+            # Identify eligible members first (Memory operations)
+            xp_updates: Dict[discord.Member, int] = {}
+            
             for vc in guild.voice_channels:
                 members = [m for m in vc.members if not m.bot]
-                if len(members) < int(vconf["min_members"]):
+                if len(members) < min_mem:
                     continue
+                    
                 for m in members:
-                    await self._remember_name(guild, m)
                     if vconf["anti_afk"]:
                         vs = m.voice
                         if not vs or vs.afk or vs.self_mute or vs.mute or vs.self_deaf or vs.deaf:
                             continue
+                            
                     key = (guild.id, m.id)
                     last = self._last_voice.get(key, 0.0)
                     if time.time() - last < tick:
                         continue
+                        
                     self._last_voice[key] = time.time()
-                    val = random.randint(int(vconf["min"]), max(int(vconf["max"]), int(vconf["min"])))
-                    old, new = await self._add_xp(guild, m, val)
-                    await self.maybe_announce_levelup(guild, m, old, new)
+                    xp_val = random.randint(int(vconf["min"]), max(int(vconf["max"]), int(vconf["min"])))
+                    xp_updates[m] = xp_val
+
+            if not xp_updates:
+                continue
+
+            # BATCH WRITE
+            base, inc = await self._lin(guild)
+            async with self.config.guild(guild).xp() as xp_data:
+                for member, amount in xp_updates.items():
+                    uid = str(member.id)
+                    old_xp = int(xp_data.get(uid, 0))
+                    new_xp = old_xp + amount
+                    xp_data[uid] = new_xp
+                    
+                    # Check Level Up
+                    old_lvl = level_from_xp(old_xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]), base, inc)
+                    new_lvl = level_from_xp(new_xp, gconf["curve"], float(gconf["multiplier"]), int(gconf["max_level"]), base, inc)
+                    
+                    if new_lvl > old_lvl:
+                        # Schedule alert (don't await inside the lock if possible, but simple sends are okay)
+                        self.bot.loop.create_task(self.maybe_announce_levelup(guild, member, old_lvl, new_lvl))
 
     @voice_tick.before_loop
     async def _before_voice(self):
@@ -321,14 +370,17 @@ class LevelPlus(redcommands.Cog):
         gconf = await self._g(guild)
         if not gconf["restrictions"]["slash_command_xp"]:
             return
+        
         key = (guild.id, interaction.user.id)
         cd = int(gconf["message"]["cooldown"])
         if cd and time.time() - self._last_msg.get(key, 0.0) < cd:
             return
         self._last_msg[key] = time.time()
+        
         val = max(1, int(gconf["message"]["min"]))
-        old, new = await self._add_xp(guild, interaction.user, val)  # type: ignore[arg-type]
         if isinstance(interaction.user, discord.Member):
+            await self._remember_name(guild, interaction.user)
+            old, new = await self._add_xp(guild, interaction.user, val)
             await self.maybe_announce_levelup(guild, interaction.user, old, new)
 
     # ---------- commands ----------
@@ -722,26 +774,23 @@ class LevelPlus(redcommands.Cog):
 
     @xpgrp.command(name="remove")
     async def xp_remove(self, ctx: redcommands.Context, member: discord.Member):
-        data = await self.config.guild(ctx.guild).xp()
-        data.pop(str(member.id), None)
-        await self.config.guild(ctx.guild).xp.set(data)
+        async with self.config.guild(ctx.guild).xp() as data:
+            data.pop(str(member.id), None)
         await ctx.send(f"Removed XP row for {member.mention}.")
 
     @xpgrp.command(name="removeid")
     async def xp_removeid(self, ctx: redcommands.Context, user_id: int):
-        data = await self.config.guild(ctx.guild).xp()
-        data.pop(str(user_id), None)
-        await self.config.guild(ctx.guild).xp.set(data)
+        async with self.config.guild(ctx.guild).xp() as data:
+            data.pop(str(user_id), None)
         await ctx.send(f"Removed XP row for `{user_id}`.")
 
     @xpgrp.command(name="purgebots")
     async def xp_purgebots(self, ctx: redcommands.Context):
-        data = await self.config.guild(ctx.guild).xp()
-        before = len(data)
-        bot_ids = {str(m.id) for m in ctx.guild.members if m.bot}
-        for bid in bot_ids:
-            data.pop(bid, None)
-        await self.config.guild(ctx.guild).xp.set(data)
+        async with self.config.guild(ctx.guild).xp() as data:
+            before = len(data)
+            bot_ids = {str(m.id) for m in ctx.guild.members if m.bot}
+            for bid in bot_ids:
+                data.pop(bid, None)
         await ctx.send(f"Purged **{before - len(data)}** bot row(s).")
 
     @xpgrp.command(name="clear")
@@ -793,13 +842,14 @@ class LevelPlus(redcommands.Cog):
             parsed.append((uid, max(0, xp), alias))
         if not parsed:
             return await ctx.send("No rows parsed.")
-        xpmap = await self.config.guild(ctx.guild).xp(); names = await self.config.guild(ctx.guild).names()
-        for uid, xp, alias in parsed:
-            xpmap[str(uid)] = xp
-            if alias:
-                names[str(uid)] = alias[:100]
-        await self.config.guild(ctx.guild).xp.set(xpmap)
-        await self.config.guild(ctx.guild).names.set(names)
+        
+        async with self.config.guild(ctx.guild).all() as g_data:
+            xpmap = g_data["xp"]
+            names = g_data["names"]
+            for uid, xp, alias in parsed:
+                xpmap[str(uid)] = xp
+                if alias:
+                    names[str(uid)] = alias[:100]
         await ctx.send(f"Imported **{len(parsed)}** user(s).")
 
     @xpgrp.command(name="importlines")
@@ -809,39 +859,32 @@ class LevelPlus(redcommands.Cog):
         identifier = <id> | <@mention> | name#1234 | display/global name
         """
         ok, skip = 0, 0
-        xpmap = await self.config.guild(ctx.guild).xp()
-        names_map = await self.config.guild(ctx.guild).names()
+        
+        # Resolve IDs first to minimalize time inside context manager
+        to_import = []
 
         def resolve_id(identifier: str) -> Optional[int]:
             identifier = identifier.strip()
-            # mention or raw id
             m = re.search(r"(\d{15,25})", identifier)
-            if m:
-                return int(m.group(1))
-            # name#1234
+            if m: return int(m.group(1))
             if "#" in identifier:
                 name, discrim = identifier.rsplit("#", 1)
                 for u in self.bot.users:
                     if not getattr(u, "bot", False) and u.name == name and getattr(u, "discriminator", None) == discrim:
                         return u.id
-            # by display/global/name in guild first
             for mbr in ctx.guild.members:
-                if mbr.bot:
-                    continue
+                if mbr.bot: continue
                 if identifier.lower() in {mbr.display_name.lower(), mbr.name.lower(), (mbr.global_name or "").lower()}:
                     return mbr.id
-            # global cache
             for u in self.bot.users:
-                if getattr(u, "bot", False):
-                    continue
+                if getattr(u, "bot", False): continue
                 if identifier.lower() in {u.name.lower(), (getattr(u, "global_name", "") or "").lower()}:
                     return u.id
             return None
 
         for raw in io.StringIO(lines):
             raw = raw.strip()
-            if not raw:
-                continue
+            if not raw: continue
             try:
                 ident, xp_str = [p.strip() for p in raw.split(",", 1)]
             except ValueError:
@@ -853,16 +896,18 @@ class LevelPlus(redcommands.Cog):
                 xp = int(float(xp_str))
             except Exception:
                 skip += 1; continue
-            xpmap[str(uid)] = max(0, xp)
+            
+            # Resolve name
             mbr = ctx.guild.get_member(uid)
-            if mbr:
-                names_map[str(uid)] = mbr.display_name
-            else:
-                names_map.setdefault(str(uid), ident[:100])
+            alias = mbr.display_name if mbr else ident[:100]
+            to_import.append((uid, max(0, xp), alias))
             ok += 1
 
-        await self.config.guild(ctx.guild).xp.set(xpmap)
-        await self.config.guild(ctx.guild).names.set(names_map)
+        async with self.config.guild(ctx.guild).all() as g_data:
+            for uid, xp, alias in to_import:
+                g_data["xp"][str(uid)] = xp
+                g_data["names"][str(uid)] = alias
+
         await ctx.send(f"Imported **{ok}** row(s), skipped **{skip}**.")
 
     # ---- lookup & aliases
@@ -905,15 +950,15 @@ class LevelPlus(redcommands.Cog):
 
     @namegrp.command(name="set")
     async def name_set(self, ctx: redcommands.Context, member: discord.Member, *, alias: str):
-        names = await self.config.guild(ctx.guild).names()
-        names[str(member.id)] = alias[:100]
-        await self.config.guild(ctx.guild).names.set(names); await ctx.tick()
+        async with self.config.guild(ctx.guild).names() as names:
+            names[str(member.id)] = alias[:100]
+        await ctx.tick()
 
     @namegrp.command(name="setid")
     async def name_setid(self, ctx: redcommands.Context, user_id: int, *, alias: str):
-        names = await self.config.guild(ctx.guild).names()
-        names[str(user_id)] = alias[:100]
-        await self.config.guild(ctx.guild).names.set(names); await ctx.tick()
+        async with self.config.guild(ctx.guild).names() as names:
+            names[str(user_id)] = alias[:100]
+        await ctx.tick()
 
     @namegrp.command(name="get")
     async def name_get(self, ctx: redcommands.Context, user_id: int):
