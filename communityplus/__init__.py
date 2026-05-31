@@ -496,6 +496,103 @@ class CommunityPlus(redcommands.Cog):
         except discord.HTTPException:
             await ctx.send("Discord rejected the role assignment.")
 
+    @com.command(name="invites")
+    @redcommands.guild_only()
+    @redcommands.is_owner()
+    async def com_invites(self, ctx: redcommands.Context) -> None:
+        """DM the bot owner one-use invites for every guild the bot can invite from."""
+
+        requester = ctx.author
+
+        try:
+            await requester.send("Creating server invites. Results will appear below.")
+        except discord.Forbidden:
+            return await ctx.send(
+                "I cannot DM you. Enable DMs from this server or message me first, then try again."
+            )
+
+        made: List[str] = []
+        failed: List[str] = []
+
+        for guild in sorted(self.bot.guilds, key=lambda g: g.name.lower()):
+            me = guild.me
+            if me is None:
+                failed.append(f"❌ {guild.name} `{guild.id}`: cannot resolve bot member")
+                continue
+
+            invite_channel = None
+
+            # Prefer system channel if usable
+            if guild.system_channel:
+                perms = guild.system_channel.permissions_for(me)
+                if perms.create_instant_invite:
+                    invite_channel = guild.system_channel
+
+            # Otherwise use the first text channel where the bot can create invites
+            if invite_channel is None:
+                for channel in guild.text_channels:
+                    perms = channel.permissions_for(me)
+                    if perms.create_instant_invite:
+                        invite_channel = channel
+                        break
+
+            if invite_channel is None:
+                failed.append(f"❌ {guild.name} `{guild.id}`: no channel with Create Invite permission")
+                continue
+
+            try:
+                invite = await invite_channel.create_invite(
+                    max_age=86400,
+                    max_uses=1,
+                    unique=True,
+                    reason=f"Invite requested by bot owner {requester}"
+                )
+
+                made.append(
+                    f"✅ **{guild.name}** `{guild.id}`\n"
+                    f"Channel: #{invite_channel.name}\n"
+                    f"Invite: {invite.url}"
+                )
+
+            except discord.Forbidden:
+                failed.append(f"❌ {guild.name} `{guild.id}`: forbidden creating invite")
+            except discord.HTTPException as e:
+                failed.append(f"❌ {guild.name} `{guild.id}`: Discord error `{e}`")
+            except Exception as e:
+                failed.append(f"❌ {guild.name} `{guild.id}`: unexpected error `{type(e).__name__}: {e}`")
+
+        sections: List[str] = []
+
+        if made:
+            sections.append("## Created Invites\n" + "\n\n".join(made))
+
+        if failed:
+            sections.append("## Failed / Skipped\n" + "\n".join(failed))
+
+        if not sections:
+            sections.append("No guilds found or no invites could be created.")
+
+        full_text = "\n\n".join(sections)
+
+        # Discord message limit safety
+        chunks: List[str] = []
+        current = ""
+
+        for line in full_text.splitlines():
+            if len(current) + len(line) + 1 > 1900:
+                chunks.append(current)
+                current = line
+            else:
+                current += ("\n" if current else "") + line
+
+        if current:
+            chunks.append(current)
+
+        for chunk in chunks:
+            await requester.send(chunk)
+
+        await ctx.send("Invite report sent to your DMs.")
+        
     # ------------------------ subcommands ------------------------
     @com.group(name="autorole")
     async def com_autorole(self, ctx: redcommands.Context): 
