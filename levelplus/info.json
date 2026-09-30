@@ -1,13 +1,27 @@
 {
-  "author": ["Kevin Kelly"],
-  "description": "Per-server XP and levels from messages, reactions, voice participation, and Discord interactions, with configurable curves, leaderboards, announcements, and import/export tools.",
+  "author": [
+    "Kevin Kelly"
+  ],
+  "description": "Per-server XP and levels from messages, reactions, voice participation, and Discord slash commands, with configurable curves, leaderboards, announcements, and import/export tools.",
   "short": "XP, levels, leaderboards, announcements, and migration tools.",
-  "install_msg": "Load with [p]load levelplus, then use [p]level help and [p]level diag. XP sources start enabled. To pause collection, disable message, reaction, and voice XP and set [p]level restrict toggles slashxp false. Review levelplus/README.md for current restriction limits.",
-  "tags": ["leveling", "xp", "leaderboard", "voice", "reactions", "migration"],
+  "install_msg": "Load with [p]load levelplus, then use [p]level help and [p]level diag. XP sources start enabled. To pause collection, disable message, reaction, and voice XP and set [p]level restrict toggles slashxp false. Review levelplus/README.md for restriction behavior.",
+  "tags": [
+    "leveling",
+    "xp",
+    "leaderboard",
+    "voice",
+    "reactions",
+    "migration"
+  ],
   "requirements": [],
   "min_bot_version": "3.5.0",
   "type": "COG",
   "hidden": false,
   "disabled": false,
-  "end_user_data_statement": "This cog stores per-server leveling settings, XP totals keyed by user ID, and saved display names or aliases. XP and aliases persist when members leave. Message contents are inspected to count words but are not stored. Cooldown timestamps are held in memory. Admins can export users with XP rows through exportcsv, remove individual XP rows through remove/removeid, and clear all XP and aliases for a server through clear yes. Individual XP removal does not remove saved aliases. Red user-data export and deletion hooks are not implemented."
+  "end_user_data_statement": "This cog stores per-server leveling settings, XP totals keyed by user ID, and saved display names or aliases. XP and aliases persist when members leave. Message contents are inspected to count words but are not stored. Cooldown timestamps are held in memory. Admins can export users with XP rows through exportcsv, remove individual XP rows through remove/removeid, and clear all XP and aliases for a server through clear yes. Individual XP removal does not remove saved aliases. Red user-data export and deletion hooks return or remove XP and aliases across servers.",
+  "min_python_version": [
+    3,
+    10,
+    0
+  ]
 }

@@ -34,7 +34,7 @@ Enable the **Server Members** intent for join/leave and role features, and the *
 | Seen and statistics | Enabled. Collects timestamps, message/voice counters, presence changes, and activity starts. |
 | Compact embeds | Enabled. |
 
-Managed/integration roles and `@everyone` are excluded from sticky restoration. Roles at or above the bot's highest role cannot be restored. Solo timers are rebuilt when the cog loads.
+Managed/integration roles and `@everyone` are excluded from sticky restoration. Roles at or above the bot's highest role cannot be restored. Solo timers are rebuilt when the cog loads, keyed by server and member, and cancelled on unload or when disabled. Mute/deafen changes do not restart an existing solo deadline. Timers recheck the channel, companions, and enabled state before disconnecting.
 
 ## Commands
 
@@ -81,4 +81,4 @@ Welcome and goodbye templates support `{user}`, `{mention}`, `{server}`, `{count
 
 Red Config stores server settings and IDs for channels/roles, message templates, and per-member data keyed by server and user IDs. Member data includes the first-seen flag, sticky role IDs, event timestamps and channel IDs, presence/platform statuses, last-online/offline times, counters, and game names with launch counts. Ordinary message contents are not saved.
 
-`seenlistcsv` exports a summary for current members, not every stored record. `sticky purge` clears only saved roles. The cog currently has no full user-data export or deletion hook, no command to toggle seen tracking, and no command to toggle solo-disconnect DMs. Statistics reflect events observed while the cog is running, not a historical Discord backfill.
+`seenlistcsv` exports a summary for current members, not every stored record. `sticky purge` clears only saved roles. Red's user-data export hook returns all stored records for that user across servers. Its deletion hook clears those records and cancels pending timers for the user. There is no command to toggle seen tracking or solo-disconnect DMs; their existing Config settings are respected. Statistics reflect events observed while the cog is running, not a historical Discord backfill. Presence duration tracks actual status changes rather than every activity update. Seen lists paginate and exports read member records in one batch.

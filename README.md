@@ -33,7 +33,7 @@ Install and load the cogs you want. For example:
 [p]load communityplus levelplus logplus owoplus
 ```
 
-AudioPlus needs a reachable Lavalink node before it loads. Follow the [AudioPlus setup guide](audioplus/README.md), then install it separately:
+AudioPlus can load before a node is configured. Follow the [AudioPlus setup guide](audioplus/README.md), then install it separately:
 
 ```text
 [p]cog install kevin-cogs audioplus
@@ -50,7 +50,7 @@ Read the cog's guide before loading it on an existing server. Some features star
 
 | Cog | Initial behavior |
 | --- | --- |
-| AudioPlus | Tries to connect to the configured Lavalink node during loading; uses the `audio` command name, also used by Red's bundled Audio cog. |
+| AudioPlus | Connects when the owner configures a node or playback first needs it; uses the `audio` command name, also used by Red's bundled Audio cog. |
 | CommunityPlus | Sticky roles, activity tracking, and solo voice cleanup are enabled. Solo voice cleanup defaults to 900 seconds. Autorole and welcome/goodbye targets need to be configured. |
 | LevelPlus | Message, reaction, and voice XP are enabled, along with level-up announcements. |
 | LogPlus | Needs a destination channel or route before it can post logs. |
@@ -82,7 +82,7 @@ For AudioPlus, use `[p]cog update audioplus` followed by `[p]reload audioplus`.
 
 Settings and persistent records use Red's Config system. CommunityPlus records member activity and sticky roles, LevelPlus retains XP and display names, and OwoPlus stores per-user probability overrides. AudioPlus stores Lavalink connection settings, including the node password.
 
-LogPlus does not persist message contents in its Config, but it can post edited or deleted message text to Discord log channels. OwoPlus reposts transformed messages through webhooks and attempts to delete the originals. Each cog's guide and `info.json` describe its stored data.
+LogPlus does not persist message contents in its Config, but it can post edited or deleted message text to Discord log channels. OwoPlus reposts transformed messages through webhooks and attempts to delete the originals. Each cog's guide and `info.json` describe its stored data. CommunityPlus, LevelPlus, and OwoPlus implement Red's user-data export/deletion hooks. Deletion removes their Config records; it does not delete messages already posted to Discord.
 
 ## Development and support
 
@@ -91,4 +91,4 @@ LogPlus does not persist message contents in its Config, but it can post edited 
 - [Report an issue](https://github.com/kevinwaynekelly/kevin-cogs/issues)
 - [Red Downloader documentation](https://docs.discord.red/en/stable/cog_guides/downloader.html)
 
-Each cog lives in its own folder with `__init__.py`, `info.json`, and a README.
+Each cog has a small `__init__.py` entry point, `cog.py` command/event implementation, `constants.py` defaults, metadata, and a README. Level calculations and haiku detection have separate modules. The regression suite checks real Red Config storage and command registration with mocked Discord calls; CI covers Python 3.10/3.11 and Wavelink 3.4.1/3.5.2. See [CONTRIBUTING.md](CONTRIBUTING.md) for test and benchmark commands.

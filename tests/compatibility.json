@@ -1,0 +1,1975 @@
+{
+  "audioplus": {
+    "class": "AudioPlus",
+    "identifier": 2702045099,
+    "commands": [
+      {
+        "name": "audio",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio setnode",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "host",
+            "str"
+          ],
+          [
+            "port",
+            "int"
+          ],
+          [
+            "password",
+            "str"
+          ],
+          [
+            "secure",
+            "Optional[bool]"
+          ]
+        ]
+      },
+      {
+        "name": "audio shownode",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "audio connectnode",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "audio pingnode",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio playerstate",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio speak",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio undeafen",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio fixvoice",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio debugvc",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio rejoin",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio tone",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio join",
+        "aliases": [
+          "connect",
+          "summon"
+        ],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio leave",
+        "aliases": [
+          "dc",
+          "disconnect"
+        ],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio play",
+        "aliases": [
+          "p"
+        ],
+        "checks": 1,
+        "parameters": [
+          [
+            "query",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "audio skip",
+        "aliases": [
+          "next",
+          "s"
+        ],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio stop",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio pause",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio resume",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio volume",
+        "aliases": [
+          "vol"
+        ],
+        "checks": 1,
+        "parameters": [
+          [
+            "value",
+            "Optional[int]"
+          ]
+        ]
+      },
+      {
+        "name": "audio np",
+        "aliases": [
+          "nowplaying"
+        ],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio queue",
+        "aliases": [
+          "q"
+        ],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "audio shuffle",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      }
+    ],
+    "defaults": {
+      "GLOBAL": {
+        "host": "127.0.0.1",
+        "port": 2333,
+        "password": "youshallnotpass",
+        "secure": false,
+        "resume_timeout": 60
+      }
+    }
+  },
+  "communityplus": {
+    "class": "CommunityPlus",
+    "identifier": 202237189,
+    "commands": [
+      {
+        "name": "com",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "com help",
+        "aliases": [
+          "commands",
+          "?"
+        ],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com diag",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com restore",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "com invites",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "com autorole",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com autorole set",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "role",
+            "discord.Role"
+          ]
+        ]
+      },
+      {
+        "name": "com autorole clear",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com autorole enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com autorole disable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com autorole show",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com sticky",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com sticky enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com sticky disable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com sticky ignore",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com sticky ignore add",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "role",
+            "discord.Role"
+          ]
+        ]
+      },
+      {
+        "name": "com sticky ignore remove",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "role",
+            "discord.Role"
+          ]
+        ]
+      },
+      {
+        "name": "com sticky ignore list",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com sticky purge",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "discord.Member"
+          ]
+        ]
+      },
+      {
+        "name": "com welcome",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com welcome enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com welcome disable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com welcome channel",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "channel",
+            "Optional[discord.TextChannel]"
+          ]
+        ]
+      },
+      {
+        "name": "com welcome message",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "text",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "com welcome preview",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "Optional[discord.Member]"
+          ]
+        ]
+      },
+      {
+        "name": "com cya",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com cya enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com cya disable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com cya channel",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "channel",
+            "Optional[discord.TextChannel]"
+          ]
+        ]
+      },
+      {
+        "name": "com cya message",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "text",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "com cya preview",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "Optional[discord.Member]"
+          ]
+        ]
+      },
+      {
+        "name": "com vcsolo",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com vcsolo enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com vcsolo disable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com vcsolo idle",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "seconds",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "com seen",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "Optional[discord.Member]"
+          ]
+        ]
+      },
+      {
+        "name": "com seendetail",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "Optional[discord.Member]"
+          ]
+        ]
+      },
+      {
+        "name": "com stats",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "Optional[discord.Member]"
+          ]
+        ]
+      },
+      {
+        "name": "com seenlist",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "limit",
+            "Optional[int]"
+          ]
+        ]
+      },
+      {
+        "name": "com seenlistcsv",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "com embeds",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "compact",
+            "Optional[bool]"
+          ]
+        ]
+      }
+    ],
+    "defaults": {
+      "GUILD": {
+        "embeds": {
+          "compact": true
+        },
+        "autorole": {
+          "enabled": true,
+          "role_id": null
+        },
+        "sticky": {
+          "enabled": true,
+          "ignore": []
+        },
+        "welcome": {
+          "enabled": true,
+          "channel_id": null,
+          "message": "Welcome {mention}! You\u2019re member #{count} of **{server}**."
+        },
+        "cya": {
+          "enabled": true,
+          "channel_id": null,
+          "message": "Cya {user} \ud83d\udc4b"
+        },
+        "vcsolo": {
+          "enabled": true,
+          "idle_seconds": 900,
+          "dm_notify": true
+        },
+        "seen": {
+          "enabled": true
+        }
+      },
+      "MEMBER": {
+        "ever_seen": false,
+        "sticky_roles": [],
+        "seen": {
+          "any": 0,
+          "kind": "",
+          "where": 0,
+          "message": 0,
+          "message_ch": 0,
+          "voice": 0,
+          "voice_ch": 0,
+          "join": 0,
+          "leave": 0,
+          "presence": {
+            "status": "",
+            "since": 0,
+            "last_online": 0,
+            "last_offline": 0,
+            "desktop": "unknown",
+            "mobile": "unknown",
+            "web": "unknown"
+          }
+        },
+        "stats": {
+          "messages": 0,
+          "voice_joins": 0,
+          "voice_moves": 0,
+          "voice_leaves": 0,
+          "stream_starts": 0,
+          "video_starts": 0,
+          "game_launches": 0,
+          "activity_starts": {
+            "playing": 0,
+            "streaming": 0,
+            "listening": 0,
+            "watching": 0,
+            "competing": 0,
+            "custom": 0
+          },
+          "status_changes": {
+            "online": 0,
+            "offline": 0,
+            "idle": 0,
+            "dnd": 0,
+            "unknown": 0
+          }
+        },
+        "activity_names": {}
+      }
+    }
+  },
+  "levelplus": {
+    "class": "LevelPlus",
+    "identifier": 2010881,
+    "commands": [
+      {
+        "name": "level",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "level help",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level diag",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level testmsg",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "Optional[discord.Member]"
+          ]
+        ]
+      },
+      {
+        "name": "level testup",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "Optional[discord.Member]"
+          ],
+          [
+            "levels",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level show",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "Optional[discord.Member]"
+          ]
+        ]
+      },
+      {
+        "name": "level leaderboard",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "top",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level formula",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level formula curve",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "curve",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level formula multiplier",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "mult",
+            "float"
+          ]
+        ]
+      },
+      {
+        "name": "level formula maxlevel",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "level",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level formula linear",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level formula linear base",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "value",
+            "float"
+          ]
+        ]
+      },
+      {
+        "name": "level formula linear inc",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "value",
+            "float"
+          ]
+        ]
+      },
+      {
+        "name": "level formula preset",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "which",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level formula calibrate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "L1",
+            "int"
+          ],
+          [
+            "XP1",
+            "int"
+          ],
+          [
+            "L2",
+            "int"
+          ],
+          [
+            "XP2",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level message",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level message mode",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "mode",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level message min",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "value",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level message max",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "value",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level message cooldown",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "seconds",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level message enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "enabled",
+            "Optional[bool]"
+          ]
+        ]
+      },
+      {
+        "name": "level reaction",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level reaction awards",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "awards",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level reaction min",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "value",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level reaction max",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "value",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level reaction cooldown",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "seconds",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level reaction enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "enabled",
+            "Optional[bool]"
+          ]
+        ]
+      },
+      {
+        "name": "level voice",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level voice enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "enabled",
+            "Optional[bool]"
+          ]
+        ]
+      },
+      {
+        "name": "level voice range",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "min_points",
+            "int"
+          ],
+          [
+            "max_points",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level voice cooldown",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "seconds",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level voice minmembers",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "count",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level voice antiafk",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "enabled",
+            "Optional[bool]"
+          ]
+        ]
+      },
+      {
+        "name": "level restrict",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level restrict nochannels",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level restrict nochannels add",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "channel",
+            "discord.TextChannel"
+          ]
+        ]
+      },
+      {
+        "name": "level restrict nochannels remove",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "channel",
+            "discord.TextChannel"
+          ]
+        ]
+      },
+      {
+        "name": "level restrict nochannels list",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level restrict nochannels clear",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level restrict noroles",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level restrict noroles add",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "role",
+            "discord.Role"
+          ]
+        ]
+      },
+      {
+        "name": "level restrict noroles remove",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "role",
+            "discord.Role"
+          ]
+        ]
+      },
+      {
+        "name": "level restrict noroles list",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level restrict noroles clear",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level restrict toggles",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "feature",
+            "str"
+          ],
+          [
+            "enabled",
+            "Optional[bool]"
+          ]
+        ]
+      },
+      {
+        "name": "level levelup",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level levelup enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "enabled",
+            "Optional[bool]"
+          ]
+        ]
+      },
+      {
+        "name": "level levelup channel",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "channel",
+            "Optional[discord.TextChannel]"
+          ]
+        ]
+      },
+      {
+        "name": "level levelup template",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "text",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level xp",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level xp set",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "discord.Member"
+          ],
+          [
+            "amount",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level xp setid",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "user_id",
+            "int"
+          ],
+          [
+            "amount",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level xp add",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "discord.Member"
+          ],
+          [
+            "amount",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level xp remove",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "discord.Member"
+          ]
+        ]
+      },
+      {
+        "name": "level xp removeid",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "user_id",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "level xp purgebots",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level xp clear",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "confirm",
+            "Optional[str]"
+          ]
+        ]
+      },
+      {
+        "name": "level xp exportcsv",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level xp importcsv",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "raw",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level xp importlines",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "lines",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level lookup",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "query",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level name",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "level name set",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "discord.Member"
+          ],
+          [
+            "alias",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level name setid",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "user_id",
+            "int"
+          ],
+          [
+            "alias",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "level name get",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "user_id",
+            "int"
+          ]
+        ]
+      }
+    ],
+    "defaults": {
+      "GUILD": {
+        "curve": "linear",
+        "multiplier": 1.0,
+        "max_level": 0,
+        "linear": {
+          "base": 83.2,
+          "inc": 100.433
+        },
+        "message": {
+          "enabled": true,
+          "mode": "perword",
+          "min": 1,
+          "max": 1,
+          "cooldown": 60
+        },
+        "reaction": {
+          "enabled": true,
+          "awards": "both",
+          "min": 25,
+          "max": 25,
+          "cooldown": 300
+        },
+        "voice": {
+          "enabled": true,
+          "min": 15,
+          "max": 40,
+          "cooldown": 180,
+          "min_members": 1,
+          "anti_afk": false
+        },
+        "restrictions": {
+          "no_channels": [],
+          "no_roles": [],
+          "thread_xp": true,
+          "forum_xp": true,
+          "text_in_voice_xp": true,
+          "slash_command_xp": true
+        },
+        "levelup": {
+          "enabled": true,
+          "channel_id": null,
+          "template": "{user.mention} has reached level **{user.level}**! GG!",
+          "image": false
+        },
+        "xp": {},
+        "names": {}
+      }
+    }
+  },
+  "logplus": {
+    "class": "LogPlus",
+    "identifier": 85622289,
+    "commands": [
+      {
+        "name": "logplus",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "logplus help",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus rate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "seconds",
+            "Optional[float]"
+          ]
+        ]
+      },
+      {
+        "name": "logplus style",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus style compact",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "flag",
+            "Optional[str]"
+          ]
+        ]
+      },
+      {
+        "name": "logplus style preview",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus channel",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus setchannel",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "channel",
+            "discord.TextChannel"
+          ]
+        ]
+      },
+      {
+        "name": "logplus clearchannel",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus route",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus route set",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "source",
+            "discord.TextChannel"
+          ],
+          [
+            "dest",
+            "discord.TextChannel"
+          ]
+        ]
+      },
+      {
+        "name": "logplus route clear",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "source",
+            "discord.TextChannel"
+          ]
+        ]
+      },
+      {
+        "name": "logplus route list",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle message",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle message edit",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle message delete",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle message bulk",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle message pins",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle reactions",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle reactions add",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle reactions remove",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle reactions clear",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server channelcreate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server channeldelete",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server channelupdate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server rolecreate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server roledelete",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server roleupdate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server serverupdate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server emojiupdate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server stickerupdate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server integrationsupdate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server webhooksupdate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server threadcreate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server threaddelete",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle server thredupdate",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle invites",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle invites create",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle invites delete",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member join",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member leave",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member roles",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member nick",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member ban",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member unban",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member timeout",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle member presence",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle voice",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle voice join",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle voice move",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle voice leave",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle voice mute",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle voice deaf",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle voice video",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle voice stream",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle commands_",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle commands_ thisbot",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus toggle commands_ otherbots",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "logplus diag",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      }
+    ],
+    "defaults": {
+      "GUILD": {
+        "log_channel": null,
+        "fast_logs": true,
+        "overrides": {},
+        "message": {
+          "edit": true,
+          "delete": true,
+          "bulk_delete": true,
+          "pins": true,
+          "exempt_channels": []
+        },
+        "reactions": {
+          "add": true,
+          "remove": true,
+          "clear": true
+        },
+        "server": {
+          "channel_create": true,
+          "channel_delete": true,
+          "channel_update": true,
+          "role_create": true,
+          "role_delete": true,
+          "role_update": true,
+          "server_update": true,
+          "emoji_update": true,
+          "sticker_update": true,
+          "integrations_update": true,
+          "webhooks_update": true,
+          "thread_create": true,
+          "thread_delete": true,
+          "thread_update": true,
+          "exempt_channels": []
+        },
+        "invites": {
+          "create": true,
+          "delete": true
+        },
+        "member": {
+          "join": true,
+          "leave": true,
+          "roles_changed": true,
+          "nick_changed": true,
+          "ban": true,
+          "unban": true,
+          "timeout": true,
+          "presence": true
+        },
+        "voice": {
+          "join": true,
+          "move": true,
+          "leave": true,
+          "mute": true,
+          "deaf": true,
+          "video": true,
+          "stream": true
+        },
+        "sched": {
+          "create": true,
+          "update": true,
+          "delete": true,
+          "user_add": true,
+          "user_remove": true
+        },
+        "commands": {
+          "this_bot": true,
+          "other_bots": true
+        },
+        "rate": {
+          "seconds": 2.0
+        },
+        "style": {
+          "compact": true
+        }
+      }
+    }
+  },
+  "owoplus": {
+    "class": "OwoPlus",
+    "identifier": 6164250,
+    "commands": [
+      {
+        "name": "owoplus",
+        "aliases": [],
+        "checks": 1,
+        "parameters": []
+      },
+      {
+        "name": "owoplus help",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus ownerbypass",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "state",
+            "Optional[str]"
+          ]
+        ]
+      },
+      {
+        "name": "owoplus poem",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus poem on",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus poem off",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus poem diag",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "text",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "owoplus enable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus disable",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus onein",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "n",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "owoplus prob",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus prob add",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "discord.Member"
+          ],
+          [
+            "n",
+            "int"
+          ]
+        ]
+      },
+      {
+        "name": "owoplus prob remove",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "member",
+            "discord.Member"
+          ]
+        ]
+      },
+      {
+        "name": "owoplus prob list",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus preview",
+        "aliases": [],
+        "checks": 0,
+        "parameters": [
+          [
+            "text",
+            "str"
+          ]
+        ]
+      },
+      {
+        "name": "owoplus diag",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      },
+      {
+        "name": "owoplus test",
+        "aliases": [],
+        "checks": 0,
+        "parameters": []
+      }
+    ],
+    "defaults": {
+      "GUILD": {
+        "enabled": false,
+        "one_in": 1000,
+        "user_probs": {},
+        "owner_bypass": true,
+        "haiku_enabled": true
+      }
+    }
+  }
+}
