@@ -234,7 +234,8 @@ class CommunityPlus(redcommands.Cog):
 
     # ------------------------ stats helpers (OPTIMIZED) ------------------------
     async def _bump_stat(self, member: discord.Member, key: str, delta: int = 1) -> None:
-        async with self.config.member(member).stats() as stats:
+        async with self.config.member(member).all() as data:
+            stats = data["stats"]
             stats[key] = int(stats.get(key, 0)) + delta
 
     async def _seen_mark(self, member, *, kind, where=0):
@@ -601,7 +602,9 @@ class CommunityPlus(redcommands.Cog):
 
     @com_sticky.command(name="purge")
     async def cst_purge(self, ctx: redcommands.Context, member: discord.Member):
-        await self.config.member(member).sticky_roles.set([])
+        group = self.config.member(member)
+        async with group.get_lock():
+            await group.sticky_roles.set([])
         await ctx.tick()
 
     @com.group(name="welcome")
@@ -904,7 +907,9 @@ class CommunityPlus(redcommands.Cog):
 
         if g["seen"]["enabled"]:
             await self._seen_mark(member, kind="join")
-        await self.config.member(member).ever_seen.set(True)
+        group = self.config.member(member)
+        async with group.get_lock():
+            await group.ever_seen.set(True)
 
     @commands.Cog.listener()
     @guild_enabled
@@ -919,7 +924,9 @@ class CommunityPlus(redcommands.Cog):
                 for r in member.roles
                 if not r.is_default() and not r.managed and r.id not in ignored
             ]
-            await self.config.member(member).sticky_roles.set(role_ids)
+            group = self.config.member(member)
+            async with group.get_lock():
+                await group.sticky_roles.set(role_ids)
 
         if g["cya"]["enabled"] and g["cya"]["channel_id"]:
             text = self._format_template(g["cya"]["message"], member)
@@ -1083,7 +1090,9 @@ class CommunityPlus(redcommands.Cog):
 
     async def red_delete_data_for_user(self, *, requester, user_id):
         for guild_id in await self.config.all_members():
-            await self.config.member_from_ids(guild_id, user_id).clear()
+            group = self.config.member_from_ids(guild_id, user_id)
+            async with group.get_lock():
+                await group.clear()
         for key in list(self._solo_tasks):
             if key[1] == user_id:
                 self._solo_tasks.pop(key).cancel()

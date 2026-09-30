@@ -148,3 +148,16 @@ async def test_disabled_seen_does_not_collect_voice_activity(bot, guild):
     after = SimpleNamespace(channel=None, self_stream=True, self_video=False)
     await cog.on_voice_state_update(member, before, after)
     cog._record_activity.assert_not_awaited()
+
+
+async def test_sticky_purge_and_activity_updates_use_consistent_locks(bot, guild):
+    cog = CommunityPlus(bot)
+    member = make_member(guild)
+    await cog.config.member(member).sticky_roles.set([111, 222])
+    await asyncio.gather(
+        CommunityPlus.cst_purge.callback(cog, make_context(guild), member),
+        *(cog._record_activity(member, "message", 456, {"messages": 1}) for _ in range(30)),
+    )
+    data = await cog.config.member(member).all()
+    assert data["sticky_roles"] == []
+    assert data["stats"]["messages"] == 30

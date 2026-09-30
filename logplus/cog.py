@@ -415,16 +415,10 @@ class LogPlus(redcommands.Cog):
 
     @route.command(name="set")
     async def route_set(
-        self,
-        ctx: redcommands.Context,
-        source: discord.TextChannel,
-        dest: discord.TextChannel,
+        self, ctx: redcommands.Context, source: discord.TextChannel, dest: discord.TextChannel
     ):
-        overrides = await self.config.guild(ctx.guild).overrides()
-        if not isinstance(overrides, dict):
-            overrides = {}
-        overrides[str(source.id)] = int(dest.id)
-        await self.config.guild(ctx.guild).overrides.set(overrides)
+        async with self.config.guild(ctx.guild).overrides() as overrides:
+            overrides[str(source.id)] = dest.id
         await ctx.send(
             embed=await self._E(
                 ctx.guild, "Route", f"{_UI['ok']} {source.mention} → {dest.mention}"
@@ -433,22 +427,14 @@ class LogPlus(redcommands.Cog):
 
     @route.command(name="clear")
     async def route_clear(self, ctx: redcommands.Context, source: discord.TextChannel):
-        overrides = await self.config.guild(ctx.guild).overrides()
-        if isinstance(overrides, dict) and str(source.id) in overrides:
-            overrides.pop(str(source.id), None)
-            await self.config.guild(ctx.guild).overrides.set(overrides)
-            await ctx.send(
-                embed=await self._E(ctx.guild, "Route", f"{_UI['ok']} Cleared for {source.mention}")
-            )
-        else:
-            await ctx.send(
-                embed=await self._E(
-                    ctx.guild,
-                    "Route",
-                    "No override for that channel.",
-                    color=discord.Color.orange(),
-                )
-            )
+        async with self.config.guild(ctx.guild).overrides() as overrides:
+            removed = overrides.pop(str(source.id), None)
+        text = (
+            f"{_UI['ok']} Cleared for {source.mention}"
+            if removed is not None
+            else "No override for that channel."
+        )
+        await ctx.send(embed=await self._E(ctx.guild, "Route", text))
 
     @route.command(name="list")
     async def route_list(self, ctx: redcommands.Context):
@@ -472,12 +458,11 @@ class LogPlus(redcommands.Cog):
         pass
 
     async def _flip(self, ctx: redcommands.Context, group: str, key: str):
-        section = getattr(self.config.guild(ctx.guild), group)
-        value = section.get_attr(key)
-        cur = await value()
-        await value.set(not cur)
+        async with self.config.guild(ctx.guild).get_attr(group)() as section:
+            section[key] = not section[key]
+            enabled = section[key]
         await ctx.send(
-            embed=await self._E(ctx.guild, "Toggle", f"{group}.{key} → **{self._onoff(not cur)}**")
+            embed=await self._E(ctx.guild, "Toggle", f"{group}.{key} → **{self._onoff(enabled)}**")
         )
 
     # message toggles

@@ -139,3 +139,20 @@ def test_corrected_command_names_keep_old_aliases(bot):
     assert toggles.get_command("commands") is toggles.get_command("commands_")
     server = toggles.get_command("server")
     assert server.get_command("threadupdate") is server.get_command("thredupdate")
+
+
+async def test_concurrent_routes_and_toggles_preserve_each_update(bot, guild):
+    import asyncio
+
+    cog = LogPlus(bot)
+    sources = [make_channel(guild, 1000 + i) for i in range(10)]
+    destination = make_channel(guild, 2000)
+    ctx = make_context(guild)
+    await asyncio.gather(
+        *(LogPlus.route_set.callback(cog, ctx, source, destination) for source in sources)
+    )
+    assert await cog.config.guild(guild).overrides() == {
+        str(source.id): destination.id for source in sources
+    }
+    await asyncio.gather(cog._flip(ctx, "message", "edit"), cog._flip(ctx, "message", "edit"))
+    assert await cog.config.guild(guild).message.edit() is True
