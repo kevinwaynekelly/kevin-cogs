@@ -1,0 +1,14 @@
+{
+  "author": ["Kevin Kelly"],
+  "short": "Lavalink v4 music playback and voice diagnostics using Wavelink 3.x.",
+  "description": "Music playback, queues, volume controls, and voice diagnostics for Red using Lavalink v4 and Wavelink 3.x. A reachable Lavalink node is required during cog loading. The command group is audio, which conflicts with Red's bundled Audio cog.",
+  "install_msg": "Read https://github.com/kevinwaynekelly/kevin-cogs/blob/main/audioplus/README.md before loading. On first load, AudioPlus connects to http://127.0.0.1:2333 with the default Lavalink password. Unload Red's bundled Audio cog first if it is loaded. Node setup is owner-only: [p]audio setnode <host> <port> <password> <secure>, then [p]audio connectnode. Use [p]help audio for commands.",
+  "requirements": ["wavelink>=3.4.1,<4.0.0", "aiohttp>=3.8"],
+  "tags": ["audio", "music", "lavalink", "wavelink"],
+  "min_bot_version": "3.5.0",
+  "min_python_version": [3, 10, 0],
+  "type": "COG",
+  "hidden": false,
+  "disabled": false,
+  "end_user_data_statement": "Stores global Lavalink connection settings in Red Config: host, port, password, TLS flag, and resume timeout. Does not persist user listening histories or playlists in its own Config. Playback state is maintained in memory and on the connected Lavalink node."
+}

@@ -1,0 +1,13 @@
+{
+  "author": ["Kevin Kelly"],
+  "description": "Community tools for first-time autoroles, sticky roles, welcome and goodbye embeds, solo voice disconnection, and member seen/presence statistics.",
+  "short": "Roles, greetings, solo voice handling, and member statistics.",
+  "install_msg": "Load with [p]load communityplus, then use [p]com help and [p]com diag. Solo voice disconnection starts enabled with a 900-second timeout; use [p]com vcsolo disable to turn it off while configuring the cog.",
+  "tags": ["community", "autorole", "roles", "welcome", "voice", "seen", "statistics"],
+  "requirements": [],
+  "min_bot_version": "3.5.0",
+  "type": "COG",
+  "hidden": false,
+  "disabled": false,
+  "end_user_data_statement": "This cog stores per-server settings, channel and role IDs, and welcome/goodbye templates. Per member, keyed by server and user IDs, it stores a first-seen flag, sticky role IDs, event timestamps and channel IDs, presence and platform statuses, last-online/offline times, message/voice/activity/status counters, and game names with launch counts. Ordinary message contents are not stored. The seenlistcsv command exports a summary for current members, and sticky purge clears only saved roles. Full user-data export and deletion hooks are not implemented."
+}
