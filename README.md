@@ -9,10 +9,10 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 | Cog | What it does | Commands | Guide |
 | --- | --- | --- | --- |
 | AudioPlus | Native Discord music playback, YouTube/SoundCloud search, queues, and voice diagnostics | `[p]play`, `/play`, `[p]audio` | [Setup and commands](audioplus/README.md) |
-| CommunityPlus | Autoroles, sticky roles, welcome/goodbye messages, activity tracking, and solo voice cleanup | `[p]com` | [Setup and commands](communityplus/README.md) |
-| LevelPlus | Message, reaction, and voice XP with configurable level curves and import/export tools | `[p]level` | [Setup and commands](levelplus/README.md) |
-| LogPlus | Server event logs with a default destination and per-channel routing | `[p]logplus` | [Setup and commands](logplus/README.md) |
-| OwoPlus | Webhook message transformations and automatic haiku formatting | `[p]owoplus` | [Setup and commands](owoplus/README.md) |
+| CommunityPlus | Autoroles, sticky roles, welcome/goodbye messages, activity tracking, and solo voice cleanup | `[p]community`, `[p]seen`, `/activity` | [Setup and commands](communityplus/README.md) |
+| LevelPlus | Message, reaction, and voice XP with configurable level curves and import/export tools | `[p]level`, `[p]rank`, `/leaderboard` | [Setup and commands](levelplus/README.md) |
+| LogPlus | Server event logs with a default destination and per-channel routing | `[p]log`, `[p]logchannel`, `/log event` | [Setup and commands](logplus/README.md) |
+| OwoPlus | Webhook message transformations and automatic haiku formatting | `[p]owo`, `/owo preview` | [Setup and commands](owoplus/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
 
@@ -20,7 +20,7 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 
 All five cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
 
-Red's native `[p]help` lists descriptions for every cog command. Use `[p]help com`, `[p]help level`, or `[p]help logplus` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
+Red's native `[p]help` lists descriptions for every cog command. Use `[p]help community`, `[p]help level`, or `[p]help log` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
 
 ## Install
 
@@ -62,24 +62,54 @@ Read the cog's guide before loading it on an existing server. Some features star
 | CommunityPlus | Sticky roles, activity tracking, and solo voice cleanup are enabled. Solo voice cleanup defaults to 900 seconds. Autorole and welcome/goodbye targets need to be configured. |
 | LevelPlus | Message, reaction, and voice XP are enabled, along with level-up announcements. |
 | LogPlus | Needs a destination channel or route before it can post logs. |
-| OwoPlus | Disabled until `[p]owoplus enable`. Haiku formatting is enabled within the cog's settings. |
+| OwoPlus | Disabled until `[p]owo enable`. Haiku formatting is enabled within the cog's settings. |
 
 Common starting points:
 
 ```text
-[p]com help
+[p]community help
 [p]level help
-[p]logplus help
-[p]owoplus help
+[p]log help
+[p]owo help
 ```
 
 Server management commands generally require Red's admin access or the **Manage Server** permission. LevelPlus also exposes member commands. AudioPlus legacy node commands remain owner-only for compatibility; ordinary native playback controls are server commands. Each guide lists the permissions required by its features.
 
+## Direct and slash commands
+
+| Direct text command | Slash equivalent | Purpose |
+| --- | --- | --- |
+| `[p]rank [@member]` | `/rank` | Member level, XP, and progress. |
+| `[p]leaderboard [top]` | `/leaderboard` | Highest XP totals. Text alias: `lb`. |
+| `[p]levellookup <query>` | `/levellookup` | Find member IDs by mention, ID, or name. |
+| `[p]seen [@member]` | `/seen` | Last-seen information. |
+| `[p]seendetail [@member]` | `/seendetail` | Detailed activity timestamps. |
+| `[p]activity [@member]` | `/activity` | Activity counters and games. Text alias: `stats`. |
+| `[p]seenlist [limit]` | `/seenlist` | Recently active members. |
+| `[p]logstatus` | `/logstatus` | Logging settings. |
+| `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
+| `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
+
+Community and logging shortcuts retain administrator checks. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 109 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
+
+Run these commands once as the bot owner to enable the new slash groups and shortcuts:
+
+```text
+[p]slash enablecog communityplus
+[p]slash enablecog levelplus
+[p]slash enablecog logplus
+[p]slash enablecog owoplus
+[p]slash sync
+```
+
+Cog package names used by Downloader and `load`/`reload` still include `plus`. Public command names do not. Slash commands use the same Red checks and saved permission rules as their text counterparts; shortcuts also check the original grouped command. Discord synchronization and a bot invite with application-command access are required before slash commands appear.
+
 ## Updates
 
 ```text
-[p]cog update communityplus levelplus logplus owoplus
+[p]cog update True communityplus levelplus logplus owoplus
 [p]reload communityplus levelplus logplus owoplus
+[p]slash sync
 ```
 
 For the AudioPlus native-backend upgrade, use `[p]cog update False audioplus`, install the local dependencies, and restart Red. Later source updates can use `[p]cog update True audioplus`. See its [upgrade instructions](audioplus/README.md#upgrading-from-the-lavalink-backend).
@@ -87,6 +117,8 @@ For the AudioPlus native-backend upgrade, use `[p]cog update False audioplus`, i
 If new AudioPlus prefix commands remain silent, run `[p]reload audioplus` and `[p]help play` after updating. An update that reports the cog is already current does not automatically reload it. See the [command-loading checks](audioplus/README.md#if-new-prefix-commands-do-not-respond).
 
 `[p]repo update kevin-cogs` updates the downloaded repository; use `cog update` to update installed cogs. If you named the repository differently when adding it, use that name in repository and installation commands.
+
+The command rename intentionally replaces `com` with `community`, `logplus` with `log`, and `owoplus` with `owo`, without old-name aliases. Saved cog settings, XP, and member records are unchanged. Reapply custom Red permission or disabled-command rules that referenced an old command path using its new name. Run `slash enablecog` for each newly enabled cog and `slash sync` after reloading.
 
 ## Data
 

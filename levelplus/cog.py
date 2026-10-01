@@ -21,6 +21,7 @@ from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
 
+from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
 from .constants import DEFAULTS_GUILD, WORD_RE
 from .events import guild_enabled
 from .levels import cumulative_xp, level_from_xp
@@ -39,6 +40,7 @@ class LevelPlus(redcommands.Cog):
         return await self._presentation.send(ctx, content, **kwargs)
 
     def __init__(self, bot: Red) -> None:
+        attach_prefix_groups(self)
         self.bot: Red = bot
         self._presentation = Presentation("LevelPlus", "level")
         self.config: Config = Config.get_conf(self, identifier=0x1EAF01, force_registration=True)
@@ -301,7 +303,7 @@ class LevelPlus(redcommands.Cog):
         await self.maybe_announce_levelup(interaction.guild, interaction.user, old, new)
 
     # ---------- commands ----------
-    @redcommands.group(name="level", invoke_without_command=True)
+    @redcommands.hybrid_group(name="level", invoke_without_command=True, fallback="status")
     @redcommands.guild_only()
     async def level(self, ctx: redcommands.Context):
         """Manage XP, levels, leaderboards, and announcements.
@@ -363,7 +365,12 @@ class LevelPlus(redcommands.Cog):
         e.description = f"Commands and examples use `{p}` as prefix."
         e.add_field(
             name="Core",
-            value=f"• `{p}level` • `{p}level help` • `{p}level diag`\n• `{p}level show [@user]` • `{p}level leaderboard [N]`\n• `{p}level testmsg [@user]` • `{p}level testup [@user] [levels]`",
+            value=f"• `{p}level` • `{p}level help` • `{p}level diag`\n• `{p}rank [@user]` • `{p}leaderboard [N]` • `{p}levellookup <query>`\n• `{p}level testmsg [@user]` • `{p}level testup [@user] [levels]`",
+            inline=False,
+        )
+        e.add_field(
+            name="Slash commands",
+            value="Use `/rank`, `/leaderboard`, or `/level status`. `/level` also contains XP, formula, source, and announcement settings with the same permission checks.",
             inline=False,
         )
         e.add_field(
@@ -584,6 +591,25 @@ class LevelPlus(redcommands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
+    # Direct member commands share the grouped implementations and permission rules.
+    @redcommands.hybrid_command(name="rank")
+    @redcommands.guild_only()
+    async def rank(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Show a member's level, XP, and progress."""
+        await invoke_shortcut(self, ctx, self.show, member=member)
+
+    @redcommands.hybrid_command(name="leaderboard", aliases=["lb"])
+    @redcommands.guild_only()
+    async def direct_leaderboard(self, ctx: redcommands.Context, top: int = 10):
+        """Show the server's highest XP totals, up to 50 members."""
+        await invoke_shortcut(self, ctx, self.leaderboard, top=top)
+
+    @redcommands.hybrid_command(name="levellookup")
+    @redcommands.guild_only()
+    async def direct_lookup(self, ctx: redcommands.Context, *, query: str):
+        """Find a member's ID by mention, numeric ID, or name."""
+        await invoke_shortcut(self, ctx, self.level_lookup, query=query)
+
     # ---- formula
     @level.group(name="formula", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
@@ -617,7 +643,7 @@ class LevelPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).max_level.set(int(max(0, level)))
         await self._presentation.confirm(ctx)
 
-    @formula.group(name="linear", autohelp=False)
+    @prefix_group(formula, name="linear", autohelp=False)
     async def formula_linear(self, ctx: redcommands.Context):
         """Configure the base and increment of the linear curve."""
         if ctx.invoked_subcommand is None:
@@ -851,7 +877,7 @@ class LevelPlus(redcommands.Cog):
         if ctx.invoked_subcommand is None:
             await self._presentation.help(ctx)
 
-    @restrict.group(name="nochannels", autohelp=False)
+    @prefix_group(restrict, name="nochannels", autohelp=False)
     async def res_noch(self, ctx: redcommands.Context):
         """Manage channels excluded from XP awards."""
         if ctx.invoked_subcommand is None:
@@ -891,7 +917,7 @@ class LevelPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).restrictions.no_channels.set([])
         await self._presentation.confirm(ctx)
 
-    @restrict.group(name="noroles", autohelp=False)
+    @prefix_group(restrict, name="noroles", autohelp=False)
     async def res_noroles(self, ctx: redcommands.Context):
         """Manage roles whose members cannot earn XP."""
         if ctx.invoked_subcommand is None:
@@ -1011,7 +1037,7 @@ class LevelPlus(redcommands.Cog):
         await self._set_xp(ctx.guild, member.id, amount)
         await self._presentation.confirm(ctx)
 
-    @xpgrp.command(name="setid")
+    @xpgrp.command(name="setid", with_app_command=False)
     async def xp_setid(self, ctx: redcommands.Context, user_id: int, amount: int):
         """Set total XP by user ID."""
         await self._set_xp(ctx.guild, user_id, amount)
@@ -1035,7 +1061,7 @@ class LevelPlus(redcommands.Cog):
             data.pop(str(member.id), None)
         await self._reply(ctx, f"Removed XP row for {member.mention}.", tone="success")
 
-    @xpgrp.command(name="removeid")
+    @xpgrp.command(name="removeid", with_app_command=False)
     async def xp_removeid(self, ctx: redcommands.Context, user_id: int):
         """Remove an XP row by user ID while keeping its alias.
 
@@ -1274,14 +1300,14 @@ class LevelPlus(redcommands.Cog):
             names[str(member.id)] = alias[:100]
         await self._presentation.confirm(ctx)
 
-    @namegrp.command(name="setid")
+    @namegrp.command(name="setid", with_app_command=False)
     async def name_setid(self, ctx: redcommands.Context, user_id: int, *, alias: str):
         """Save a leaderboard alias by user ID."""
         async with self.config.guild(ctx.guild).names() as names:
             names[str(user_id)] = alias[:100]
         await self._presentation.confirm(ctx)
 
-    @namegrp.command(name="get")
+    @namegrp.command(name="get", with_app_command=False)
     async def name_get(self, ctx: redcommands.Context, user_id: int):
         """Show the saved name or alias for a user ID."""
         names = await self.config.guild(ctx.guild).names()
@@ -1292,6 +1318,7 @@ class LevelPlus(redcommands.Cog):
         self.voice_tick.start()
 
     async def cog_before_invoke(self, ctx):
+        await prepare_hybrid(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_after_invoke(self, ctx):

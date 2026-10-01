@@ -2,9 +2,9 @@
   "author": [
     "Kevin Kelly"
   ],
-  "description": "Per-server XP and levels from messages, reactions, voice participation, and Discord slash commands, with configurable curves, leaderboards, announcements, and import/export tools.",
+  "description": "Per-server XP and levels from messages, reactions, voice participation, and Discord slash commands, with configurable curves, leaderboards, announcements, and import/export tools. Use [p]rank and [p]leaderboard, with matching slash commands and /level settings.",
   "short": "XP, levels, leaderboards, announcements, and migration tools.",
-  "install_msg": "Load with [p]load levelplus, then use [p]level help and [p]level diag. XP sources start enabled. To pause collection, disable message, reaction, and voice XP and set [p]level restrict toggles slashxp false. Review levelplus/README.md for restriction behavior.",
+  "install_msg": "Load with [p]load levelplus, then use [p]level help and [p]level diag. XP sources start enabled. To pause collection, disable message, reaction, and voice XP and set [p]level restrict toggles slashxp false. Review levelplus/README.md for restriction behavior. Enable slash commands as the bot owner with [p]slash enablecog levelplus, then [p]slash sync.",
   "tags": [
     "leveling",
     "xp",

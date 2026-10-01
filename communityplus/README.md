@@ -9,22 +9,22 @@ Commands, confirmations, welcome/goodbye notices, and voice-timeout DMs use the 
 
 ## Setup
 
-All `com` commands run in a server and require a Red admin or **Manage Server** permission. `restore` and `invites` additionally require the bot owner.
+All `community` commands and direct activity shortcuts run in a server and require a Red admin or **Manage Server** permission. `restore` and `invites` additionally require the bot owner.
 
 The cog starts with solo voice disconnection enabled. To disable it while configuring the other features:
 
 ```text
-[p]com vcsolo disable
-[p]com autorole set @Members
-[p]com welcome channel #welcome
-[p]com cya channel #goodbye
-[p]com welcome preview
-[p]com diag
+[p]community vcsolo disable
+[p]community autorole set @Members
+[p]community welcome channel #welcome
+[p]community cya channel #goodbye
+[p]community welcome preview
+[p]community diag
 ```
 
 Give the bot **View Channel**, **Send Messages**, and **Embed Links** in its command and announcement channels. CSV export needs **Attach Files**. Autoroles and sticky roles need **Manage Roles**, with the bot's highest role above every role it should assign. Solo voice disconnection needs **Move Members**.
 
-Enable the **Server Members** intent for join/leave and role features, and the **Presence** intent for presence and game/activity statistics. Message and voice events must also be available to the bot. `[p]com diag` reports member/presence intents and role/voice permissions.
+Enable the **Server Members** intent for join/leave and role features, and the **Presence** intent for presence and game/activity statistics. Message and voice events must also be available to the bot. `[p]community diag` reports member/presence intents and role/voice permissions.
 
 ## Defaults
 
@@ -39,37 +39,59 @@ Enable the **Server Members** intent for join/leave and role features, and the *
 
 Managed/integration roles and `@everyone` are excluded from sticky restoration. Roles at or above the bot's highest role cannot be restored. Solo timers are rebuilt when the cog loads, keyed by server and member, and cancelled on unload or when disabled. Mute/deafen changes do not restart an existing solo deadline. Timers recheck the channel, companions, and enabled state before disconnecting.
 
-## Commands
+## Direct and slash commands
+
+| Direct text command | Slash command | Purpose |
+| --- | --- | --- |
+| `[p]seen [@Member]` | `/seen` | Last-seen and presence information. |
+| `[p]seendetail [@Member]` | `/seendetail` | Detailed event times, channels, and presence. |
+| `[p]activity [@Member]` | `/activity` | Counters and top games. Text alias: `stats`. |
+| `[p]seenlist [limit]` | `/seenlist` | Recently seen members, default 25 and maximum 100. |
+
+These shortcuts retain the permissions and disabled state of their grouped versions. The renamed root is `community`; the old `com` name is removed. Installation and reload still use `communityplus`.
+
+Enable the 34 slash actions once as the bot owner:
+
+```text
+[p]slash enablecog communityplus
+[p]slash sync
+```
+
+Use `/community status` for settings. Autorole, sticky-role enable/disable/purge, welcome/goodbye, solo voice, diagnostics, activity, CSV export, and embed settings have slash versions. For example, `/community autorole set` accepts a role, `/community welcome preview` accepts an optional member, and `/community vcsolo idle` accepts seconds. Slash requests are acknowledged before settings I/O.
+
+`community sticky ignore ...` remains text-only because its nesting exceeds Discord's slash limit. Owner recovery and invite commands also remain text-only. Slash groups have no bare-group action; use the offered subcommands. After updates, reload `communityplus` and run `slash sync` again. Custom Red rules referencing `com ...` need to be reapplied under `community ...`.
+
+## Grouped text commands
 
 Square brackets indicate optional arguments. `enable` and `disable` are separate subcommands.
 
 | Command | Purpose |
 | --- | --- |
-| `[p]com` | Show current settings. |
-| `[p]com help` | Show the cog's command overview. Aliases: `commands`, `?`. |
-| `[p]com diag` | Check relevant intents and permissions. |
-| `[p]com autorole set @Role` | Select the first-time join role. |
-| `[p]com autorole clear` | Clear the selected role. |
-| `[p]com autorole enable` / `disable` / `show` | Enable, disable, or inspect autorole. |
-| `[p]com sticky enable` / `disable` | Control role restoration. |
-| `[p]com sticky ignore add @Role` / `remove @Role` / `list` | Manage roles excluded from restoration. |
-| `[p]com sticky purge @Member` | Clear that member's saved sticky roles only. |
-| `[p]com welcome enable` / `disable` | Control welcome announcements. |
-| `[p]com welcome channel [#channel]` | Set the welcome channel, or omit it to clear the target. |
-| `[p]com welcome message <text>` | Set the welcome template. |
-| `[p]com welcome preview [@Member]` | Preview a welcome in the command channel. |
-| `[p]com cya enable` / `disable` | Control goodbye announcements. |
-| `[p]com cya channel [#channel]` | Set the goodbye channel, or omit it to clear the target. |
-| `[p]com cya message <text>` | Set the goodbye template. |
-| `[p]com cya preview [@Member]` | Preview a goodbye in the command channel. |
-| `[p]com vcsolo enable` / `disable` | Control solo voice disconnection. |
-| `[p]com vcsolo idle <seconds>` | Set the timeout, with a minimum of 60 seconds. |
-| `[p]com seen [@Member]` | Show last-seen and presence information. |
-| `[p]com seendetail [@Member]` | Show event timestamps, channels, and platform statuses. |
-| `[p]com stats [@Member]` | Show counters and the top five recorded games. |
-| `[p]com seenlist [limit]` | List recently seen current members. Default 25, range 1 to 100. |
-| `[p]com seenlistcsv` | Export current members' last-seen and presence summary as CSV. |
-| `[p]com embeds [true\|false]` | Inspect or set compact embeds. |
+| `[p]community` | Show current settings. |
+| `[p]community help` | Show the cog's command overview. Aliases: `commands`, `?`. |
+| `[p]community diag` | Check relevant intents and permissions. |
+| `[p]community autorole set @Role` | Select the first-time join role. |
+| `[p]community autorole clear` | Clear the selected role. |
+| `[p]community autorole enable` / `disable` / `show` | Enable, disable, or inspect autorole. |
+| `[p]community sticky enable` / `disable` | Control role restoration. |
+| `[p]community sticky ignore add @Role` / `remove @Role` / `list` | Manage roles excluded from restoration. |
+| `[p]community sticky purge @Member` | Clear that member's saved sticky roles only. |
+| `[p]community welcome enable` / `disable` | Control welcome announcements. |
+| `[p]community welcome channel [#channel]` | Set the welcome channel, or omit it to clear the target. |
+| `[p]community welcome message <text>` | Set the welcome template. |
+| `[p]community welcome preview [@Member]` | Preview a welcome in the command channel. |
+| `[p]community cya enable` / `disable` | Control goodbye announcements. |
+| `[p]community cya channel [#channel]` | Set the goodbye channel, or omit it to clear the target. |
+| `[p]community cya message <text>` | Set the goodbye template. |
+| `[p]community cya preview [@Member]` | Preview a goodbye in the command channel. |
+| `[p]community vcsolo enable` / `disable` | Control solo voice disconnection. |
+| `[p]community vcsolo idle <seconds>` | Set the timeout, with a minimum of 60 seconds. |
+| `[p]community seen [@Member]` | Show last-seen and presence information. |
+| `[p]community seendetail [@Member]` | Show event timestamps, channels, and platform statuses. |
+| `[p]community stats [@Member]` | Show counters and the top five recorded games. |
+| `[p]community seenlist [limit]` | List recently seen current members. Default 25, range 1 to 100. |
+| `[p]community seenlistcsv` | Export current members' last-seen and presence summary as CSV. |
+| `[p]community embeds [true\|false]` | Inspect or set compact embeds. |
 
 Welcome and goodbye templates support `{user}`, `{mention}`, `{server}`, `{count}`, `{created_at}`, and `{joined_at}`. An invalid template is sent unchanged.
 
@@ -77,8 +99,8 @@ Welcome and goodbye templates support `{user}`, `{mention}`, `{server}`, `{count
 
 | Command | Behavior |
 | --- | --- |
-| `[p]com restore` | Creates or reuses a role named `Restored Admin` and assigns it to the invoking bot owner. A newly created role has **Administrator** permission. Discord must allow the bot to create and assign that role. |
-| `[p]com invites` | DMs the bot owner an invite report for every server the bot belongs to. Creates one-use invites that expire after 24 hours where the bot has **Create Invite** permission. |
+| `[p]community restore` | Creates or reuses a role named `Restored Admin` and assigns it to the invoking bot owner. A newly created role has **Administrator** permission. Discord must allow the bot to create and assign that role. |
+| `[p]community invites` | DMs the bot owner an invite report for every server the bot belongs to. Creates one-use invites that expire after 24 hours where the bot has **Create Invite** permission. |
 
 ## Stored data and current limits
 

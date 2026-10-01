@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-01: direct commands and slash groups across the cogs
+
+- Rename public `com` to `community`, `logplus` to `log`, and `owoplus` to `owo`, without old-name aliases. Keep `level`, cog package/class names, Config identifiers, defaults, XP, and member records. Document reapplying custom Red rules that used old command paths.
+- Add direct `rank`, `leaderboard` (`lb`), `levellookup`, `seen`, `seendetail`, `activity` (`stats`), `seenlist`, `logstatus`, `logchannel`, and `lograte`, with slash counterparts and readable help.
+- Add 109 slash actions across CommunityPlus, LevelPlus, LogPlus, and OwoPlus, including status panels, welcome/role settings, XP sources/editing/imports, log routing, and transformations. Keep deeper prefix branches and exact user-ID arguments available as text commands.
+- Add `log event` with slash autocomplete for 45 event switches, including scheduled events. Omitted booleans inspect settings; supplied booleans set them using the same section lock as existing toggles.
+- Check every parent permission and disabled state for slash requests. Direct shortcuts also check the original grouped command, preserving Red permission rules. Defer authorized slash requests before settings I/O and restore context state on all failure paths.
+- Exercise all-cog registration beside Red Core, slash payload limits, converted options, regular/admin/owner permissions, disabled commands, original-path rules, nested prefix commands, and unload/reload with mocked Discord transport. Update guides, metadata, and native help examples.
+
 Changes recorded here start with the repository's documentation and metadata pass. Earlier implementation history is available in Git commits.
 
 ## 2026-10-01: AudioPlus automatic voice selection and idle disconnect

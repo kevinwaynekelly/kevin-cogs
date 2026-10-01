@@ -3,8 +3,8 @@
     "Kevin Kelly"
   ],
   "short": "Webhook message transformations and haiku formatting.",
-  "description": "Repost eligible server messages through webhooks with keyword replacements, configurable random owo transformations, and optional English haiku formatting, then attempt to delete the originals.",
-  "install_msg": "Load with [p]load owoplus. Automatic processing starts disabled. Use [p]owoplus preview <text> and read the cog README before [p]owoplus enable; transformations repost messages through webhooks and attempt to delete the originals.",
+  "description": "Repost eligible server messages through webhooks with keyword replacements, configurable random owo transformations, and optional English haiku formatting, then attempt to delete the originals. Public text and slash commands use the owo root.",
+  "install_msg": "Load with [p]load owoplus. Automatic processing starts disabled. Use [p]owo preview <text> and read the cog README before [p]owo enable; transformations repost messages through webhooks and attempt to delete the originals. Enable slash commands as the bot owner with [p]slash enablecog owoplus, then [p]slash sync.",
   "requirements": [],
   "tags": [
     "fun",

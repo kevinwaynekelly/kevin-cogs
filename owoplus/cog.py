@@ -19,6 +19,7 @@ from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
 
+from .command_support import prepare_hybrid
 from .constants import (
     CODE_SPLIT,
     DEFAULTS_GUILD,
@@ -62,7 +63,7 @@ class OwoPlus(redcommands.Cog):
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
-        self._presentation = Presentation("OwoPlus", "owoplus")
+        self._presentation = Presentation("OwoPlus", "owo")
         self.config: Config = Config.get_conf(self, identifier=0x5E0F1A, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self._wh_cache = OrderedDict()
@@ -584,7 +585,7 @@ class OwoPlus(redcommands.Cog):
         return e
 
     # ---------- commands ----------
-    @redcommands.group(name="owoplus", invoke_without_command=True)
+    @redcommands.hybrid_group(name="owo", invoke_without_command=True, fallback="status")
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def owoplus(self, ctx: redcommands.Context) -> None:
@@ -604,27 +605,32 @@ class OwoPlus(redcommands.Cog):
         e.add_field(
             name="Core",
             value=(
-                f"• `{p}owoplus` • `{p}owoplus help` • `{p}owoplus diag`\n"
-                f"• `{p}owoplus enable` • `{p}owoplus disable`\n"
-                f"• `{p}owoplus test` • `{p}owoplus preview <text>`"
+                f"• `{p}owo` • `{p}owo help` • `{p}owo diag`\n"
+                f"• `{p}owo enable` • `{p}owo disable`\n"
+                f"• `{p}owo test` • `{p}owo preview <text>`"
             ),
             inline=False,
         )
         e.add_field(
             name="Probability",
             value=(
-                f"• `{p}owoplus onein <N>` (default 1000)\n"
-                f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"
+                f"• `{p}owo onein <N>` (default 1000)\n"
+                f"• `{p}owo prob add @user <N>` • `remove @user` • `list`"
             ),
             inline=False,
         )
         e.add_field(
             name="Toggles & Tools",
             value=(
-                f"• `{p}owoplus ownerbypass <on|off>`\n"
-                f"• `{p}owoplus poem on|off`  - toggle haiku reflow\n"
-                f"• `{p}owoplus poem diag <text>` - syllables & breaks"
+                f"• `{p}owo ownerbypass <on|off>`\n"
+                f"• `{p}owo poem on|off`  - toggle haiku reflow\n"
+                f"• `{p}owo poem diag <text>` - syllables & breaks"
             ),
+            inline=False,
+        )
+        e.add_field(
+            name="Slash commands",
+            value="Use `/owo status`, `/owo preview`, `/owo onein`, or `/owo poem diag`. Settings keep the same administrator permissions.",
             inline=False,
         )
         e.add_field(
@@ -658,8 +664,8 @@ class OwoPlus(redcommands.Cog):
         await self._reply(
             ctx,
             f"Automatic haiku formatting is **{'enabled' if cur else 'disabled'}**.\n"
-            f"`{ctx.clean_prefix}owoplus poem on` · `{ctx.clean_prefix}owoplus poem off`\n"
-            f"`{ctx.clean_prefix}owoplus poem diag <text>`",
+            f"`{ctx.clean_prefix}owo poem on` · `{ctx.clean_prefix}owo poem off`\n"
+            f"`{ctx.clean_prefix}owo poem diag <text>`",
             title="Haiku",
         )
 
@@ -905,6 +911,7 @@ class OwoPlus(redcommands.Cog):
         self._webhook_locks.clear()
 
     async def cog_before_invoke(self, ctx):
+        await prepare_hybrid(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_after_invoke(self, ctx):

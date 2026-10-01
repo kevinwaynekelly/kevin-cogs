@@ -11,15 +11,33 @@ from typing import Optional
 
 import discord
 from discord.ext import commands
+from redbot.core import app_commands
 from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
 
+from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
 from .constants import _UI, DEFAULTS_GUILD, EVENT_STYLE
 from .events import guild_enabled
 from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
+
+EVENT_SWITCHES = tuple(
+    f"{group}.{key}"
+    for group in (
+        "message",
+        "reactions",
+        "server",
+        "invites",
+        "member",
+        "voice",
+        "sched",
+        "commands",
+    )
+    for key, default in DEFAULTS_GUILD[group].items()
+    if isinstance(default, bool)
+)
 
 
 # ========================= Styling =========================
@@ -39,8 +57,9 @@ class LogPlus(redcommands.Cog):
         return await self._presentation.send(ctx, content, **kwargs)
 
     def __init__(self, bot: Red) -> None:
+        attach_prefix_groups(self)
         self.bot: Red = bot
-        self._presentation = Presentation("LogPlus", "logplus")
+        self._presentation = Presentation("LogPlus", "log")
         self.config: Config = Config.get_conf(self, identifier=0x51A7E11, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
 
@@ -249,7 +268,7 @@ class LogPlus(redcommands.Cog):
         return e
 
     # ---------------- commands: main & settings ----------------
-    @redcommands.group(name="logplus", invoke_without_command=True)
+    @redcommands.hybrid_group(name="log", invoke_without_command=True, fallback="status")
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def logplus(self, ctx: redcommands.Context):
@@ -268,24 +287,31 @@ class LogPlus(redcommands.Cog):
         e.add_field(
             name="Core",
             value=(
-                f"• `{p}logplus` • `{p}logplus help` • `{p}logplus diag`\n"
-                f"• `{p}logplus channel` • `{p}logplus setchannel #chan` • `{p}logplus clearchannel`\n"
-                f"• `{p}logplus route set #source #dest` • `{p}logplus route clear #source` • `{p}logplus route list`\n"
-                f"• `{p}logplus rate [seconds]`\n"
-                f"• `{p}logplus style compact <on|off>` • `{p}logplus style preview`"
+                f"• `{p}log` • `{p}log help` • `{p}log diag`\n"
+                f"• `{p}log channel` • `{p}log setchannel #chan` • `{p}log clearchannel`\n"
+                f"• `{p}log route set #source #dest` • `{p}log route clear #source` • `{p}log route list`\n"
+                f"• `{p}log rate [seconds]`\n"
+                f"• `{p}log style compact <on|off>` • `{p}log style preview`"
             ),
+            inline=False,
+        )
+        e.add_field(
+            name="Direct and slash commands",
+            value=f"• `{p}logstatus` • `{p}logchannel [#channel]` • `{p}lograte [seconds]`\n"
+            "• `/log status` • `/log route set`\n"
+            "• `/log event` selects an event and turns it on or off, including scheduled events.",
             inline=False,
         )
         e.add_field(
             name="Toggles",
             value=(
-                f"• `{p}logplus toggle message <edit|delete|bulk|pins>`\n"
-                f"• `{p}logplus toggle reactions <add|remove|clear>`\n"
-                f"• `{p}logplus toggle server <channelcreate|channeldelete|channelupdate|rolecreate|roledelete|roleupdate|serverupdate|emojiupdate|stickerupdate|integrationsupdate|webhooksupdate|threadcreate|threaddelete|thredupdate>`\n"
-                f"• `{p}logplus toggle invites <create|delete>`\n"
-                f"• `{p}logplus toggle member <join|leave|roles|nick|ban|unban|timeout|presence>`\n"
-                f"• `{p}logplus toggle voice <join|move|leave|mute|deaf|video|stream>`\n"
-                f"• `{p}logplus toggle commands <thisbot|otherbots>`"
+                f"• `{p}log toggle message <edit|delete|bulk|pins>`\n"
+                f"• `{p}log toggle reactions <add|remove|clear>`\n"
+                f"• `{p}log toggle server <channelcreate|channeldelete|channelupdate|rolecreate|roledelete|roleupdate|serverupdate|emojiupdate|stickerupdate|integrationsupdate|webhooksupdate|threadcreate|threaddelete|thredupdate>`\n"
+                f"• `{p}log toggle invites <create|delete>`\n"
+                f"• `{p}log toggle member <join|leave|roles|nick|ban|unban|timeout|presence>`\n"
+                f"• `{p}log toggle voice <join|move|leave|mute|deaf|video|stream>`\n"
+                f"• `{p}log toggle commands <thisbot|otherbots>`"
             ),
             inline=False,
         )
@@ -459,8 +485,70 @@ class LogPlus(redcommands.Cog):
         e = await self._E(ctx.guild, "Routing overrides", settings("\n".join(lines), lang="ini"))
         await self._reply(ctx, embed=e)
 
-    # ---------------- toggles (unchanged API) ----------------
-    @logplus.group(autohelp=False)
+    @redcommands.hybrid_command(name="logstatus")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def logstatus(self, ctx: redcommands.Context):
+        """Show event switches, the log channel, and routing settings."""
+        await invoke_shortcut(self, ctx, self.logplus)
+
+    @redcommands.hybrid_command(name="logchannel")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def logchannel(
+        self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None
+    ):
+        """Show the log channel, or set it to the supplied channel."""
+        if channel is None:
+            await invoke_shortcut(self, ctx, self.channel_show)
+        else:
+            await invoke_shortcut(self, ctx, self.channel_set, channel=channel)
+
+    @redcommands.hybrid_command(name="lograte")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def lograte(self, ctx: redcommands.Context, seconds: Optional[float] = None):
+        """Show or set the duplicate-event suppression window."""
+        await invoke_shortcut(self, ctx, self.cmd_rate, seconds=seconds)
+
+    @logplus.command(name="event")
+    @app_commands.describe(
+        event="Event switch, such as message.delete or voice.join.",
+        enabled="Turn this event on or off; omit to inspect it.",
+    )
+    async def event(self, ctx: redcommands.Context, event: str, enabled: Optional[bool] = None):
+        """Show or set an event switch, including scheduled events."""
+        event = event.lower()
+        if event not in EVENT_SWITCHES:
+            return await self._reply(
+                ctx,
+                "Unknown event. Choose one of:\n" + "\n".join(f"`{key}`" for key in EVENT_SWITCHES),
+                tone="warning",
+            )
+        group, key = event.split(".")
+        # Use the same section lock as the existing toggle commands.
+        section = self.config.guild(ctx.guild).get_attr(group)
+        if enabled is None:
+            current = (await section())[key]
+        else:
+            async with section() as values:
+                values[key] = current = enabled
+        await self._reply(
+            ctx,
+            f"**{event}** · {'Enabled' if current else 'Disabled'}",
+            tone="info" if enabled is None else "success",
+        )
+
+    @event.autocomplete("event")
+    async def event_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Offer matching event switches within Discord's 25-choice limit."""
+        query = current.lower()
+        return [app_commands.Choice(name=key, value=key) for key in EVENT_SWITCHES if query in key][
+            :25
+        ]
+
+    # ---------------- toggles (unchanged arguments) ----------------
+    @prefix_group(logplus, autohelp=False)
     async def toggle(self, ctx: redcommands.Context):
         """Turn individual event logs on or off."""
         if ctx.invoked_subcommand is None:
@@ -1653,6 +1741,7 @@ class LogPlus(redcommands.Cog):
         await self._send(message.guild, e, message.channel.id)
 
     async def cog_before_invoke(self, ctx):
+        await prepare_hybrid(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_after_invoke(self, ctx):

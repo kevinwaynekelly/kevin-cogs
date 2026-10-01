@@ -28,7 +28,7 @@ Settings confirmations are small success cards rather than checkmark reactions. 
 
 Long descriptions and fields are paginated within Discord's individual and combined embed limits, counting UTF-16 units. Lists and transformed previews retain their complete text. Export attachments appear on the first delivered part only.
 
-Command replies respect Red's embed preference. If the bot lacks **Embed Links**, replies use text with the same headings and sections. Channel notices also fall back to text when that permission is unavailable. Permission checks, command arguments, aliases, Config identifiers, defaults, and saved records remain unchanged.
+Command replies respect Red's embed preference. If the bot lacks **Embed Links**, replies use text with the same headings and sections. Channel notices also fall back to text when that permission is unavailable. The presentation preserves permission checks, command arguments, Config identifiers, defaults, and saved records. Public roots are now `community`, `level`, `log`, and `owo`; direct and slash shortcuts use the same theme and permission paths. Old root names are intentionally removed.
 
 Custom welcome and goodbye templates keep their text and formatting inside the themed notice. Level-up templates remain message text paired with a level/XP card, retaining the bot's existing mention policy. Routine command responses and logs suppress mentions. OwoPlus webhook reposts keep their transformed content and original sender presentation. Red's global help command, permission-denial messages, and unexpected-exception reporting remain controlled by Red.
 

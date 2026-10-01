@@ -93,8 +93,8 @@ async def test_native_group_and_leaf_help_show_descriptions_and_syntax(bot, guil
 
 async def test_native_help_keeps_hidden_commands_and_aliases_filtered(bot, guild):
     ctx = help_context(bot, guild, embeds=True)
-    root = bot.cogs["LogPlus"].get_commands()[0]
-    root.hidden = True
+    for command in bot.cogs["LogPlus"].get_commands():
+        command.hidden = True
     formatter = RedHelpFormatter()
     formatter.make_and_send_embeds = AsyncMock()
     await formatter.format_bot_help(ctx, help_settings=HelpSettings(verify_checks=False))

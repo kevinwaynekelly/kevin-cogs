@@ -97,7 +97,7 @@ async def samples(directory):
         await capture(
             OwoPlus.owoplus_preview.callback(owo, ctx, text="Hello friend, welcome to the server!")
         )
-        ctx.command = SimpleNamespace(qualified_name="com welcome channel")
+        ctx.command = SimpleNamespace(qualified_name="community welcome channel")
         await capture(community._presentation.confirm(ctx))
     return cards
 

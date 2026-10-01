@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 BASELINE = json.loads(Path(__file__).with_name("compatibility.json").read_text())
+# Intentional public renames. Keep the original snapshot for all other compatibility checks.
+RENAMED_ROOTS = {"com": "community", "logplus": "log", "owoplus": "owo"}
 
 
 @pytest.mark.parametrize("package", list(BASELINE))
@@ -20,7 +22,7 @@ def test_existing_commands_and_permissions_remain_compatible(package, bot):
             roots[name] = command
     for saved in BASELINE[package]["commands"]:
         root, *rest = saved["name"].split()
-        command = roots[root]
+        command = roots[RENAMED_ROOTS.get(root, root)]
         for part in rest:
             command = command.get_command(part)
             assert command is not None, saved["name"]

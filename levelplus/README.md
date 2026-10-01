@@ -41,7 +41,28 @@ The default announcement is `{user.mention} has reached level **{user.level}**! 
 
 Changing a curve recalculates displayed levels from existing XP. The multiplier changes the XP required per level, not the XP earned from an event.
 
-## Member commands
+## Direct and slash commands
+
+| Direct text command | Slash command | Purpose |
+| --- | --- | --- |
+| `[p]rank [@Member]` | `/rank` | Level, total XP, and progress. |
+| `[p]leaderboard [top]` | `/leaderboard` | Highest XP totals, default 10 and maximum 50. Text alias: `lb`. |
+| `[p]levellookup <query>` | `/levellookup` | Find IDs by mention, numeric ID, or name. |
+
+These are member commands. Administrator settings stay under `level`, with the existing checks. Direct shortcuts also honor Red permission and disabled-command rules on the original grouped command.
+
+Enable the 44 slash actions once as the bot owner:
+
+```text
+[p]slash enablecog levelplus
+[p]slash sync
+```
+
+Use `/level status`, `/level show`, or the direct member commands. Slash settings cover formulas, message/reaction/voice XP, channel-type restrictions, level-up announcements, member XP editing, imports/exports, names, and diagnostics. For example, `/level message enable` accepts an optional boolean and `/level xp add` accepts a member and amount. Administrator checks apply to slash settings too.
+
+`level formula linear ...`, `level restrict nochannels ...`, and `level restrict noroles ...` remain text-only because their nesting exceeds Discord's limit. `level xp setid`, `level xp removeid`, `level name setid`, and `level name get` also remain text-only to preserve exact 64-bit user IDs without slash integer rounding. `levellookup` accepts an ID as text. CSV imports through slash use the `raw` text option; prefix imports still support message attachments. After updates, reload `levelplus` and run `slash sync` again.
+
+## Grouped member commands
 
 Square brackets indicate optional arguments.
 

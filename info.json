@@ -1,6 +1,8 @@
 {
-  "author": ["Kevin Kelly"],
+  "author": [
+    "Kevin Kelly"
+  ],
   "short": "Music, community tools, leveling, logging, and message transformations for Red.",
   "description": "Custom Red Discord Bot cogs: AudioPlus, CommunityPlus, LevelPlus, LogPlus, and OwoPlus. See the repository README and individual cog guides for setup, commands, permissions, and data storage.",
-  "install_msg": "Thanks for adding Kevin Cogs. List the available cogs with [p]cog list kevin-cogs, or use your chosen repository name. Setup guides: https://github.com/kevinwaynekelly/kevin-cogs. AudioPlus requires a running Lavalink v4 node."
+  "install_msg": "Thanks for adding Kevin Cogs. List the available cogs with [p]cog list kevin-cogs, or use your chosen repository name. Setup guides: https://github.com/kevinwaynekelly/kevin-cogs. AudioPlus uses native Discord voice with local FFmpeg and yt-dlp. Use [p]play, [p]community, [p]level, [p]log, and [p]owo; each cog supports slash commands."
 }

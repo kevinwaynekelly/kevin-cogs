@@ -15,9 +15,9 @@ Commands, confirmations, and previews use the [shared visual theme](../docs/PRES
 
 ```text
 [p]load owoplus
-[p]owoplus diag
-[p]owoplus preview dude, look at this
-[p]owoplus enable
+[p]owo diag
+[p]owo preview dude, look at this
+[p]owo enable
 ```
 
 Commands require Red administrator access or the **Manage Server** permission and can only run in a server. The bot needs **View Channel**, **Send Messages**, **Manage Messages**, and **Manage Webhooks** in channels where messages will be transformed, plus **Embed Links** to display themed command cards. The `test` command also needs **Read Message History**. Threads use a webhook in their parent text or forum channel and need the applicable thread access/send permissions. Enable the bot's Message Content intent for text processing.
@@ -43,24 +43,35 @@ Keyword matching is case-insensitive and preserves the word's capitalization pat
 
 Reposted messages suppress mentions and split long output into parts. All attachments are downloaded before sending and copied to the first part, up to Discord's ten-file limit. Messages with original embeds or more than ten attachments are skipped to preserve their rich content. A failed download leaves the original intact. Long-message splitting preserves whitespace and respects the UTF-16 message limit. Webhooks are owned by this bot, created once per channel during concurrent requests, and kept in a bounded cache.
 
-## Commands
+## Slash commands
+
+The command root is `owo`; the old `owoplus` command name is removed. Installation and reload still use `owoplus`. Enable all 15 slash actions once as the bot owner:
+
+```text
+[p]slash enablecog owoplus
+[p]slash sync
+```
+
+Use `/owo status` for settings. All leaf commands below have slash versions, including previews, enable/disable, probability overrides, haiku tools, diagnostics, and the existing message-repost test. They retain Red administrator or **Manage Server** checks. Slash groups use offered subcommands; `/owo poem` alone is not an action. After updates, reload `owoplus` and run `slash sync` again. Custom Red rules referencing `owoplus ...` need to be reapplied under `owo ...`.
+
+## Text commands
 
 | Command | Purpose |
 | --- | --- |
-| `[p]owoplus` | Show server settings. |
-| `[p]owoplus help` | Show built-in command help. |
-| `[p]owoplus enable` / `[p]owoplus disable` | Enable or disable automatic transformations server-wide. |
-| `[p]owoplus onein <N>` | Set the full-transformation probability to `1/N`, from `1` to `1000000`. |
-| `[p]owoplus prob add @user <N>` | Override the probability for one member. |
-| `[p]owoplus prob remove @user` | Remove a member's override. |
-| `[p]owoplus prob list` | List probability overrides. |
-| `[p]owoplus ownerbypass [on\|off]` | Show or set bot-owner exemption. |
-| `[p]owoplus poem` | Show the haiku setting. |
-| `[p]owoplus poem on` / `[p]owoplus poem off` | Enable or disable haiku formatting. |
-| `[p]owoplus poem diag <text>` | Show syllable counts, detected breaks, and haiku output. |
-| `[p]owoplus preview <text>` | Preview a random transformation using the server probability, without replacing a message. |
-| `[p]owoplus diag` | Show settings and relevant permissions in the current channel. |
-| `[p]owoplus test` | Find your latest eligible message among the previous 50 messages, repost it, and attempt to delete it. |
+| `[p]owo` | Show server settings. |
+| `[p]owo help` | Show built-in command help. |
+| `[p]owo enable` / `[p]owo disable` | Enable or disable automatic transformations server-wide. |
+| `[p]owo onein <N>` | Set the full-transformation probability to `1/N`, from `1` to `1000000`. |
+| `[p]owo prob add @user <N>` | Override the probability for one member. |
+| `[p]owo prob remove @user` | Remove a member's override. |
+| `[p]owo prob list` | List probability overrides. |
+| `[p]owo ownerbypass [on\|off]` | Show or set bot-owner exemption. |
+| `[p]owo poem` | Show the haiku setting. |
+| `[p]owo poem on` / `[p]owo poem off` | Enable or disable haiku formatting. |
+| `[p]owo poem diag <text>` | Show syllable counts, detected breaks, and haiku output. |
+| `[p]owo preview <text>` | Preview a random transformation using the server probability, without replacing a message. |
+| `[p]owo diag` | Show settings and relevant permissions in the current channel. |
+| `[p]owo test` | Find your latest eligible message among the previous 50 messages, repost it, and attempt to delete it. |
 
 `test` performs a real webhook repost and deletion attempt, even while automatic processing is disabled or owner bypass is enabled. It may repost unchanged text. Use `preview` for a read-only sample. `preview` uses the server probability rather than the caller's override. Test and automatic processing use the same renderer, including italic haiku formatting and per-user probability overrides. Preview uses the server probability. Rendering and optional syllable-engine initialization run outside the event loop; syllable lookups use a bounded cache.
 

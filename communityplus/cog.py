@@ -19,6 +19,7 @@ from redbot.core.bot import Red
 from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import humanize_number
 
+from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
 from .constants import DEFAULTS_GUILD, DEFAULTS_MEMBER, EVENT_COLOR
 from .events import guild_enabled
 from .presentation import Presentation, settings
@@ -39,8 +40,9 @@ class CommunityPlus(redcommands.Cog):
         return await self._presentation.send(ctx, content, **kwargs)
 
     def __init__(self, bot: Red) -> None:
+        attach_prefix_groups(self)
         self.bot: Red = bot
-        self._presentation = Presentation("CommunityPlus", "com")
+        self._presentation = Presentation("CommunityPlus", "community")
         self.config: Config = Config.get_conf(self, identifier=0xC0DE505, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self.config.register_member(**DEFAULTS_MEMBER)
@@ -194,7 +196,7 @@ class CommunityPlus(redcommands.Cog):
             ),
             inline=False,
         )
-        e.set_footer(text="Use [p]com help for commands.")
+        e.set_footer(text="Use [p]community help for commands.")
         return e
 
     @staticmethod
@@ -287,7 +289,7 @@ class CommunityPlus(redcommands.Cog):
                 seen["where"] = 0
 
     # ------------------------ commands root ------------------------
-    @redcommands.group(name="com", invoke_without_command=True)
+    @redcommands.hybrid_group(name="community", invoke_without_command=True, fallback="status")
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def com(self, ctx: redcommands.Context) -> None:
@@ -306,35 +308,68 @@ class CommunityPlus(redcommands.Cog):
         e.description = f"Commands and examples use `{p}` as prefix."
         e.add_field(
             name="Core",
-            value=f"• `{p}com` - status panel\n• `{p}com help` • `{p}com diag`",
+            value=f"• `{p}community` - status panel\n• `{p}community help` • `{p}community diag`",
             inline=False,
         )
         e.add_field(
             name="Autorole",
-            value=f"• `{p}com autorole set @Role` • `clear`\n• `{p}com autorole enable|disable`",
+            value=f"• `{p}community autorole set @Role` • `clear`\n• `{p}community autorole enable|disable`",
             inline=False,
         )
         e.add_field(
             name="Sticky Roles",
-            value=f"• `{p}com sticky enable|disable`\n• `{p}com sticky ignore add|remove @Role`\n• `{p}com sticky purge @User`",
+            value=f"• `{p}community sticky enable|disable`\n• `{p}community sticky ignore add|remove @Role`\n• `{p}community sticky purge @User`",
             inline=False,
         )
         e.add_field(
             name="Welcome & goodbye",
-            value=f"• `{p}com welcome channel #ch` • `message <txt>`\n• `{p}com cya channel #ch` • `message <txt>`",
+            value=f"• `{p}community welcome channel #ch` • `message <txt>`\n• `{p}community cya channel #ch` • `message <txt>`",
             inline=False,
         )
         e.add_field(
             name="Solo Voice",
-            value=f"• `{p}com vcsolo enable|disable`\n• `{p}com vcsolo idle <seconds>`",
+            value=f"• `{p}community vcsolo enable|disable`\n• `{p}community vcsolo idle <seconds>`",
             inline=False,
         )
         e.add_field(
             name="Seen & Stats",
-            value=f"• `{p}com seen [@User]` • `{p}com stats`\n• `{p}com seenlist`",
+            value=f"• `{p}seen [@User]` • `{p}seendetail [@User]`\n• `{p}activity [@User]` • `{p}seenlist [limit]`",
+            inline=False,
+        )
+        e.add_field(
+            name="Slash commands",
+            value="Use `/community status`, `/community welcome preview`, `/seen`, or `/activity`. Settings keep the same administrator permissions.",
             inline=False,
         )
         await self._reply(ctx, embed=e)
+
+    @redcommands.hybrid_command(name="seen")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def seen(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Show a member's last-seen and presence information."""
+        await invoke_shortcut(self, ctx, self.com_seen, member=member)
+
+    @redcommands.hybrid_command(name="seendetail")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def seendetail(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Show detailed activity times, channels, and presence."""
+        await invoke_shortcut(self, ctx, self.com_seen_detail, member=member)
+
+    @redcommands.hybrid_command(name="activity", aliases=["stats"])
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def activity(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Show a member's activity counters and top games."""
+        await invoke_shortcut(self, ctx, self.com_stats, member=member)
+
+    @redcommands.hybrid_command(name="seenlist")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def seenlist(self, ctx: redcommands.Context, limit: int = 25):
+        """List up to 100 members by their most recent activity."""
+        await invoke_shortcut(self, ctx, self.com_seenlist, limit=limit)
 
     # ------------------------ DIAG ------------------------
     @com.command(name="diag")
@@ -386,7 +421,7 @@ class CommunityPlus(redcommands.Cog):
         )
         await self._reply(ctx, embed=e)
 
-    @com.command(name="restore")
+    @com.command(name="restore", with_app_command=False)
     @redcommands.guild_only()
     @redcommands.is_owner()
     async def com_restore(self, ctx: redcommands.Context) -> None:
@@ -458,7 +493,7 @@ class CommunityPlus(redcommands.Cog):
         except discord.HTTPException:
             await self._reply(ctx, "Discord rejected the role assignment.", tone="error")
 
-    @com.command(name="invites")
+    @com.command(name="invites", with_app_command=False)
     @redcommands.guild_only()
     @redcommands.is_owner()
     async def com_invites(self, ctx: redcommands.Context) -> None:
@@ -631,7 +666,7 @@ class CommunityPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).sticky.enabled.set(False)
         await self._presentation.confirm(ctx)
 
-    @com_sticky.group(name="ignore", autohelp=False)
+    @prefix_group(com_sticky, name="ignore", autohelp=False)
     async def com_sticky_ignore(self, ctx: redcommands.Context):
         """Manage roles excluded from saved-role restoration."""
         if ctx.invoked_subcommand is None:
@@ -1158,6 +1193,7 @@ class CommunityPlus(redcommands.Cog):
         self._settings_cache.clear()
 
     async def cog_before_invoke(self, ctx):
+        await prepare_hybrid(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_after_invoke(self, ctx):

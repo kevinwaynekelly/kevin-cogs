@@ -3,8 +3,8 @@
     "Kevin Kelly"
   ],
   "short": "Discord event logging with configurable routing.",
-  "description": "Log messages, reactions, server changes, members, voice activity, and bot commands to Discord embeds with configurable switches and channel routing. See the cog guide for currently inactive thread, presence, and scheduled-event paths.",
-  "install_msg": "Load with [p]load logplus, then use [p]logplus setchannel #channel. See the cog README for permissions, command names, and current limitations.",
+  "description": "Log messages, reactions, server/thread changes, members/presence, voice activity, scheduled events, and bot commands with configurable switches and channel routing. Use [p]log or /log settings, plus direct logstatus/logchannel/lograte controls.",
+  "install_msg": "Load with [p]load logplus, then use [p]log setchannel #channel. See the cog README for permissions, command names, and current limitations. Enable slash commands as the bot owner with [p]slash enablecog logplus, then [p]slash sync.",
   "requirements": [],
   "tags": [
     "logging",

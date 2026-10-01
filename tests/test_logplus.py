@@ -134,7 +134,7 @@ async def test_scheduled_thread_presence_handlers_are_registered_and_dispatch(bo
 
 def test_corrected_command_names_keep_old_aliases(bot):
     cog = LogPlus(bot)
-    root = next(c for c in cog.get_commands() if c.name == "logplus")
+    root = next(c for c in cog.get_commands() if c.name == "log")
     toggles = root.get_command("toggle")
     assert toggles.get_command("commands") is toggles.get_command("commands_")
     server = toggles.get_command("server")

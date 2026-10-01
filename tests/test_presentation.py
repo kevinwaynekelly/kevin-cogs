@@ -20,10 +20,10 @@ from owoplus import OwoPlus
 
 COGS = [
     (AudioPlus, "audio"),
-    (CommunityPlus, "com"),
+    (CommunityPlus, "community"),
     (LevelPlus, "level"),
-    (LogPlus, "logplus"),
-    (OwoPlus, "owoplus"),
+    (LogPlus, "log"),
+    (OwoPlus, "owo"),
 ]
 
 
@@ -58,7 +58,8 @@ async def test_root_commands_use_same_theme(bot, guild, cls, root):
     ctx = make_context(guild)
     ctx.command = SimpleNamespace(qualified_name=root)
     ctx.clean_prefix = "?"
-    await getattr(cls, root).callback(cog, ctx)
+    command = next(command for command in cog.get_commands() if command.name == root)
+    await command.callback(cog, ctx)
     for call in ctx.send.await_args_list:
         embed = call.kwargs["embed"]
         assert embed.title.startswith(f"{cls.__name__} · ")
@@ -114,8 +115,8 @@ async def test_plain_text_fallback_retains_content_and_attachment(guild, prefere
 
 async def test_confirmation_has_success_color_and_command_heading(guild):
     ctx = make_context(guild)
-    ctx.command = SimpleNamespace(qualified_name="com autorole enable")
-    await Presentation("CommunityPlus", "com").confirm(ctx)
+    ctx.command = SimpleNamespace(qualified_name="community autorole enable")
+    await Presentation("CommunityPlus", "community").confirm(ctx)
     embed = ctx.send.await_args.kwargs["embed"]
     assert embed.title == "CommunityPlus · Autorole · Enable"
     assert embed.description == "Settings saved."
@@ -152,7 +153,7 @@ async def test_custom_levelup_template_keeps_text_and_mentions(bot, guild):
 async def test_long_owo_preview_paginates_instead_of_rejecting(bot, guild):
     cog = OwoPlus(bot)
     ctx = make_context(guild)
-    ctx.command = SimpleNamespace(qualified_name="owoplus preview")
+    ctx.command = SimpleNamespace(qualified_name="owo preview")
     text = "a long preview 😀 " * 400
     cog._render_message_mode = lambda *args, **kwargs: text
     await OwoPlus.owoplus_preview.callback(cog, ctx, text=text)

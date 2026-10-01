@@ -16,6 +16,8 @@ AudioPlus isolates subprocess media resolution in `resolver.py`, native queue/pl
 
 Each cog vendors the same `presentation.py` helper. Edit the AudioPlus copy and sync it to the other four; tests enforce identical copies. Use the presentation helper for bot-owned messages and retain webhook/user content semantics. See [the visual design](docs/PRESENTATION.md), including the command to regenerate its sample preview.
 
+CommunityPlus, LevelPlus, LogPlus, and OwoPlus also vendor identical `command_support.py` helpers. Slash invocations check the full prefix permission path before deferring. Direct shortcuts check the original grouped command and its disabled state before reusing a callback. Preserve context and permission state even when a parent check fails. Legacy branches too deep for slash are attached after Cog command copying; keep them out of the application-command tree. Tests load all five cogs beside Red Core, exercise messages and slash preparation/conversion/hooks, and check removal/reload.
+
 Config identifiers, cog class names, and defaults preserve existing saved settings. Use a migration for changes to their schema. Protect read/modify/write operations with the same Config lock used by related writers. CommunityPlus activity updates use the member's whole-record lock; LevelPlus XP and aliases use their respective field locks.
 
 ## Local checks
@@ -35,7 +37,7 @@ git diff --check
 
 Install FFmpeg and libopus in the test environment. Node.js 22+ or Deno 2.3+ is needed for full YouTube extraction. The tests use actual Red Config with temporary JSON storage and actual command classes. Hybrid command tests register with Red's command tree and exercise slash option conversion, callbacks, and response deferral. Discord synchronization/networking and external media providers are mocked. Local HTTP audio tests run actual yt-dlp subprocesses and FFmpeg decoders, including process cancellation checks. They cover concurrent updates, data hooks, level boundaries, imports, timers, webhook rollback, event registration, routing, and Discord size limits.
 
-`tests/compatibility.json` captures the 209-command surface, Config identifiers, and defaults from commit `32592217b5b341f4327473d6772625d9f9bcc75f`. Changes to that fixture should represent an intentional compatibility change. CI runs the suite with Python 3.10/3.11 using Red 3.5.24, its pinned Discord.py 2.7.1, yt-dlp and EJS, PyNaCl, davey, FFmpeg, libopus, and Node.js 22. The native migration retains all baseline commands and Config defaults; legacy node commands have documented new behavior and `audio repeat` is added.
+`tests/compatibility.json` captures the 209-command surface, Config identifiers, and defaults from commit `32592217b5b341f4327473d6772625d9f9bcc75f`. Changes to that fixture should represent an intentional compatibility change. The compatibility test maps the intentional public renames `com` → `community`, `logplus` → `log`, and `owoplus` → `owo`; it still checks all original subcommand arguments, aliases, permission decorators, Config identifiers, and defaults. CI runs the suite with Python 3.10/3.11 using Red 3.5.24, its pinned Discord.py 2.7.1, yt-dlp and EJS, PyNaCl, davey, FFmpeg, libopus, and Node.js 22. The native migration retains all baseline commands and Config defaults; legacy node commands have documented new behavior and `audio repeat` is added.
 
 Run the reproducible level-calculation benchmark from the repository root:
 
