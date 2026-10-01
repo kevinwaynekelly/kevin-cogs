@@ -122,7 +122,7 @@ async def test_playlist_queues_all_tracks_and_starts_once(bot, guild, monkeypatc
         cog, make_context(guild), query="https://example.invalid/list"
     )
     assert list(player.queue) == tracks[1:]
-    player.play.assert_awaited_once_with(tracks[0])
+    player.play.assert_awaited_once_with(tracks[0], paused=False)
     fetch.assert_awaited_once_with("https://example.invalid/list", node=cog._node)
 
 
