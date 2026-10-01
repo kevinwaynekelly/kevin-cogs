@@ -2,6 +2,11 @@
 
 Changes recorded here start with the repository's documentation and metadata pass. Earlier implementation history is available in Git commits.
 
+## 2026-10-01: AudioPlus track confirmations
+
+- Identify queued tracks with title, artist/uploader, duration, and a clickable source link instead of only reporting a track count. Preview the first five playlist entries and preserve details in plain-text replies.
+- Give direct-audio tests the same track confirmation and add source links to the current-track display. Resolved, signed playback URLs remain private.
+
 ## 2026-10-01: AudioPlus voice initialization
 
 - Load PyNaCl and davey installed in Red Downloader's private package folder after Discord.py's first import. Initialize the existing voice client, state, and gateway bindings without reloading Discord.py or replacing its classes.

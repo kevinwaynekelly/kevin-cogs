@@ -1,6 +1,7 @@
 """Exercise commands against the native engine; Discord and providers are mocked."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,7 +12,7 @@ from test_native_audio import FakeSource, FakeVoice, eventually, track
 import audioplus.cog as audio_module
 from audioplus import AudioPlus
 from audioplus.player import GuildPlayer
-from audioplus.resolver import MediaError
+from audioplus.resolver import MediaError, Track
 
 audio_runtime = native_runtime_fixture
 
@@ -35,6 +36,32 @@ async def test_play_routes_native_search_and_starts_once(audio_runtime, query, e
     assert player.current.title == "one" and player.context is ctx and len(player.voice.starts) == 1
 
 
+@pytest.mark.parametrize("embeds", [True, False])
+async def test_play_identifies_the_selected_track_without_exposing_stream_url(
+    audio_runtime, embeds
+):
+    cog, player, ctx = audio_runtime
+    selected = Track(
+        "https://www.youtube.com/watch?v=public-video",
+        "Song [live]",
+        "Artist *name*",
+        268000,
+        "youtube",
+    )
+    ctx.embed_requested = AsyncMock(return_value=embeds)
+    cog._resolver.search = AsyncMock(return_value=[selected])
+    cog._resolver.resolve = AsyncMock(
+        return_value=SimpleNamespace(url="https://media.invalid/audio?token=private-secret")
+    )
+    await AudioPlus.audio_play.callback(cog, ctx, query="song")
+    await eventually(lambda: player.playing)
+    reply = ctx.send.await_args
+    output = reply.kwargs["embed"].description if embeds else reply.args[0]
+    assert "Song \\[live\\]" in output and "Artist \\*name\\*" in output
+    assert selected.uri in output and "4:28" in output
+    assert "private-secret" not in output and "media.invalid" not in output
+
+
 async def test_playlist_queues_every_result_in_order(audio_runtime):
     cog, player, ctx = audio_runtime
     cog._resolver.search = AsyncMock(return_value=[track(str(i)) for i in range(3)])
@@ -42,6 +69,7 @@ async def test_playlist_queues_every_result_in_order(audio_runtime):
     await eventually(lambda: player.playing)
     assert player.current.title == "0" and [tr.title for tr in player.queue] == ["1", "2"]
     assert "Queued 3" in ctx.send.await_args.kwargs["embed"].description
+    assert all(f"**[{i}]" in ctx.send.await_args.kwargs["embed"].description for i in range(3))
 
 
 async def test_command_skip_advances_once_despite_stale_callback(audio_runtime):

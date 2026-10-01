@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from typing import Optional
+from urllib.parse import quote
 
 import discord
 from redbot.core import Config, checks, commands
@@ -234,6 +235,39 @@ class AudioPlus(commands.Cog):
             await player.enqueue(tracks, ctx)
         except MediaError as exc:
             raise commands.CommandError(str(exc)) from exc
+
+    @staticmethod
+    def _duration(milliseconds):
+        seconds = max(0, int(milliseconds // 1000))
+        minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}:{minutes:02}:{seconds:02}" if hours else f"{minutes}:{seconds:02}"
+
+    @staticmethod
+    def _track_description(track):
+        title = discord.utils.escape_markdown(track.title, ignore_links=False)
+        title = title.replace("[", "\\[").replace("]", "\\]")
+        author = discord.utils.escape_markdown(track.author, ignore_links=False)
+        # Link the original source page, never the resolved/signed playback stream.
+        uri = quote(track.uri, safe=":/?#[]@!$&'()*+,;=%")
+        return f"**[{title}](<{uri}>)**\n{author}"
+
+    async def _reply_queued(self, ctx, tracks):
+        entries = [
+            self._track_description(track)
+            + " · "
+            + (self._duration(track.length) if track.length else "Unknown duration")
+            for track in tracks[:5]
+        ]
+        description = "\n\n".join(entries)
+        if len(tracks) != 1:
+            description = f"Queued {len(tracks)} tracks.\n\n" + description
+        if len(tracks) > 5:
+            description += f"\n\nAnd {len(tracks) - 5} more tracks."
+        await self._reply(
+            ctx,
+            embed=self._presentation.embed("Added to queue", description, tone="success"),
+        )
 
     async def _report_playback_failure(self, player, track, cause):
         if self._closing or self._players.get(player.guild.id) is not player or not player.context:
@@ -484,11 +518,7 @@ class AudioPlus(commands.Cog):
             "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
         )
         await self._enqueue(player, tracks, ctx)
-        await self._reply(
-            ctx,
-            "Queued the direct MP3 test track. Use audio playerstate or audio debugvc to inspect playback.",
-            tone="success",
-        )
+        await self._reply_queued(ctx, tracks)
 
     @audio.command(name="join", aliases=["connect", "summon"])
     @GUILD_ONLY
@@ -521,7 +551,7 @@ class AudioPlus(commands.Cog):
         if not tracks:
             return await self._reply(ctx, "No results.", tone="warning")
         await self._enqueue(player, tracks, ctx)
-        await self._reply(ctx, f"Queued {len(tracks)} track(s).", tone="success")
+        await self._reply_queued(ctx, tracks)
 
     @audio.command(name="skip", aliases=["next", "s"])
     @GUILD_ONLY
@@ -594,18 +624,12 @@ class AudioPlus(commands.Cog):
         track = player.current
         embed = self._presentation.embed(
             "Now playing",
-            f"**{discord.utils.escape_markdown(track.title)}**\n{discord.utils.escape_markdown(track.author)}",
+            self._track_description(track),
         )
         if track.length:
-
-            def duration(milliseconds):
-                seconds = max(0, int(milliseconds // 1000))
-                minutes, seconds = divmod(seconds, 60)
-                hours, minutes = divmod(minutes, 60)
-                return f"{hours}:{minutes:02}:{seconds:02}" if hours else f"{minutes}:{seconds:02}"
-
             embed.add_field(
-                name="Progress", value=f"{duration(player.position)} / {duration(track.length)}"
+                name="Progress",
+                value=f"{self._duration(player.position)} / {self._duration(track.length)}",
             )
         embed.add_field(name="Volume", value=f"{player.volume}%")
         embed.add_field(

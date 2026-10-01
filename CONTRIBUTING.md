@@ -1,6 +1,6 @@
 # Contributing
 
-Keep changes focused and describe the behavior being changed and how it was checked. Commit useful checkpoints to a working branch as you go, especially during a pass across multiple cogs. Publish the completed change in a pull request.
+Keep changes focused and describe the behavior being changed and how it was checked. Commit useful checkpoints as you go, especially during a pass across multiple cogs. The repository owner prefers publishing validated maintenance changes directly to `main`. Use a working branch when isolation helps, then merge its completed pull request after checks pass.
 
 ## Layout
 
