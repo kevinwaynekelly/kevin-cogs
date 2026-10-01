@@ -13,6 +13,42 @@ import discord
 
 from .resolver import MediaError
 
+VOICE_REQUIREMENTS = {"PyNaCl": "PyNaCl>=1.5.0,<1.6", "davey": "davey>=0.1.6"}
+
+
+def _voice_import(package):
+    module = import_module("nacl" if package == "PyNaCl" else "davey")
+    if package == "PyNaCl":
+        import_module("nacl.secret")
+        import_module("nacl.utils")
+    return module
+
+
+def voice_import_status():
+    """Check imports separately from distribution metadata, without rebinding Discord."""
+    statuses = {}
+    for package in VOICE_REQUIREMENTS:
+        try:
+            _voice_import(package)
+        except (ImportError, OSError, RuntimeError) as exc:
+            missing = isinstance(exc, ModuleNotFoundError) and exc.name == (
+                "nacl" if package == "PyNaCl" else "davey"
+            )
+            statuses[package] = "Missing" if missing else f"Import failed ({type(exc).__name__})"
+        else:
+            statuses[package] = "Ready"
+    return statuses
+
+
+def _voice_import_error(package, exc):
+    # Raw native/pip errors can contain paths or configured index credentials.
+    return MediaError(
+        f"{package} could not be imported by Red ({type(exc).__name__}). "
+        "Ask the bot owner to run audiorepair, then restart Red and run audiostatus. "
+        f"Manual setup: install {VOICE_REQUIREMENTS[package]} in Red's Python environment. "
+        "See AudioPlus's container setup guide."
+    )
+
 
 def _load_voice_libraries():
     """Initialize optional voice imports exposed after Discord.py's first import.
@@ -24,28 +60,18 @@ def _load_voice_libraries():
     client = discord.voice_client
     if not getattr(client, "has_nacl", False):
         try:
-            nacl = import_module("nacl")
-            import_module("nacl.secret")
-            import_module("nacl.utils")
-        except (ImportError, OSError) as exc:
-            raise MediaError(
-                "PyNaCl could not be imported by Red. Install PyNaCl>=1.5.0,<1.6 "
-                "in Red's Python environment and restart Red, then run audiostatus. "
-                "See AudioPlus's container setup guide."
-            ) from exc
+            nacl = _voice_import("PyNaCl")
+        except (ImportError, OSError, RuntimeError) as exc:
+            raise _voice_import_error("PyNaCl", exc) from exc
         client.nacl = nacl
         client.has_nacl = True
     if not getattr(client, "has_dave", False) or not getattr(
         discord.voice_state, "has_dave", False
     ):
         try:
-            davey = import_module("davey")
-        except (ImportError, OSError) as exc:
-            raise MediaError(
-                "davey could not be imported by Red. Install davey>=0.1.6 "
-                "in Red's Python environment and restart Red, then run audiostatus. "
-                "See AudioPlus's container setup guide."
-            ) from exc
+            davey = _voice_import("davey")
+        except (ImportError, OSError, RuntimeError) as exc:
+            raise _voice_import_error("davey", exc) from exc
         for module in (client, discord.voice_state, discord.gateway):
             module.davey = davey
         discord.voice_state.has_dave = True
@@ -90,19 +116,27 @@ async def executable_version(name, option="--version"):
             await process.communicate()
 
 
-async def diagnostics():
+async def diagnostics(*, voice_error=None, voice_guard=None):
     binaries = await asyncio.gather(
         executable_version("ffmpeg", "-version"),
         executable_version("deno"),
         executable_version("node"),
         executable_version("qjs"),
     )
+    # Repair can start while executable probes are awaiting their subprocesses.
+    if voice_guard:
+        voice_error = voice_guard() or voice_error
     packages = {}
     for name in ("yt-dlp", "yt-dlp-ejs", "PyNaCl", "davey"):
         try:
             packages[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             packages[name] = "missing"
+    voice_packages = (
+        dict.fromkeys(VOICE_REQUIREMENTS, "Restart required")
+        if voice_error
+        else voice_import_status()
+    )
     runtimes = []
     for name, version, minimum in (("Deno", binaries[1], (2, 3)), ("Node", binaries[2], (22, 0))):
         match = re.search(r"(\d+)\.(\d+)\.(\d+)", version)
@@ -110,11 +144,16 @@ async def diagnostics():
             runtimes.append(name)
     if binaries[3] not in {"missing", "unavailable", "timed out"}:
         runtimes.append("QuickJS")
-    try:
-        require_voice()
-        voice_error = None
-    except MediaError as exc:
-        voice_error = str(exc)
+    if not voice_error:
+        try:
+            require_voice()
+        except MediaError as exc:
+            voice_error = str(exc)
+        if not voice_error and any(status != "Ready" for status in voice_packages.values()):
+            voice_error = (
+                "Native voice imports are unavailable. Ask the bot owner to run audiorepair, "
+                "then restart Red and run audiostatus."
+            )
     ready = (
         not voice_error
         and all(value != "missing" for value in packages.values())
@@ -124,6 +163,7 @@ async def diagnostics():
         "ready": ready,
         "voice_error": voice_error,
         "packages": packages,
+        "voice_packages": voice_packages,
         "ffmpeg": binaries[0],
         "deno": binaries[1],
         "node": binaries[2],

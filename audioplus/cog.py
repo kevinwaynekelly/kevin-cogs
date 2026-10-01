@@ -16,6 +16,7 @@ from redbot.core.bot import Red
 
 from .backend import diagnostics, require_voice
 from .command_support import prepare_hybrid
+from .dependencies import VoiceDependencyRepair
 from .features import DEFAULTS_GUILD, AudioCommands, check_control, vote_threshold
 from .interactive import close_views
 from .player import GuildPlayer
@@ -54,6 +55,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         self.config.register_global(**self.default_global, watchdog=DEFAULT_WATCHDOG)
         self.config.register_guild(**DEFAULTS_GUILD)
         self._resolver = MediaResolver()
+        self._voice_repair = VoiceDependencyRepair()
         self._players = {}
         self._player_locks = defaultdict(asyncio.Lock)
         self._lookups = set()
@@ -90,6 +92,7 @@ class AudioPlus(AudioCommands, commands.Cog):
 
     async def cog_unload(self):
         self._closing = True
+        await self._voice_repair.close()
         await self._watchdog.close()
         await close_views(self)
         for guild_id in tuple(self._panels):
@@ -108,6 +111,18 @@ class AudioPlus(AudioCommands, commands.Cog):
         ready = getattr(self.bot, "wait_until_red_ready", None) or self.bot.wait_until_ready
         await ready()
 
+    def _voice_maintenance_error(self):
+        if self._voice_repair.running:
+            return "Voice dependency repair is running. Wait for it to finish and restart Red."
+        if getattr(self.bot, "_audioplus_voice_restart_required", False) is True:
+            return "Voice libraries were changed. Restart Red, then run audiostatus before playing."
+        return None
+
+    def _require_voice(self):
+        if error := self._voice_maintenance_error():
+            raise MediaError(error)
+        require_voice()
+
     def _check_voice_busy(self, guild):
         player = self._players.get(guild.id)
         return bool(guild.voice_client or (player and (player.queue or player._restart)))
@@ -123,7 +138,7 @@ class AudioPlus(AudioCommands, commands.Cog):
                 return CheckResult(
                     "deferred", "Voice is already in use. I will retry in 15 minutes."
                 )
-        require_voice()
+        self._require_voice()
         tracks = await self._load_tracks(settings["video_url"])
         if not tracks:
             raise MediaError("YouTube returned no playable test video.")
@@ -400,6 +415,8 @@ class AudioPlus(AudioCommands, commands.Cog):
     async def _connect_voice(self, channel):
         if self._closing:
             raise asyncio.CancelledError
+        if error := self._voice_maintenance_error():
+            raise MediaError(error)
         task = asyncio.create_task(self._open_voice(channel))
         self._connections.add(task)
         try:
@@ -479,7 +496,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         else:
             raise commands.UserInputError("Join a voice channel first.")
         try:
-            require_voice()
+            self._require_voice()
         except MediaError as exc:
             raise commands.CommandError(str(exc)) from exc
         async with self._player_locks[ctx.guild.id]:
@@ -637,7 +654,7 @@ class AudioPlus(AudioCommands, commands.Cog):
             channel, snapshot = old.voice.channel, self._snapshot(old)
             await self._dispose_player(guild.id)
             try:
-                require_voice()
+                self._require_voice()
                 vc = await self._connect_voice(channel)
                 player = GuildPlayer(
                     vc,
@@ -666,7 +683,7 @@ class AudioPlus(AudioCommands, commands.Cog):
                 return False
 
     async def _diagnostic_reply(self, ctx):
-        state = await diagnostics()
+        state = await diagnostics(voice_guard=self._voice_maintenance_error)
         lines = [
             "**Backend** · Native Discord voice",
             "**Lavalink** · Not used",
@@ -674,7 +691,9 @@ class AudioPlus(AudioCommands, commands.Cog):
             "**Discord voice** · " + ("Unavailable" if state["voice_error"] else "Ready"),
             f"**FFmpeg** · {state['ffmpeg']}",
         ]
-        lines += [f"**{name}** · {version}" for name, version in state["packages"].items()]
+        for name, version in state["packages"].items():
+            status = state.get("voice_packages", {}).get(name)
+            lines.append(f"**{name}** · {version}" + (f" · Import: {status}" if status else ""))
         lines += [
             f"**Deno** · {state['deno']}",
             f"**Node.js** · {state['node']}",
@@ -718,7 +737,7 @@ class AudioPlus(AudioCommands, commands.Cog):
             "Discovery": f"`{p}search <query>` · choose a result before joining voice\n`{p}audioset fairqueue <enabled>` · `{p}audioset autoplay <enabled>`",
             "Controls": f"`{p}pause` · `{p}resume`\n`{p}volume [0..1000]` · `{p}shuffle`\n`{p}repeat [off|track|queue]`",
             "Voice": f"`{p}join` · `{p}disconnect`\n`{p}speak` · `{p}undeafen`\n`{p}fixvoice` · `{p}rejoin`",
-            "Diagnostics": f"`{p}audiostatus` · `{p}playerstate`\n`{p}debugvc` · `{p}tone`\n`{p}audiocheck` (owner)",
+            "Diagnostics": f"`{p}audiostatus` · `{p}playerstate`\n`{p}debugvc` · `{p}tone`\n`{p}audiorepair` · `{p}audiocheck` (owner)",
             "Queue editing": f"`{p}seek <seconds>` · `{p}remove <position>` · `{p}move <position> <destination>`",
             "Saved music": f"`{p}playlist` · `{p}playlist save <name>` · `{p}playlist play <name>`\n`{p}favorite` · `{p}favorite add` · `{p}favorite play`",
             "Music settings": f"`{p}audioset setup` · `{p}audioset panel <enabled>`\n`{p}audioset dj [@role]` · `{p}audioset voteskip <enabled>`",
@@ -1156,6 +1175,72 @@ class AudioPlus(AudioCommands, commands.Cog):
     async def audiostatus(self, ctx: commands.Context):
         """Check local playback dependencies and the latest failure."""
         return await self._invoke_control(ctx, self.audio_pingnode)
+
+    @commands.command(name="audiorepair")
+    @checks.is_owner()
+    async def audiorepair(self, ctx: commands.Context):
+        """Repair unimportable PyNaCl/davey in Red's Python environment, then restart Red.
+
+        Bot owner only. Installs binary wheels for failing voice packages and their
+        Python dependencies. Does not install FFmpeg, Opus, or a JavaScript runtime.
+        Disconnect voice sessions first. No packages are installed by play or updates.
+        """
+        if self._closing:
+            raise commands.CommandError("AudioPlus is unloading. Try again after it reloads.")
+        if self._voice_maintenance_error():
+            return await self._reply(ctx, self._voice_maintenance_error(), tone="warning")
+        if (
+            self._lookups
+            or self._connections
+            or any(voice.is_connected() for voice in self.bot.voice_clients)
+        ):
+            return await self._reply(
+                ctx,
+                "Disconnect voice sessions and wait for audio lookups to finish first.",
+                tone="warning",
+            )
+
+        async def started():
+            await self._reply(
+                ctx,
+                "Installing binary wheels for unimportable voice libraries into Red's Python "
+                "environment. Installation may take up to three minutes, followed by verification. "
+                "Restart Red after the repair.",
+                title="Repair voice dependencies",
+            )
+
+        failure = None
+        try:
+            installed = await self._voice_repair.repair(started)
+        except MediaError as exc:
+            failure = str(exc)
+        finally:
+            if self._voice_repair.changed:
+                # The bot object survives cog reloads; restarting clears this in-memory flag.
+                self.bot._audioplus_voice_restart_required = True
+        if failure is not None:
+            if self._voice_repair.changed:
+                failure += f"\n\nRestart Red with `{ctx.clean_prefix}restart` before retrying."
+            return await self._reply(
+                ctx, failure, title="Voice repair needs attention", tone="error"
+            )
+        if installed:
+            await self._reply(
+                ctx,
+                "PyNaCl and davey now import successfully in a fresh Python process.\n\n"
+                f"Run `{ctx.clean_prefix}restart`, then `{ctx.clean_prefix}audiostatus` and "
+                f"`{ctx.clean_prefix}play <query>`.",
+                title="Voice libraries repaired",
+                tone="success",
+            )
+        else:
+            await self._reply(
+                ctx,
+                "PyNaCl and davey already import successfully. No packages were changed. "
+                f"Run `{ctx.clean_prefix}audiostatus` to check the remaining prerequisites.",
+                title="Voice libraries ready",
+                tone="success",
+            )
 
     @commands.hybrid_command(name="playerstate")
     @GUILD_ONLY

@@ -113,6 +113,22 @@ apt-get install -y --no-install-recommends ffmpeg libopus0
 
 Skip this step if `[p]audiostatus` reports usable Discord voice and playback already works. PyNaCl and davey remain required; a source update simply leaves their installed copies alone.
 
+If playback says **PyNaCl could not be imported** or **davey could not be imported**, the bot owner can repair the Python libraries from Discord. For your repository named `kevin`:
+
+```text
+[p]cog updatetoversion True kevin origin/main audioplus
+[p]reload audioplus
+[p]audiorepair
+```
+
+Wait for the repair result, then run `[p]restart`, `[p]audiostatus`, and `[p]play <query>`. Repair installs binary wheels for only unimportable PyNaCl/davey and their Python dependencies into the interpreter running Red, checks both libraries in a fresh process with Red's actual package search order, and requires a full restart after any install attempt. Reloading the cog does not clear that restart requirement. Importable voice libraries are left alone, and neither playback nor cog updates install them automatically.
+
+Repair is bot-owner-only and can also run in a DM. Disconnect voice sessions and let active lookups finish first. It runs one repair at a time, bounds installation to three minutes and verification to 15 seconds, and cancels its installer on cog unload. It cannot install FFmpeg, libopus, or JavaScript runtimes. The bot must be able to write to its Python environment and reach its configured package index. Failures report a safe category without exposing package-index credentials. A failed or cancelled installer may have changed files, so restart before trying again.
+
+Diagnostics show native **import status** separately from package versions. An installed version with `Import failed` indicates a broken import rather than a working dependency. If verification still fails after pip succeeds, an existing broken Downloader package may take precedence over the repaired bot environment. Follow the manual setup below and retain the reported import exception type; do not delete Downloader's entire shared library directory.
+
+For manual installation, use the container console:
+
 [PhasecoreX's image](https://github.com/PhasecoreX/docker-red-discordbot#extending-this-image) runs Red in `/data/venv`. Run the following in that container as the user running Red, matching its `PUID`/`PGID`:
 
 ```sh
@@ -207,6 +223,7 @@ All playback and voice commands are server commands. The bot needs Connect and S
 | `[p]shuffle` | `/shuffle` | Shuffle upcoming tracks. |
 | `[p]repeat [off\|track\|queue]` | `/repeat` | Show/set repeat mode; default off. Slash offers the three modes as choices. |
 | `[p]audiostatus` | `/audiostatus` | Check local dependencies and latest playback failure; prefix alias `pingnode`. |
+| `[p]audiorepair` | Prefix only | Bot owner: repair failing PyNaCl/davey imports in Red's Python environment, then restart. |
 | `[p]playerstate` | `/playerstate` | Inspect the native player's state. |
 | `[p]debugvc` | `/debugvc` | Inspect Discord voice flags and local playback state. |
 | `[p]tone` | `/tone` | Queue a public direct MP3 to test playback independently of YouTube. It still requires internet access to the test URL. |

@@ -79,6 +79,8 @@ CommunityPlus, LevelPlus, LogPlus, and OwoPlus declare Red **3.5.0 or newer**. S
 
 These guides describe the current source. Compatibility metadata is not a record of live testing on every Red, Discord, or media-provider version.
 
+If music reports that PyNaCl or davey cannot import, update/reload AudioPlus and run `[p]audiorepair` as the bot owner. It repairs unimportable voice libraries in Red's running Python environment and checks fresh imports. Restart Red after the install attempt, then run `[p]audiostatus` and `[p]play <query>`. See the [voice setup guide](audioplus/README.md#one-time-native-voice-library-setup) for update commands, limits, and manual container setup.
+
 ## First setup
 
 Read the cog's guide before loading it on an existing server. Some features start working immediately:

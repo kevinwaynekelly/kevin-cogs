@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01: Native voice dependency repair
+
+- Add bot-owner-only `[p]audiorepair` for unimportable PyNaCl/davey, installing binary wheels in the running Red interpreter rather than Downloader's update target. Keep working voice libraries and normal cog-update requirements unchanged.
+- Verify fresh imports using Red's package search order, report import status independently from installed versions, and point playback errors to the repair command. Block new AudioPlus connections during repair and until Red restarts, including across cog reloads.
+- Refuse repair during voice sessions/lookups, bound subprocess time/output, sanitize failure replies, and terminate owned children on timeout/unload, including cancellation during spawn. Document the Discord repair path and manual container setup.
+- Validate 508 tests on Python 3.10/3.11, plus lint, formatting, syntax, metadata, and whitespace checks. Pip installation and Discord/provider transport remain mocked; fresh native import probes and subprocess cleanup run locally.
+
 ## 2026-10-01: Shared settings and discovery integration
 
 - Add optional independently installable SettingsHub with a shared setup picker, local health report, configuration backups, and validated requester-bound same-server restore previews. Preserve member/operational data, replace custom maps, reject unsafe inputs, repeat current permissions, and roll back failed writes.
