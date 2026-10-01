@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-01: LevelPlus slash synchronization fix
+
+- Give `level formula calibrate` the valid lowercase slash options `level1`, `xp1`, `level2`, and `xp2`, with descriptions. Capitalized option names previously caused Discord to reject the entire slash synchronization request with HTTP 400. Preserve the text command arguments, permission checks, calibration behavior, and saved settings.
+- Validate serialized command, subcommand, parameter, and localized names across all five cogs. Reproduce the rejected names before the fix and exercise renamed slash options and unchanged text calibration through Red's real command pipeline, including permission denials. Discord networking remains mocked.
+
 ## 2026-10-01: direct commands and slash groups across the cogs
 
 - Rename public `com` to `community`, `logplus` to `log`, and `owoplus` to `owo`, without old-name aliases. Keep `level`, cog package/class names, Config identifiers, defaults, XP, and member records. Document reapplying custom Red rules that used old command paths.

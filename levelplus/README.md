@@ -60,6 +60,8 @@ Enable the 44 slash actions once as the bot owner:
 
 Use `/level status`, `/level show`, or the direct member commands. Slash settings cover formulas, message/reaction/voice XP, channel-type restrictions, level-up announcements, member XP editing, imports/exports, names, and diagnostics. For example, `/level message enable` accepts an optional boolean and `/level xp add` accepts a member and amount. Administrator checks apply to slash settings too.
 
+Calibration uses lowercase slash options: `/level formula calibrate level1:1 xp1:100 level2:2 xp2:250` fits thresholds of 100 total XP at level 1 and 250 total XP at level 2, preserving the current multiplier. The text command remains `[p]level formula calibrate 1 100 2 250`.
+
 `level formula linear ...`, `level restrict nochannels ...`, and `level restrict noroles ...` remain text-only because their nesting exceeds Discord's limit. `level xp setid`, `level xp removeid`, `level name setid`, and `level name get` also remain text-only to preserve exact 64-bit user IDs without slash integer rounding. `levellookup` accepts an ID as text. CSV imports through slash use the `raw` text option; prefix imports still support message attachments. After updates, reload `levelplus` and run `slash sync` again.
 
 ## Grouped member commands

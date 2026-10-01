@@ -17,6 +17,7 @@ from typing import List, Optional, Tuple
 
 import discord
 from discord.ext import commands, tasks
+from redbot.core import app_commands
 from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
@@ -680,6 +681,13 @@ class LevelPlus(redcommands.Cog):
         )
 
     @formula.command(name="calibrate")
+    @app_commands.rename(L1="level1", XP1="xp1", L2="level2", XP2="xp2")
+    @app_commands.describe(
+        L1="Level at the first known XP total.",
+        XP1="Cumulative XP needed to reach the first level.",
+        L2="Level at the second known XP total.",
+        XP2="Cumulative XP needed to reach the second level.",
+    )
     async def formula_calibrate(
         self, ctx: redcommands.Context, L1: int, XP1: int, L2: int, XP2: int
     ):

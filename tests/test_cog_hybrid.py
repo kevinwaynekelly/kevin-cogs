@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 from conftest import make_channel, make_member
+from discord.app_commands.commands import validate_name
 from redbot.core import commands
 from redbot.core._cli import parse_cli_flags
 from redbot.core._events import init_events
@@ -98,18 +99,23 @@ async def test_all_cogs_register_with_core_and_serialize_slash_payloads(command_
     assert set(SHORTCUTS) <= set(bot.tree._disabled_global_commands)
 
     def check_options(payload, depth=0):
+        # Discord.py does not validate unrenamed callback parameter names at registration.
+        # Inspect the final upload payload, including scalar options and localizations.
+        validate_name(payload["name"])
+        for name in payload.get("name_localizations", {}).values():
+            validate_name(name)
         assert len(payload.get("options", [])) <= 25
         assert 1 <= len(payload["description"]) <= 100
         for option in payload.get("options", []):
             if option["type"] in (1, 2):
                 assert depth < 2
-                check_options(option, depth + 1)
+            check_options(option, depth + 1)
 
     endpoints = []
     for name, app in bot.tree._disabled_global_commands.items():
+        check_options(app.to_dict(bot.tree))
         if name in {"community", "level", "log", "owo", *SHORTCUTS}:
             assert app.guild_only
-            check_options(app.to_dict(bot.tree))
             endpoints.extend(
                 child.qualified_name
                 for child in app.walk_commands()
@@ -134,6 +140,40 @@ async def test_all_cogs_register_with_core_and_serialize_slash_payloads(command_
         command = bot.get_command(path)
         assert command is not None
         assert not getattr(command, "app_command", None)
+
+
+@pytest.mark.parametrize("slash", [False, True])
+@pytest.mark.parametrize("owner", [False, True])
+async def test_formula_calibration_accepts_lowercase_slash_options_and_keeps_prefix_checks(
+    command_runtime, monkeypatch, slash, owner
+):
+    bot, loaded, member, invoke = command_runtime
+    if owner:
+        bot.owner_ids.add(member.id)
+    group = bot.get_cog("LevelPlus").config.guild(member.guild)
+    before = await group.all()
+    if slash:
+        ctx = await invoke_slash(
+            bot,
+            invoke,
+            monkeypatch,
+            "level formula calibrate",
+            level1=1,
+            xp1=100,
+            level2=2,
+            xp2=250,
+        )
+        assert ctx.defer.await_count == int(owner)
+    else:
+        ctx = await invoke("!level formula calibrate 1 100 2 250")
+    assert ctx.command_failed is (not owner)
+    if owner:
+        assert await group.linear() == {"base": 100.0, "inc": 50.0}
+        assert await group.curve() == "linear"
+        assert await group.multiplier() == before["multiplier"]
+        assert "Calibrated linear curve" in ctx.send.await_args.kwargs["embed"].description
+    else:
+        assert await group.all() == before
 
 
 @pytest.mark.parametrize("path", ["rank", "leaderboard", "level status", "level show"])
