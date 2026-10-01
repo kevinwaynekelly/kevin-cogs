@@ -40,12 +40,13 @@ from .features import (
 )
 from .interactive import SetupView, close_views
 from .levels import cumulative_xp, level_from_xp
+from .milestones import MILESTONE_DEFAULTS, MilestoneCommands
 from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
 
 
-class LevelPlus(redcommands.Cog):
+class LevelPlus(MilestoneCommands, redcommands.Cog):
     """Member XP, levels, leaderboards, and announcements."""
 
     async def cog_command_error(self, ctx, error):
@@ -59,7 +60,12 @@ class LevelPlus(redcommands.Cog):
         self.bot: Red = bot
         self._presentation = Presentation("LevelPlus", "level")
         self.config: Config = Config.get_conf(self, identifier=0x1EAF01, force_registration=True)
-        self.config.register_guild(**DEFAULTS_GUILD, **FEATURE_DEFAULTS_GUILD)
+        self.config.register_guild(
+            **DEFAULTS_GUILD,
+            **FEATURE_DEFAULTS_GUILD,
+            milestone_settings=MILESTONE_DEFAULTS,
+            milestones={},
+        )
 
         self._settings_cache = {}
         self._settings_locks = defaultdict(asyncio.Lock)
@@ -70,8 +76,16 @@ class LevelPlus(redcommands.Cog):
         self._reaction_once = OrderedDict()
         self._reward_locks = defaultdict(asyncio.Lock)
         self._views = set()
+        self._closing = False
+        self._card_slots = asyncio.Semaphore(2)
+        self._card_tasks = set()
 
     async def cog_unload(self) -> None:
+        self._closing = True
+        for task in tuple(self._card_tasks):
+            task.cancel()
+        await asyncio.gather(*self._card_tasks, return_exceptions=True)
+        self._card_tasks.clear()
         self.voice_tick.cancel()
         await close_views(self)
 
@@ -142,6 +156,19 @@ class LevelPlus(redcommands.Cog):
                         else await self._get_xp(guild, member.id)
                     )
                     new_xp = old_xp + amount
+                    if source:
+                        budget = (
+                            max(0, features["daily_cap"] - cap["xp"].get(uid, 0))
+                            if cap is not None
+                            else None
+                        )
+                        bonus = await self._milestone_award(
+                            guild, member, amount, source, day, now, old_xp, settings, budget
+                        )
+                        amount += bonus
+                        new_xp += bonus
+                        if cap is not None:
+                            cap["xp"][uid] += bonus
                     if amount:
                         if data is not None:
                             data[uid] = new_xp
@@ -1468,6 +1495,7 @@ class LevelPlus(redcommands.Cog):
         await self._reply(ctx, f"`{user_id}` → {alias}")
 
     async def cog_load(self):
+        self._closing = False
         self.voice_tick.start()
 
     async def cog_before_invoke(self, ctx):
@@ -1491,6 +1519,7 @@ class LevelPlus(redcommands.Cog):
             keys = [key for key in DEFAULTS_GUILD if key not in {"xp", "names"}] + [
                 "xp_features",
                 "rewards",
+                "milestone_settings",
             ]
             values = await asyncio.gather(*(group.get_attr(key)() for key in keys))
             settings = dict(zip(keys, values))
@@ -1816,12 +1845,50 @@ class LevelPlus(redcommands.Cog):
         if not member.bot:
             await self._sync_rewards(member)
 
+    @level.command(name="badges")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def badge_setting(self, ctx, enabled: bool):
+        """Enable or pause new achievement badges, retaining earned badges."""
+        await self._milestone_setting(ctx.guild, "badges", enabled)
+        await self._presentation.confirm(ctx)
+
+    @level.group(name="challenges", invoke_without_command=True, fallback="status")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def challenge_settings(self, ctx):
+        """Configure weekly goals and earned XP rewards."""
+        await self._challenge_settings(ctx)
+
+    @challenge_settings.command(name="enabled")
+    async def challenge_enable(self, ctx, enabled: bool):
+        """Enable or pause weekly challenge collection."""
+        await self._milestone_setting(ctx.guild, "challenges", enabled)
+        await self._presentation.confirm(ctx)
+
+    @challenge_settings.command(name="goal")
+    async def challenge_goal(self, ctx, metric: str, target: int, reward: int):
+        """Set a message, reaction, voice, or earned-XP weekly goal."""
+        metric = metric.lower()
+        if (
+            metric not in {"message", "reaction", "voice", "xp"}
+            or not 1 <= target <= 100000
+            or not 0 <= reward <= 10000
+        ):
+            raise redcommands.BadArgument(
+                "Choose message, reaction, voice, or xp, a target from 1 to 100,000, and a reward from 0 to 10,000 XP."
+            )
+        async with self.config.guild(ctx.guild).milestone_settings() as data:
+            data["goals"][metric] = {"target": target, "reward": reward}
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
     async def red_delete_data_for_user(self, *, requester, user_id):
         uid = str(user_id)
         for guild_id in await self.config.all_guilds():
             group = self.config.guild_from_id(guild_id)
             async with group.xp.get_lock():
                 await group.clear_raw("xp", uid)
+                async with group.milestones.get_lock():
+                    await group.milestones.clear_raw(uid)
             async with group.names.get_lock():
                 await group.clear_raw("names", uid)
             async with group.period_xp() as data:
@@ -1850,12 +1917,14 @@ class LevelPlus(redcommands.Cog):
                 or periods["days"]
                 or periods["season"]
                 or periods["archives"]
+                or uid in config["milestones"]
             ):
                 data[str(guild_id)] = {
                     "xp": config.get("xp", {}).get(uid, 0),
                     "name": config.get("names", {}).get(uid),
                     "periods": periods,
                     "daily_earned": config["earned_today"]["xp"].get(uid, 0),
+                    "milestones": config["milestones"].get(uid, {}),
                 }
         return {"levelplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
 

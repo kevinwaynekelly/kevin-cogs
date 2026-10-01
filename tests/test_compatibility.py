@@ -54,6 +54,10 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
 
         assert defaults.pop("GUILD") == DEFAULTS_GUILD
     if package == "levelplus":
+        from levelplus.milestones import MILESTONE_DEFAULTS
+
+        assert defaults["GUILD"].pop("milestone_settings") == MILESTONE_DEFAULTS
+        assert defaults["GUILD"].pop("milestones") == {}
         from levelplus.features import FEATURE_DEFAULTS_GUILD
 
         for key, value in FEATURE_DEFAULTS_GUILD.items():

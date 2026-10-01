@@ -118,7 +118,7 @@ async def test_all_cogs_register_with_core_and_serialize_slash_payloads(command_
             "LogPlus",
             "OwoPlus",
         )
-    } == {"AudioPlus": 39, "CommunityPlus": 60, "LevelPlus": 59, "LogPlus": 23, "OwoPlus": 33}
+    } == {"AudioPlus": 39, "CommunityPlus": 60, "LevelPlus": 66, "LogPlus": 23, "OwoPlus": 33}
 
     def check_options(payload, depth=0):
         # Discord.py does not validate unrenamed callback parameter names at registration.
@@ -162,6 +162,21 @@ async def test_all_cogs_register_with_core_and_serialize_slash_payloads(command_
         command = bot.get_command(path)
         assert command is not None
         assert not getattr(command, "app_command", None)
+
+
+async def test_rankcard_runs_through_red_and_honors_original_show_disable(command_runtime):
+    bot, loaded, member, invoke = command_runtime
+    cog = bot.get_cog("LevelPlus")
+    await cog._add_xp(member.guild, member, 1000)
+    ctx = await invoke("!rankcard")
+    assert not ctx.command_failed
+    file = ctx.send.await_args.kwargs["file"]
+    assert file.filename == "rank.png" and file.fp.read(8) == b"\x89PNG\r\n\x1a\n"
+    cog.rankcard.reset_cooldown(ctx)
+    cog.show.disable_in(member.guild)
+    ctx = await invoke("!rankcard")
+    assert ctx.command_failed
+    assert all("file" not in call.kwargs for call in ctx.send.await_args_list)
 
 
 @pytest.mark.parametrize("slash", [False, True])
@@ -341,6 +356,9 @@ async def test_admin_shortcuts_and_renamed_groups_keep_permissions(command_runti
         "event create",
         "event cancel",
         "level message enable",
+        "level badges",
+        "level challenges enabled",
+        "level challenges goal",
         "log clearchannel",
         "owo enable",
         "seen",
@@ -350,7 +368,11 @@ async def test_admin_shortcuts_and_renamed_groups_keep_permissions(command_runti
 )
 async def test_slash_admin_paths_reject_ordinary_members(command_runtime, monkeypatch, path):
     bot, loaded, member, invoke = command_runtime
-    ctx = await invoke_slash(bot, invoke, monkeypatch, path)
+    options = {
+        "level challenges enabled": {"enabled": True},
+        "level challenges goal": {"metric": "message", "target": 2, "reward": 5},
+    }.get(path, {})
+    ctx = await invoke_slash(bot, invoke, monkeypatch, path, **options)
     assert ctx.command_failed
     ctx.defer.assert_not_awaited()
     assert await bot.get_cog("CommunityPlus").config.guild(member.guild).welcome.enabled()

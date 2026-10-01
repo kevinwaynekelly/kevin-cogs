@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01: Achievements, challenges, and rank cards
+
+- Add seven earned badges, configurable optional weekly goals, member status commands, and administrator controls with slash equivalents.
+- Serialize rewards with XP updates, respect caps/boost/source policies, avoid reward recursion, preserve unpaid earned rewards across reloads and week changes, and export/delete added member records.
+- Add locally rendered themed PNG rank cards with original show permissions, bounded rendering, and a declared Pillow dependency. Preserve the existing text rank command and independent cog installation.
+
+
 ## 2026-10-01: Community polls and events
 
 - Add persistent member poll voting and event attendance selectors, administrator creation/closing, offset-aware event times, optional private reminders, and matching slash actions.

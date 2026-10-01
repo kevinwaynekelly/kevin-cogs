@@ -84,6 +84,8 @@ def make_member(guild, user_id=123456789012345678, *, bot=False, name="Kevin"):
 def make_message(member, channel, *, content="hello world", attachments=None):
     message = Mock(spec=discord.Message)
     message.id = 987654321012345678
+    message.created_at = discord.utils.utcnow()
+    message.edited_at = None
     message.guild = member.guild
     message.author = member
     message.channel = channel

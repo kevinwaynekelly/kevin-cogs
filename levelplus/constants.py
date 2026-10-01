@@ -49,3 +49,5 @@ DEFAULTS_GUILD = {
 }
 
 WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
+
+__red_end_user_data_statement__ += " Stores per-member earned XP, badge IDs/times, current weekly challenge counters/completions, and pending earned reward XP. Data hooks export/delete these records. Rank PNGs are rendered locally in memory and are not stored by the cog."
