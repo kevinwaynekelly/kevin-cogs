@@ -2,7 +2,7 @@
 
 Music search, playback, queues, and Discord voice control inside Red. AudioPlus uses **yt-dlp**, **FFmpeg**, and **Discord.py native voice with DAVE encryption support**. A Lavalink server, Wavelink, Java, and a separate YouTube plugin are no longer required.
 
-`[p]` means your bot's command prefix. With `!`, `[p]audio play roar` becomes `!audio play roar`. Replies use the shared Kevin's Cogs theme and fall back to text when embeds are unavailable.
+`[p]` means your bot's command prefix. With `!`, `[p]play roar` becomes `!play roar`. Playback and voice controls also have slash commands, including `/play`, `/skip`, and `/queue`. Replies use the shared Kevin's Cogs theme and fall back to text when embeds are unavailable. Existing `[p]audio ...` commands remain available.
 
 ## Requirements
 
@@ -25,8 +25,21 @@ Restart Red after dependency installation, then run:
 
 ```text
 [p]load audioplus
-[p]audio pingnode
+[p]audiostatus
 ```
+
+## Enable slash commands
+
+After loading AudioPlus, run these commands as the bot owner:
+
+```text
+[p]slash enablecog audioplus
+[p]slash sync
+```
+
+Use the lowercase module name `audioplus`. Red keeps application commands disabled until the owner enables them. Then choose `/play` and enter a song name or URL in its `query` option. All 20 direct controls in the command table below have matching slash commands. Prefix aliases such as `[p]p` do not create additional slash names.
+
+When updating an installation that already enabled AudioPlus slash commands, run `[p]slash sync` after reloading to publish command changes. If commands still do not appear, use Red's `[p]invite` to ensure the bot was invited with application-command access.
 
 ## Upgrading from the Lavalink backend
 
@@ -44,7 +57,7 @@ Install the container dependencies below before testing playback. If Downloader 
 
 Restart Red after that command. When dependencies are already installed, `[p]cog update True audioplus` can update and reload the cog directly.
 
-Saved Config identifiers and defaults remain compatible. The old host, port, password, TLS flag, and resume timeout stay saved for rollback but are **ignored by native playback**. In-memory queues reset on reload or restart, as before. Existing commands, aliases, arguments, and permission checks remain registered. `audio repeat` is new.
+Saved Config identifiers and defaults remain compatible. The old host, port, password, TLS flag, and resume timeout stay saved for rollback but are **ignored by native playback**. In-memory queues reset on reload or restart, as before. Existing commands, aliases, arguments, and permission checks remain registered. Direct controls and slash commands are additional entry points to the same player. Red treats direct controls as new command names, so custom command permission rules on legacy `[p]audio ...` commands should also be applied to the corresponding direct controls.
 
 The old node commands remain available with documented new behavior:
 
@@ -80,7 +93,7 @@ curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- --yes
 deno --version
 ```
 
-This places Deno in `/usr/local/bin`, rather than root's private home directory, so Red can find it. Only one supported JavaScript runtime is needed. Node.js and QuickJS may still show `missing` when Deno is available. Run `[p]audio pingnode` again, then test `[p]audio tone` and a YouTube search. These console changes survive a container restart but can disappear when the container is recreated.
+This places Deno in `/usr/local/bin`, rather than root's private home directory, so Red can find it. Only one supported JavaScript runtime is needed. Node.js and QuickJS may still show `missing` when Deno is available. Run `[p]audiostatus` again, then test `[p]tone` and a YouTube search. These console changes survive a container restart but can disappear when the container is recreated.
 
 The included [Dockerfile](Dockerfile) builds a persistent image for **PhasecoreX's Debian-based Red image family**, carrying FFmpeg, libopus, and Node.js 22. It inherits the existing image's entrypoint, `/data` volume, and bot startup command.
 
@@ -92,65 +105,66 @@ docker build -f audioplus/Dockerfile --build-arg RED_IMAGE=phasecorex/red-discor
 
 If you already use a different PhasecoreX tag, pass that same tag as `RED_IMAGE`. In Unraid, use `kevin-red-native` as the Red container's Repository image, keeping its existing `/data` mapping, environment variables, and other settings. Do not replace your appdata mapping. This Dockerfile is an image recipe; automated checks do not build or deploy it to your server.
 
-For another base-image family, add FFmpeg, libopus, and a supported JavaScript runtime using that image's package manager. AudioPlus's `[p]audio pingnode` reports what Red can actually use.
+For another base-image family, add FFmpeg, libopus, and a supported JavaScript runtime using that image's package manager. AudioPlus's `[p]audiostatus` reports what Red can actually use.
 
 ## Playback
 
 Join a voice channel, then try:
 
 ```text
-[p]audio play roar
-[p]audio play https://www.youtube.com/watch?v=VIDEO_ID
-[p]audio play https://www.youtube.com/playlist?list=PLAYLIST_ID
-[p]audio play scsearch:artist and song
-[p]audio np
-[p]audio queue
+[p]play roar
+[p]play https://www.youtube.com/watch?v=VIDEO_ID
+[p]play https://www.youtube.com/playlist?list=PLAYLIST_ID
+[p]play scsearch:artist and song
+[p]np
+[p]queue
 ```
+
+The same controls work as `/play`, `/np`, and `/queue`. Slash requests are acknowledged before voice connection or media lookup so those operations can finish without exceeding Discord's initial response deadline.
 
 Plain text and `ytsearch:` search YouTube and queue one result. `ytmsearch:` is retained for compatibility and maps to yt-dlp's regular YouTube search. `scsearch:` searches SoundCloud. HTTP/HTTPS media and provider URLs are accepted. YouTube playlist URLs queue up to 100 accessible entries. Other providers supported by yt-dlp can work through their URLs, subject to their access requirements. Lavalink plugin prefixes such as `spsearch:` are rejected with an explanation rather than silently searching another provider.
 
-Play and tone confirmations show the selected track's title, artist/uploader, duration when available, and a clickable source link. Playlist confirmations preview the first five entries and report how many additional tracks were queued. `[p]audio np` shows the current title and source link with playback progress. These replies use the shared theme and retain track details when embeds are disabled; they do not expose resolved, signed playback URLs.
+Play and tone confirmations show the selected track's title, artist/uploader, duration when available, and a clickable source link. Playlist confirmations preview the first five entries and report how many additional tracks were queued. `[p]np` and `/np` show the current title and source link with playback progress. These replies use the shared theme and retain track details when embeds are disabled; they do not expose resolved, signed playback URLs.
 
 Each guild has an independent in-memory player. The queue holds at most 100 upcoming tracks. A paused current track stays paused when additional tracks are queued. Provider stream URLs are resolved immediately before playback to avoid using links that expired while waiting in the queue. Direct media URLs are used as supplied. yt-dlp runs in bounded subprocesses outside Red's event loop, with two concurrent lookups and a 45-second extraction timeout.
 
-Natural completion advances once. Skip cancels the current lookup or playback before advancing. Failed tracks are reported in the latest request channel and the player tries the next queued track. A failed or skipped track is not repeated. Stop clears upcoming tracks and cancels the active playback operation. Rejoin refreshes the stream and restores position, pause state, volume, and the queue for seekable audio. Live streams may restart at their live edge. If reconnection fails, tracks remain available in memory for a later `[p]audio join`.
+Natural completion advances once. Skip cancels the current lookup or playback before advancing. Failed tracks are reported in the latest request channel and the player tries the next queued track. A failed or skipped track is not repeated. Stop clears upcoming tracks and cancels the active playback operation. Rejoin refreshes the stream and restores position, pause state, volume, and the queue for seekable audio. Live streams may restart at their live edge. If reconnection fails, tracks remain available in memory for a later `[p]join` or `/join`.
 
 ## Commands
 
 All playback and voice commands are server commands. The bot needs Connect and Speak in the target voice channel and may need Stage moderator approval to speak. Ordinary controls retain their existing permission checks; the three legacy setup commands remain bot-owner-only.
 
-| Command | Purpose |
-| --- | --- |
-| `[p]audio` | Show the command overview. |
-| `[p]audio play <query>` | Search or queue music; alias `p`. |
-| `[p]audio join` | Join or move to your voice channel; aliases `connect`, `summon`. |
-| `[p]audio leave` | Disconnect and clear the queue; aliases `dc`, `disconnect`. |
-| `[p]audio skip` | Skip current playback or lookup; aliases `next`, `s`. |
-| `[p]audio stop` | Stop playback and clear the queue. |
-| `[p]audio pause` | Pause the current track. |
-| `[p]audio resume` | Resume paused playback. |
-| `[p]audio volume [value]` | Show/set volume, clamped to 0 through 1000%; alias `vol`. Values above 100% can clip. |
-| `[p]audio np` | Show current track and progress; alias `nowplaying`. |
-| `[p]audio queue` | Show the next ten tracks; alias `q`. |
-| `[p]audio shuffle` | Shuffle upcoming tracks. |
-| `[p]audio repeat [off|track|queue]` | Show/set repeat mode; default off. |
-| `[p]audio pingnode` | Check local dependencies and latest playback failure. |
-| `[p]audio playerstate` | Inspect the native player's state. |
-| `[p]audio debugvc` | Inspect Discord voice flags and local playback state. |
-| `[p]audio tone` | Queue a public direct MP3 to test playback independently of YouTube. It still requires internet access to the test URL. |
-| `[p]audio speak` | Try to unsuppress/request speaking access on a Stage channel. |
-| `[p]audio undeafen` | Try to clear self-mute/self-deafen. |
-| `[p]audio fixvoice` | Attempt Stage speaking and voice-flag recovery. |
-| `[p]audio rejoin` | Reconnect and restore seekable playback and queue state. |
+| Prefix command | Slash command | Purpose |
+| --- | --- | --- |
+| `[p]play <query>` | `/play` | Search or queue music; prefix alias `p`. |
+| `[p]join` | `/join` | Join or move to your voice channel; prefix aliases `connect`, `summon`. |
+| `[p]disconnect` | `/disconnect` | Disconnect and clear the queue; prefix alias `dc`. |
+| `[p]skip` | `/skip` | Skip current playback or lookup; prefix aliases `next`, `s`. |
+| `[p]stop` | `/stop` | Stop playback and clear the queue. |
+| `[p]pause` | `/pause` | Pause the current track. |
+| `[p]resume` | `/resume` | Resume paused playback. |
+| `[p]volume [value]` | `/volume` | Show/set volume, clamped to 0 through 1000%; prefix alias `vol`. Values above 100% can clip. |
+| `[p]np` | `/np` | Show current track and progress; prefix alias `nowplaying`. |
+| `[p]queue` | `/queue` | Show the next ten tracks; prefix alias `q`. |
+| `[p]shuffle` | `/shuffle` | Shuffle upcoming tracks. |
+| `[p]repeat [off\|track\|queue]` | `/repeat` | Show/set repeat mode; default off. Slash offers the three modes as choices. |
+| `[p]audiostatus` | `/audiostatus` | Check local dependencies and latest playback failure; prefix alias `pingnode`. |
+| `[p]playerstate` | `/playerstate` | Inspect the native player's state. |
+| `[p]debugvc` | `/debugvc` | Inspect Discord voice flags and local playback state. |
+| `[p]tone` | `/tone` | Queue a public direct MP3 to test playback independently of YouTube. It still requires internet access to the test URL. |
+| `[p]speak` | `/speak` | Try to unsuppress/request speaking access on a Stage channel. |
+| `[p]undeafen` | `/undeafen` | Try to clear self-mute/self-deafen. |
+| `[p]fixvoice` | `/fixvoice` | Attempt Stage speaking and voice-flag recovery. |
+| `[p]rejoin` | `/rejoin` | Reconnect and restore seekable playback and queue state. |
 
-The four legacy node commands are described in the upgrade table above. Use `[p]help audio <command>` for native Red command help.
+Use `[p]audio` for the themed overview or `[p]help AudioPlus` for Red's full command help. Legacy `[p]audio ...` commands retain their names and aliases, including `[p]audio leave` and `[p]audio pingnode`. The four legacy node commands are described in the upgrade table above. Music disconnection uses `[p]disconnect`; Red's core `[p]leave` command retains its server-leaving behavior.
 
 ## Troubleshooting
 
-1. Run `[p]audio pingnode`. Install missing packages/binaries in the Red environment. AudioPlus loads newly available Downloader voice dependencies automatically; restart Red after upgrading a library already loaded in the process. If a native library cannot import, diagnostics identify PyNaCl or davey separately. These checks verify dependencies, not live provider access or voice delivery.
-2. Run `[p]audio stop`, then `[p]audio tone`. If it fails, inspect Red's voice permissions, UDP egress, FFmpeg/Opus availability, and access to the MP3 source.
+1. Run `[p]audiostatus`. Install missing packages/binaries in the Red environment. AudioPlus loads newly available Downloader voice dependencies automatically; restart Red after upgrading a library already loaded in the process. If a native library cannot import, diagnostics identify PyNaCl or davey separately. These checks verify dependencies, not live provider access or voice delivery.
+2. Run `[p]stop`, then `[p]tone`. If it fails, inspect Red's voice permissions, UDP egress, FFmpeg/Opus availability, and access to the MP3 source.
 3. If direct audio works but YouTube fails, update yt-dlp and its matching EJS package, verify Deno/Node meets the required version, and retry a public track. Some provider requests can require authentication or be denied by a provider even with current extraction software. This cog does not automatically collect browser cookies or bypass authentication.
-4. Test SoundCloud independently with `[p]audio play scsearch:artist and song`. SoundCloud access is independent of YouTube access.
+4. Test SoundCloud independently with `[p]play scsearch:artist and song`. SoundCloud access is independent of YouTube access.
 5. Playback errors appear in the request channel and remain in local diagnostics until the next successful track start. Dependency installation, lookup, voice connection, and decoder failures are reported separately.
 
 The bot owner can update extraction packages without a cog source change:
@@ -161,7 +175,7 @@ The bot owner can update extraction packages without a cog source change:
 
 For a breakage already fixed in yt-dlp's nightly channel, the owner can use `[p]pipinstall --pre yt-dlp[default]`, following yt-dlp's release guidance. Red's Downloader passes pip arguments through. No automatic package upgrades run while playing music.
 
-For bug reports, include Red/Discord.py versions, `[p]audio pingnode`, `[p]audio playerstate`, the public query/URL, and the matching Red error. Remove tokens, cookies, passwords, and signed stream URLs before sharing logs.
+For bug reports, include Red/Discord.py versions, `[p]audiostatus`, `[p]playerstate`, the public query/URL, and the matching Red error. Remove tokens, cookies, passwords, and signed stream URLs before sharing logs.
 
 ## Stored data and lifecycle
 
@@ -171,7 +185,7 @@ Unload closes only AudioPlus's players and cancels owned lookups/decoders. Other
 
 ## Development and references
 
-Regression tests cover Red Config/command compatibility, queue races, paused playback, stale callbacks, repeat, reconnect recovery, provider errors, process cancellation, and real yt-dlp/FFmpeg against a local HTTP audio fixture. The native Discord audio thread and Opus encoding are exercised against local audio too. Discord voice networking and external YouTube/SoundCloud behavior are mocked. A successful test suite does not establish live playback on your server.
+Regression tests cover Red Config/command compatibility, real Red hybrid command registration, slash option conversion and callbacks, initial response deferral, queue races, paused playback, stale callbacks, repeat, reconnect recovery, provider errors, process cancellation, and real yt-dlp/FFmpeg against a local HTTP audio fixture. The native Discord audio thread and Opus encoding are exercised against local audio too. Discord command synchronization, voice networking, and external YouTube/SoundCloud behavior are mocked. A successful test suite does not establish live playback on your server.
 
 - [yt-dlp documentation](https://github.com/yt-dlp/yt-dlp)
 - [yt-dlp JavaScript runtime setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS)

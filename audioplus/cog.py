@@ -7,7 +7,7 @@ from typing import Optional
 from urllib.parse import quote
 
 import discord
-from redbot.core import Config, checks, commands
+from redbot.core import Config, app_commands, checks, commands
 from redbot.core.bot import Red
 
 from .backend import diagnostics, require_voice
@@ -49,6 +49,13 @@ class AudioPlus(commands.Cog):
 
     async def _reply(self, ctx, content=None, **kwargs):
         return await self._presentation.send(ctx, content, **kwargs)
+
+    async def _invoke_control(self, ctx, command, **kwargs):
+        interaction = getattr(ctx, "interaction", None)
+        if interaction is not None and not interaction.response.is_done():
+            # Voice connections and media lookups can exceed Discord's response deadline.
+            await ctx.defer()
+        return await command.callback(self, ctx, **kwargs)
 
     async def cog_load(self):
         # Setup/help remain available when the container needs dependencies.
@@ -205,7 +212,7 @@ class AudioPlus(commands.Cog):
                 RuntimeError,
             ) as exc:
                 raise commands.CommandError(
-                    "Discord voice could not connect. Check audio pingnode, channel permissions, and the Red container's UDP network access."
+                    "Discord voice could not connect. Check audiostatus, channel permissions, and the Red container's UDP network access."
                 ) from exc
             player.context = ctx
             await self._stage_unsuppress_if_needed(ctx.guild, channel)
@@ -276,7 +283,7 @@ class AudioPlus(commands.Cog):
         title = discord.utils.escape_markdown(track.title)
         await self._reply(
             ctx,
-            f"**{title}**\n{cause}\n\nRun `{ctx.clean_prefix}audio pingnode` for local dependency checks or `{ctx.clean_prefix}audio tone` to test direct audio.",
+            f"**{title}**\n{cause}\n\nRun `{ctx.clean_prefix}audiostatus` for local dependency checks or `{ctx.clean_prefix}tone` to test direct audio.",
             title="Playback failed",
             tone="error",
         )
@@ -359,10 +366,11 @@ class AudioPlus(commands.Cog):
             "Commands", "Music search and playback run inside Red. No Lavalink node is needed."
         )
         sections = {
-            "Playback": f"`{p}audio play <query>`\n`{p}audio np` · `{p}audio queue`\n`{p}audio skip` · `{p}audio stop`",
-            "Controls": f"`{p}audio pause` · `{p}audio resume`\n`{p}audio volume [0..1000]` · `{p}audio shuffle`\n`{p}audio repeat [off|track|queue]`",
-            "Voice": f"`{p}audio join` · `{p}audio leave`\n`{p}audio speak` · `{p}audio undeafen`\n`{p}audio fixvoice` · `{p}audio rejoin`",
-            "Diagnostics": f"`{p}audio pingnode` · `{p}audio playerstate`\n`{p}audio debugvc` · `{p}audio tone`",
+            "Playback": f"`{p}play <query>`\n`{p}np` · `{p}queue`\n`{p}skip` · `{p}stop`",
+            "Controls": f"`{p}pause` · `{p}resume`\n`{p}volume [0..1000]` · `{p}shuffle`\n`{p}repeat [off|track|queue]`",
+            "Voice": f"`{p}join` · `{p}disconnect`\n`{p}speak` · `{p}undeafen`\n`{p}fixvoice` · `{p}rejoin`",
+            "Diagnostics": f"`{p}audiostatus` · `{p}playerstate`\n`{p}debugvc` · `{p}tone`",
+            "Slash commands": "Use the same controls with `/play`, `/skip`, `/queue`, and more.",
         }
         for name, value in sections.items():
             embed.add_field(name=name, value=value, inline=False)
@@ -684,6 +692,136 @@ class AudioPlus(commands.Cog):
                 raise commands.BadArgument("Choose off, track, or queue.")
             player.repeat = mode
         await self._reply(ctx, f"Repeat: {player.repeat}.")
+
+    @commands.hybrid_command(name="play", aliases=["p"])
+    @GUILD_ONLY
+    @app_commands.describe(query="Song name, media URL, or YouTube playlist URL.")
+    async def play(self, ctx: commands.Context, *, query: str):
+        """Search for music or queue tracks from a URL."""
+        return await self._invoke_control(ctx, self.audio_play, query=query)
+
+    @commands.hybrid_command(name="join", aliases=["connect", "summon"])
+    @GUILD_ONLY
+    async def join(self, ctx: commands.Context):
+        """Join or move to your voice channel."""
+        return await self._invoke_control(ctx, self.audio_join)
+
+    @commands.hybrid_command(name="disconnect", aliases=["dc"])
+    @GUILD_ONLY
+    async def disconnect(self, ctx: commands.Context):
+        """Disconnect from voice and clear the music queue."""
+        return await self._invoke_control(ctx, self.audio_leave)
+
+    @commands.hybrid_command(name="skip", aliases=["next", "s"])
+    @GUILD_ONLY
+    async def skip(self, ctx: commands.Context):
+        """Skip the current track and advance the queue."""
+        return await self._invoke_control(ctx, self.audio_skip)
+
+    @commands.hybrid_command(name="stop")
+    @GUILD_ONLY
+    async def stop(self, ctx: commands.Context):
+        """Stop playback and clear the queue."""
+        return await self._invoke_control(ctx, self.audio_stop)
+
+    @commands.hybrid_command(name="pause")
+    @GUILD_ONLY
+    async def pause(self, ctx: commands.Context):
+        """Pause the current track."""
+        return await self._invoke_control(ctx, self.audio_pause)
+
+    @commands.hybrid_command(name="resume")
+    @GUILD_ONLY
+    async def resume(self, ctx: commands.Context):
+        """Resume paused playback."""
+        return await self._invoke_control(ctx, self.audio_resume)
+
+    @commands.hybrid_command(name="volume", aliases=["vol"])
+    @GUILD_ONLY
+    @app_commands.describe(value="Volume from 0 to 1000 percent; omit to show the current volume.")
+    async def volume(self, ctx: commands.Context, value: Optional[int] = None):
+        """Show or set the playback volume."""
+        return await self._invoke_control(ctx, self.audio_volume, value=value)
+
+    @commands.hybrid_command(name="np", aliases=["nowplaying"])
+    @GUILD_ONLY
+    async def np(self, ctx: commands.Context):
+        """Show the current track, source link, and playback progress."""
+        return await self._invoke_control(ctx, self.audio_nowplaying)
+
+    @commands.hybrid_command(name="queue", aliases=["q"])
+    @GUILD_ONLY
+    async def queue(self, ctx: commands.Context):
+        """Show the upcoming tracks."""
+        return await self._invoke_control(ctx, self.audio_queue)
+
+    @commands.hybrid_command(name="shuffle")
+    @GUILD_ONLY
+    async def shuffle(self, ctx: commands.Context):
+        """Shuffle upcoming tracks without changing the current one."""
+        return await self._invoke_control(ctx, self.audio_shuffle)
+
+    @commands.hybrid_command(name="repeat")
+    @GUILD_ONLY
+    @app_commands.describe(mode="Repeat off, the current track, or the whole queue.")
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="Off", value="off"),
+            app_commands.Choice(name="Current track", value="track"),
+            app_commands.Choice(name="Queue", value="queue"),
+        ]
+    )
+    async def repeat(self, ctx: commands.Context, mode: Optional[str] = None):
+        """Show or set repeat mode."""
+        return await self._invoke_control(ctx, self.audio_repeat, mode=mode)
+
+    @commands.hybrid_command(name="tone")
+    @GUILD_ONLY
+    async def tone(self, ctx: commands.Context):
+        """Play a direct MP3 to test voice independently of YouTube."""
+        return await self._invoke_control(ctx, self.audio_tone)
+
+    @commands.hybrid_command(name="audiostatus", aliases=["pingnode"])
+    @GUILD_ONLY
+    async def audiostatus(self, ctx: commands.Context):
+        """Check local playback dependencies and the latest failure."""
+        return await self._invoke_control(ctx, self.audio_pingnode)
+
+    @commands.hybrid_command(name="playerstate")
+    @GUILD_ONLY
+    async def playerstate(self, ctx: commands.Context):
+        """Inspect the player, queue, position, and voice connection."""
+        return await self._invoke_control(ctx, self.audio_playerstate)
+
+    @commands.hybrid_command(name="debugvc")
+    @GUILD_ONLY
+    async def debugvc(self, ctx: commands.Context):
+        """Inspect Discord voice flags and playback state."""
+        return await self._invoke_control(ctx, self.audio_debugvc)
+
+    @commands.hybrid_command(name="speak")
+    @GUILD_ONLY
+    async def speak(self, ctx: commands.Context):
+        """Request permission to speak on the current Stage channel."""
+        return await self._invoke_control(ctx, self.audio_speak)
+
+    @commands.hybrid_command(name="undeafen")
+    @GUILD_ONLY
+    async def undeafen(self, ctx: commands.Context):
+        """Try to clear the bot's self-deafen voice flag."""
+        return await self._invoke_control(ctx, self.audio_undeafen)
+
+    @commands.hybrid_command(name="fixvoice")
+    @GUILD_ONLY
+    async def fixvoice(self, ctx: commands.Context):
+        """Try to recover Stage speaking and voice flags."""
+        return await self._invoke_control(ctx, self.audio_fixvoice)
+
+    @commands.hybrid_command(name="rejoin")
+    @GUILD_ONLY
+    async def rejoin(self, ctx: commands.Context):
+        """Reconnect and restore the track, pause state, and queue."""
+        return await self._invoke_control(ctx, self.audio_rejoin)
 
     async def red_delete_data_for_user(self, *, requester, user_id):
         return

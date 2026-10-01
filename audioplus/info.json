@@ -2,9 +2,9 @@
   "author": [
     "Kevin Kelly"
   ],
-  "short": "Native Discord music playback, YouTube search, queues, and voice diagnostics.",
-  "description": "Music search and playback inside Red using yt-dlp, FFmpeg, and native Discord voice with DAVE support. No Lavalink server is needed. FFmpeg, libopus, and Deno 2.3+ or Node.js 22+ must be installed in the Red container. The audio command group conflicts with Red's bundled Audio cog.",
-  "install_msg": "Read https://github.com/kevinwaynekelly/kevin-cogs/blob/main/audioplus/README.md before loading. Install FFmpeg, libopus, and a supported JavaScript runtime inside the Red container. Restart Red after installing the declared voice dependencies. Unload Red's bundled Audio cog first if loaded. Use [p]audio pingnode to check local dependencies, then [p]audio play <query>. No Lavalink node is required.",
+  "short": "Native Discord music playback with direct and slash controls, YouTube search, and queues.",
+  "description": "Music search and playback inside Red using yt-dlp, FFmpeg, and native Discord voice with DAVE support. Includes direct play/skip/queue commands and matching slash controls. No Lavalink server is needed. FFmpeg, libopus, and Deno 2.3+ or Node.js 22+ must be installed in the Red container. Unload Red's bundled Audio cog before loading AudioPlus.",
+  "install_msg": "Read https://github.com/kevinwaynekelly/kevin-cogs/blob/main/audioplus/README.md before loading. Install FFmpeg, libopus, and a supported JavaScript runtime inside the Red container. Restart Red after installing the declared voice dependencies. Unload Red's bundled Audio cog first if loaded. Use [p]audiostatus to check local dependencies, then [p]play <query>. For slash commands, the owner runs [p]slash enablecog audioplus and [p]slash sync after loading. Legacy [p]audio commands remain available. No Lavalink node is required.",
   "requirements": [
     "yt-dlp[default]>=2026.8.19",
     "PyNaCl>=1.5.0,<1.6",

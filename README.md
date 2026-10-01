@@ -6,9 +6,9 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 
 ## Cogs
 
-| Cog | What it does | Command group | Guide |
+| Cog | What it does | Commands | Guide |
 | --- | --- | --- | --- |
-| AudioPlus | Native Discord music playback, YouTube/SoundCloud search, queues, and voice diagnostics | `[p]audio` | [Setup and commands](audioplus/README.md) |
+| AudioPlus | Native Discord music playback, YouTube/SoundCloud search, queues, and voice diagnostics | `[p]play`, `/play`, `[p]audio` | [Setup and commands](audioplus/README.md) |
 | CommunityPlus | Autoroles, sticky roles, welcome/goodbye messages, activity tracking, and solo voice cleanup | `[p]com` | [Setup and commands](communityplus/README.md) |
 | LevelPlus | Message, reaction, and voice XP with configurable level curves and import/export tools | `[p]level` | [Setup and commands](levelplus/README.md) |
 | LogPlus | Server event logs with a default destination and per-channel routing | `[p]logplus` | [Setup and commands](logplus/README.md) |
@@ -46,6 +46,8 @@ AudioPlus can load before its local system dependencies are installed. Follow th
 [p]load audioplus
 ```
 
+Use `[p]play <song or URL>`, `[p]skip`, `[p]pause`, `[p]np`, and `[p]queue` for music controls. Enable their slash counterparts as the bot owner with `[p]slash enablecog audioplus`, then `[p]slash sync`. The [AudioPlus guide](audioplus/README.md#enable-slash-commands) lists all 20 direct and slash controls. Legacy `[p]audio ...` commands remain available.
+
 The other cogs declare Red **3.5.0 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**; Downloader installs its declared Python dependencies. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. It initializes voice libraries made available by Downloader after Discord.py startup. Restart Red when upgrading a voice library already loaded in the process. Its guide includes Deno installation commands and an optional persistent container image recipe. The other cogs have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
 
 These guides describe the current source. Compatibility metadata is not a record of live testing on every Red, Discord, or media-provider version.
@@ -56,7 +58,7 @@ Read the cog's guide before loading it on an existing server. Some features star
 
 | Cog | Initial behavior |
 | --- | --- |
-| AudioPlus | Runs music search and playback locally when a member queues music; uses the `audio` command name, also used by Red's bundled Audio cog. Check dependencies with `[p]audio pingnode`. |
+| AudioPlus | Runs music search and playback locally with `[p]play` or `/play`. Unload Red's bundled Audio cog before loading AudioPlus. Check dependencies with `[p]audiostatus`; enable and sync slash commands once as the bot owner. |
 | CommunityPlus | Sticky roles, activity tracking, and solo voice cleanup are enabled. Solo voice cleanup defaults to 900 seconds. Autorole and welcome/goodbye targets need to be configured. |
 | LevelPlus | Message, reaction, and voice XP are enabled, along with level-up announcements. |
 | LogPlus | Needs a destination channel or route before it can post logs. |

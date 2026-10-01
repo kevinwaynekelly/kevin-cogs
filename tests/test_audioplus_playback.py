@@ -108,7 +108,7 @@ async def test_provider_failure_reports_in_request_channel_and_continues(audio_r
     await eventually(lambda: len(player.voice.starts) == 2)
     message = ctx.send.await_args.kwargs["embed"]
     assert message.title == "AudioPlus · Playback failed"
-    assert "Provider rejected" in message.description and "!audio pingnode" in message.description
+    assert "Provider rejected" in message.description and "!audiostatus" in message.description
 
 
 async def test_source_lookup_error_is_an_actionable_command_error(audio_runtime):

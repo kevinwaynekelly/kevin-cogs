@@ -2,6 +2,14 @@
 
 Changes recorded here start with the repository's documentation and metadata pass. Earlier implementation history is available in Git commits.
 
+## 2026-10-01: AudioPlus direct and slash commands
+
+- Add 20 direct playback, voice, and diagnostic controls with matching slash commands, including `play`, `skip`, `pause`, `np`, and `queue`. Both interfaces use the existing player and themed track confirmations.
+- Acknowledge slash requests before voice connections or media lookups. Offer repeat modes as slash choices and keep optional volume/repeat arguments.
+- Preserve legacy `audio` commands, aliases, Config, and checks. Use `disconnect` for music so Red's core `leave` command keeps its existing behavior. Keep legacy owner-only node settings out of slash commands.
+- Update the overview, footers, diagnostics, guides, and Downloader metadata for direct controls. Document Red's owner-only `slash enablecog audioplus` and `slash sync` setup.
+- Check registration and removal with a real Red command tree, plus prefix/slash callbacks and response timing with mocked Discord transport.
+
 ## 2026-10-01: AudioPlus track confirmations
 
 - Identify queued tracks with title, artist/uploader, duration, and a clickable source link instead of only reporting a track count. Preview the first five playlist entries and preserve details in plain-text replies.

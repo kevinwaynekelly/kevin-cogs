@@ -179,10 +179,11 @@ class Presentation:
             embed.description = str(content) + "\n" + (embed.description or "")
         embed = self.style(embed, prefix=prefix, tone=tone)
         if prefix is not None and embed.footer.text == "Kevin's Cogs":
-            help_command = self.command if self.command == "audio" else f"{self.command} help"
-            embed.set_footer(
-                text=clip(f"Kevin's Cogs · Use {prefix}{help_command} for commands", 1900)
-            )
+            help_command = f"help {self.cog}" if self.command == "audio" else f"{self.command} help"
+            hint = f"Use {prefix}{help_command} for commands"
+            if self.command == "audio" and getattr(target, "interaction", None) is not None:
+                hint = "Use /play to queue music"
+            embed.set_footer(text=clip(f"Kevin's Cogs · {hint}", 1900))
         use_embeds = True
         channel = getattr(target, "channel", target)
         guild = getattr(target, "guild", None)
