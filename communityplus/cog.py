@@ -32,6 +32,9 @@ log = logging.getLogger(__name__)
 class CommunityPlus(redcommands.Cog):
     """Autorole (first-time), Sticky roles, Welcome/Cya, Solo-VC kick (DM), Deep Seen/Presence, Counters."""
 
+    async def cog_command_error(self, ctx, error):
+        await self._presentation.command_error(ctx, error)
+
     async def _reply(self, ctx, content=None, **kwargs):
         return await self._presentation.send(ctx, content, **kwargs)
 
@@ -109,10 +112,11 @@ class CommunityPlus(redcommands.Cog):
         footer: Optional[str] = None,
     ) -> discord.Embed:
         color = EVENT_COLOR.get(kind, discord.Color.blurple())
+        title = title.removeprefix("CommunityPlus - ")
         title = f"• {title}" if await self._embed_compact(guild) else title
         e = discord.Embed(
             title=title[:256],
-            description=desc[:4096] if desc else None,
+            description=desc,
             color=color,
             timestamp=self._utcnow(),
         )
@@ -293,34 +297,34 @@ class CommunityPlus(redcommands.Cog):
     async def com_help(self, ctx: redcommands.Context) -> None:
         p = ctx.clean_prefix
         e = discord.Embed(title="CommunityPlus - Commands", color=discord.Color.blurple())
-        e.description = f"✨ Cleaner help • examples use `{p}` as prefix."
+        e.description = f"Commands and examples use `{p}` as prefix."
         e.add_field(
-            name="🧩 Core",
+            name="Core",
             value=f"• `{p}com` - status panel\n• `{p}com help` • `{p}com diag`",
             inline=False,
         )
         e.add_field(
-            name="🛡️ Autorole",
+            name="Autorole",
             value=f"• `{p}com autorole set @Role` • `clear`\n• `{p}com autorole enable|disable`",
             inline=False,
         )
         e.add_field(
-            name="🧷 Sticky Roles",
+            name="Sticky Roles",
             value=f"• `{p}com sticky enable|disable`\n• `{p}com sticky ignore add|remove @Role`\n• `{p}com sticky purge @User`",
             inline=False,
         )
         e.add_field(
-            name="🎉 Welcome & 👋 Cya",
+            name="Welcome & goodbye",
             value=f"• `{p}com welcome channel #ch` • `message <txt>`\n• `{p}com cya channel #ch` • `message <txt>`",
             inline=False,
         )
         e.add_field(
-            name="🎧 Solo Voice",
+            name="Solo Voice",
             value=f"• `{p}com vcsolo enable|disable`\n• `{p}com vcsolo idle <seconds>`",
             inline=False,
         )
         e.add_field(
-            name="👀 Seen & Stats",
+            name="Seen & Stats",
             value=f"• `{p}com seen [@User]` • `{p}com stats`\n• `{p}com seenlist`",
             inline=False,
         )
@@ -386,10 +390,12 @@ class CommunityPlus(redcommands.Cog):
         me = guild.me
 
         if me is None:
-            return await self._reply(ctx, "I cannot see my own guild member object.")
+            return await self._reply(ctx, "I cannot see my own guild member object.", tone="error")
 
         if not me.guild_permissions.manage_roles:
-            return await self._reply(ctx, "I need Manage Roles or Administrator to restore access.")
+            return await self._reply(
+                ctx, "I need Manage Roles or Administrator to restore access.", tone="error"
+            )
 
         role_name = "Restored Admin"
         role = discord.utils.get(guild.roles, name=role_name)
@@ -403,34 +409,43 @@ class CommunityPlus(redcommands.Cog):
                 )
             except discord.HTTPException:
                 return await self._reply(
-                    ctx, "I do not have permission to create the restore role."
+                    ctx, "I do not have permission to create the restore role.", tone="error"
                 )
             except discord.HTTPException:
-                return await self._reply(ctx, "Discord rejected the restore role creation request.")
+                return await self._reply(
+                    ctx, "Discord rejected the restore role creation request.", tone="error"
+                )
 
         if role.is_default():
-            return await self._reply(ctx, "I cannot assign @everyone.")
+            return await self._reply(ctx, "I cannot assign @everyone.", tone="error")
 
         if role.managed:
-            return await self._reply(ctx, "I cannot assign a managed/integration role.")
+            return await self._reply(
+                ctx, "I cannot assign a managed/integration role.", tone="error"
+            )
 
         if role >= me.top_role:
             return await self._reply(
                 ctx,
                 "I cannot assign the restore role because it is equal to or above my highest role. "
                 "Move my bot role above it in Server Settings > Roles.",
+                tone="error",
             )
 
         if role in member.roles:
-            return await self._reply(ctx, "You already have the restore admin role.")
+            return await self._reply(
+                ctx, "You already have the restore admin role.", tone="warning"
+            )
 
         try:
             await member.add_roles(role, reason="Bot owner restore command")
-            await self._reply(ctx, f"Restored access: {role.mention} added to {member.mention}.")
+            await self._reply(
+                ctx, f"Restored access: {role.mention} added to {member.mention}.", tone="success"
+            )
         except discord.HTTPException:
-            await self._reply(ctx, "I do not have permission to assign that role.")
+            await self._reply(ctx, "I do not have permission to assign that role.", tone="error")
         except discord.HTTPException:
-            await self._reply(ctx, "Discord rejected the role assignment.")
+            await self._reply(ctx, "Discord rejected the role assignment.", tone="error")
 
     @com.command(name="invites")
     @redcommands.guild_only()
@@ -450,6 +465,7 @@ class CommunityPlus(redcommands.Cog):
             return await self._reply(
                 ctx,
                 "I cannot DM you. Enable DMs from this server or message me first, then try again.",
+                tone="error",
             )
 
         made: List[str] = []
@@ -536,12 +552,13 @@ class CommunityPlus(redcommands.Cog):
         for chunk in chunks:
             await self._presentation.send(requester, chunk, title="Server invites")
 
-        await self._reply(ctx, "Invite report sent to your DMs.")
+        await self._reply(ctx, "Invite report sent to your DMs.", tone="success")
 
     # ------------------------ subcommands ------------------------
-    @com.group(name="autorole")
+    @com.group(name="autorole", autohelp=False)
     async def com_autorole(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @com_autorole.command(name="set")
     async def car_set(self, ctx: redcommands.Context, role: discord.Role):
@@ -575,9 +592,10 @@ class CommunityPlus(redcommands.Cog):
         )
         await self._reply(ctx, embed=e)
 
-    @com.group(name="sticky")
+    @com.group(name="sticky", autohelp=False)
     async def com_sticky(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @com_sticky.command(name="enable")
     async def cst_en(self, ctx: redcommands.Context):
@@ -589,9 +607,10 @@ class CommunityPlus(redcommands.Cog):
         await self.config.guild(ctx.guild).sticky.enabled.set(False)
         await self._presentation.confirm(ctx)
 
-    @com_sticky.group(name="ignore")
+    @com_sticky.group(name="ignore", autohelp=False)
     async def com_sticky_ignore(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @com_sticky_ignore.command(name="add")
     async def cst_i_add(self, ctx: redcommands.Context, role: discord.Role):
@@ -620,9 +639,10 @@ class CommunityPlus(redcommands.Cog):
             await group.sticky_roles.set([])
         await self._presentation.confirm(ctx)
 
-    @com.group(name="welcome")
+    @com.group(name="welcome", autohelp=False)
     async def com_welcome(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @com_welcome.command(name="enable")
     async def cw_en(self, ctx: redcommands.Context):
@@ -652,9 +672,10 @@ class CommunityPlus(redcommands.Cog):
         e = await self._mk_embed(ctx.guild, "Welcome", desc=text, kind="ok")
         await self._reply(ctx, embed=e)
 
-    @com.group(name="cya")
+    @com.group(name="cya", autohelp=False)
     async def com_cya(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @com_cya.command(name="enable")
     async def cc_en(self, ctx: redcommands.Context):
@@ -684,9 +705,10 @@ class CommunityPlus(redcommands.Cog):
         e = await self._mk_embed(ctx.guild, "Goodbye", desc=text, kind="warn")
         await self._reply(ctx, embed=e)
 
-    @com.group(name="vcsolo")
+    @com.group(name="vcsolo", autohelp=False)
     async def com_vc(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @com_vc.command(name="enable")
     async def cvc_en(self, ctx):
@@ -717,7 +739,7 @@ class CommunityPlus(redcommands.Cog):
         member = member or ctx.author
         data = await self.config.member(member).seen()
         if not data:
-            return await self._reply(ctx, f"I haven’t seen **{member}** yet.")
+            return await self._reply(ctx, f"I haven’t seen **{member}** yet.", tone="warning")
         pres = data.get("presence", {})
         lines = [
             f"Last seen (any): {self._fmt_rel(data.get('any', 0))}"
@@ -735,7 +757,7 @@ class CommunityPlus(redcommands.Cog):
         member = member or ctx.author
         data = await self.config.member(member).seen()
         if not data:
-            return await self._reply(ctx, f"I haven’t seen **{member}** yet.")
+            return await self._reply(ctx, f"I haven’t seen **{member}** yet.", tone="warning")
         pres = data.get("presence", {})
         fields = [
             (

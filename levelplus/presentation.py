@@ -6,6 +6,7 @@ import re
 from copy import deepcopy
 
 import discord
+from redbot.core import commands
 
 COLORS = {"info": 0x818CF8, "success": 0x34D399, "warning": 0xFBBF24, "error": 0xFB7185}
 LEGACY_COLORS = {
@@ -172,3 +173,40 @@ class Presentation:
 
     async def confirm(self, ctx):
         return await self.send(ctx, "Settings saved.", tone="success")
+
+    async def help(self, ctx):
+        """Render nested command help without changing Red's global help formatter."""
+        command = ctx.command
+        embed = self.embed("Commands", f"Tools in `{ctx.clean_prefix}{command.qualified_name}`.")
+        for child in sorted(command.commands, key=lambda child: child.name):
+            original_command = ctx.command
+            original_state = ctx.permission_state
+            try:
+                visible = not child.hidden and await child.can_run(ctx, check_all_parents=True)
+            except commands.CommandError:
+                visible = False
+            finally:
+                ctx.command = original_command
+                ctx.permission_state = original_state
+            if visible:
+                usage = f"{ctx.clean_prefix}{child.qualified_name} {child.signature}".strip()
+                embed.add_field(
+                    name=child.name.replace("_", " ").title(), value=f"`{usage}`", inline=False
+                )
+        if not embed.fields:
+            embed.description = "No available subcommands here."
+        return await self.send(ctx, embed=embed)
+
+    async def command_error(self, ctx, error):
+        original = getattr(error, "original", error)
+        if isinstance(original, commands.UserInputError) or type(original) is commands.CommandError:
+            embed = self.embed(
+                "Check this command", str(original) or "Check the command arguments.", tone="error"
+            )
+            usage = (
+                f"{ctx.clean_prefix}{ctx.command.qualified_name} {ctx.command.signature}".strip()
+            )
+            embed.add_field(name="Usage", value=f"`{usage}`", inline=False)
+            return await self.send(ctx, embed=embed)
+        # Preserve Red's permission rules, disabled-command behavior, and exception logging.
+        return await ctx.bot.on_command_error(ctx, error, unhandled_by_cog=True)

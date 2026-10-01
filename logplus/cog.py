@@ -32,6 +32,9 @@ log = logging.getLogger(__name__)
 class LogPlus(redcommands.Cog):
     """Power logging for server changes."""
 
+    async def cog_command_error(self, ctx, error):
+        await self._presentation.command_error(ctx, error)
+
     async def _reply(self, ctx, content=None, **kwargs):
         return await self._presentation.send(ctx, content, **kwargs)
 
@@ -214,71 +217,36 @@ class LogPlus(redcommands.Cog):
     async def _status_embed(self, guild: discord.Guild) -> discord.Embed:
         g = await self._settings(guild)
         log_ch = guild.get_channel(g["log_channel"]) if g["log_channel"] else None
-        e = discord.Embed(
-            title="LogPlus - Status",
-            description="Event logging for your server.",
-            color=discord.Color.blurple(),
-            timestamp=self._now(),
+        e = self._presentation.embed(
+            "Status", "Event logging and delivery settings for this server."
         )
         e.add_field(
-            name=f"{_UI['core']} Core",
-            value=settings(
-                f"log_channel   = {getattr(log_ch, 'mention', 'not set')}\n"
-                f"rate          = {g['rate']['seconds']}s\n"
-                f"style.compact = {g['style']['compact']}",
-                lang="ini",
-            ),
+            name="Delivery",
+            value=f"**Default channel** · {getattr(log_ch, 'mention', 'Not set')}\n"
+            f"**Routing overrides** · {len(g['overrides'])}\n**Duplicate window** · {g['rate']['seconds']:g}s\n"
+            f"**Compact event headers** · {'Enabled' if g['style']['compact'] else 'Disabled'}",
             inline=False,
         )
-        e.add_field(
-            name="Message",
-            value=settings(
-                f"edit={self._onoff(g['message']['edit'])} "
-                f"delete={self._onoff(g['message']['delete'])} "
-                f"bulk={self._onoff(g['message']['bulk_delete'])} "
-                f"pins={self._onoff(g['message']['pins'])} "
-                f"exempt={len(g['message']['exempt_channels'])}",
-                lang="ini",
-            ),
-            inline=False,
-        )
-        e.add_field(
-            name="Reactions",
-            value=settings(
-                f"add={self._onoff(g['reactions']['add'])} "
-                f"remove={self._onoff(g['reactions']['remove'])} "
-                f"clear={self._onoff(g['reactions']['clear'])}",
-                lang="ini",
-            ),
-            inline=True,
-        )
-        e.add_field(
-            name="Server",
-            value=settings(
-                f"channels c/d/u={[g['server']['channel_create'], g['server']['channel_delete'], g['server']['channel_update']]}\n"
-                f"roles    c/d/u={[g['server']['role_create'], g['server']['role_delete'], g['server']['role_update']]}\n"
-                f"emoji={g['server']['emoji_update']} sticker={g['server']['sticker_update']} integ={g['server']['integrations_update']}\n"
-                f"webhooks={g['server']['webhooks_update']} threads c/d/u={[g['server']['thread_create'], g['server']['thread_delete'], g['server']['thread_update']]}\n"
-                f"exempt={len(g['server']['exempt_channels'])}",
-                lang="ini",
-            ),
-            inline=False,
-        )
-        e.add_field(
-            name="Member/Voice/Sched/Commands",
-            value=settings(
-                f"member: join={g['member']['join']} leave={g['member']['leave']} roles={g['member']['roles_changed']} nick={g['member']['nick_changed']} "
-                f"ban={g['member']['ban']} unban={g['member']['unban']} timeout={g['member']['timeout']} presence={g['member']['presence']}\n"
-                f"voice: join={g['voice']['join']} move={g['voice']['move']} leave={g['voice']['leave']} mute={g['voice']['mute']} "
-                f"deaf={g['voice']['deaf']} video={g['voice']['video']} stream={g['voice']['stream']}\n"
-                f"sched: create={g['sched']['create']} update={g['sched']['update']} delete={g['sched']['delete']} user_add={g['sched']['user_add']} user_remove={g['sched']['user_remove']}\n"
-                f"cmds: this_bot={g['commands']['this_bot']} other_bots={g['commands']['other_bots']}",
-                lang="ini",
-            ),
-            inline=False,
-        )
-        e.set_footer(text="Use [p]logplus help for commands.")
-        return self._fit_embed(e)
+        groups = [
+            ("message", "Messages"),
+            ("reactions", "Reactions"),
+            ("server", "Server changes"),
+            ("invites", "Invites"),
+            ("member", "Members"),
+            ("voice", "Voice"),
+            ("sched", "Scheduled events"),
+            ("commands", "Commands"),
+        ]
+        for key, label in groups:
+            values = []
+            for setting, value in g[key].items():
+                name = setting.replace("_", " ").capitalize()
+                if isinstance(value, bool):
+                    values.append(f"**{name}** · {'Enabled' if value else 'Disabled'}")
+                elif setting == "exempt_channels":
+                    values.append(f"**Excluded channels** · {len(value)}")
+            e.add_field(name=label, value="\n".join(values), inline=True)
+        return e
 
     # ---------------- commands: main & settings ----------------
     @redcommands.group(name="logplus", invoke_without_command=True)
@@ -292,7 +260,7 @@ class LogPlus(redcommands.Cog):
         p = ctx.clean_prefix
         e = discord.Embed(title="LogPlus - Commands", color=discord.Color.blurple())
         e.add_field(
-            name=f"{_UI['core']} Core",
+            name="Core",
             value=(
                 f"• `{p}logplus` • `{p}logplus help` • `{p}logplus diag`\n"
                 f"• `{p}logplus channel` • `{p}logplus setchannel #chan` • `{p}logplus clearchannel`\n"
@@ -303,7 +271,7 @@ class LogPlus(redcommands.Cog):
             inline=False,
         )
         e.add_field(
-            name=f"{_UI['toggles']} Toggles",
+            name="Toggles",
             value=(
                 f"• `{p}logplus toggle message <edit|delete|bulk|pins>`\n"
                 f"• `{p}logplus toggle reactions <add|remove|clear>`\n"
@@ -316,7 +284,7 @@ class LogPlus(redcommands.Cog):
             inline=False,
         )
         e.add_field(
-            name=f"{_UI['diag']} Notes",
+            name="Notes",
             value="Routing uses the global log channel unless an override is configured for a specific source channel.",
             inline=False,
         )
@@ -347,9 +315,10 @@ class LogPlus(redcommands.Cog):
             ),
         )
 
-    @logplus.group(name="style")
+    @logplus.group(name="style", autohelp=False)
     async def style(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @style.command(name="compact")
     async def style_compact(self, ctx: redcommands.Context, flag: Optional[str] = None):
@@ -420,10 +389,11 @@ class LogPlus(redcommands.Cog):
         )
 
     # ---------------- per-channel routing overrides ----------------
-    @logplus.group(name="route")
+    @logplus.group(name="route", autohelp=False)
     async def route(self, ctx: redcommands.Context):
         """Per-source channel routing overrides."""
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @route.command(name="set")
     async def route_set(
@@ -466,9 +436,10 @@ class LogPlus(redcommands.Cog):
         await self._reply(ctx, embed=e)
 
     # ---------------- toggles (unchanged API) ----------------
-    @logplus.group()
+    @logplus.group(autohelp=False)
     async def toggle(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     async def _flip(self, ctx: redcommands.Context, group: str, key: str):
         async with self.config.guild(ctx.guild).get_attr(group)() as section:
@@ -477,12 +448,14 @@ class LogPlus(redcommands.Cog):
         await self._reply(
             ctx,
             embed=await self._E(ctx.guild, "Toggle", f"{group}.{key} → **{self._onoff(enabled)}**"),
+            tone="success",
         )
 
     # message toggles
-    @toggle.group()
+    @toggle.group(autohelp=False)
     async def message(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @message.command()
     async def edit(self, ctx: redcommands.Context):
@@ -501,9 +474,10 @@ class LogPlus(redcommands.Cog):
         await self._flip(ctx, "message", "pins")
 
     # reactions toggles
-    @toggle.group()
+    @toggle.group(autohelp=False)
     async def reactions(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @reactions.command(name="add")
     async def react_add(self, ctx: redcommands.Context):
@@ -518,9 +492,10 @@ class LogPlus(redcommands.Cog):
         await self._flip(ctx, "reactions", "clear")
 
     # server toggles
-    @toggle.group()
+    @toggle.group(autohelp=False)
     async def server(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @server.command(name="channelcreate")
     async def t_sc_create(self, ctx: redcommands.Context):
@@ -579,9 +554,10 @@ class LogPlus(redcommands.Cog):
         await self._flip(ctx, "server", "thread_update")
 
     # invites toggles
-    @toggle.group()
+    @toggle.group(autohelp=False)
     async def invites(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @invites.command(name="create")
     async def t_inv_c(self, ctx: redcommands.Context):
@@ -592,9 +568,10 @@ class LogPlus(redcommands.Cog):
         await self._flip(ctx, "invites", "delete")
 
     # member toggles
-    @toggle.group()
+    @toggle.group(autohelp=False)
     async def member(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @member.command(name="join")
     async def t_m_join(self, ctx: redcommands.Context):
@@ -629,9 +606,10 @@ class LogPlus(redcommands.Cog):
         await self._flip(ctx, "member", "presence")
 
     # voice toggles
-    @toggle.group()
+    @toggle.group(autohelp=False)
     async def voice(self, ctx: redcommands.Context):
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @voice.command(name="join")
     async def t_v_join(self, ctx: redcommands.Context):
@@ -662,10 +640,11 @@ class LogPlus(redcommands.Cog):
         await self._flip(ctx, "voice", "stream")
 
     # commands toggles
-    @toggle.group(name="commands", aliases=["commands_"])
+    @toggle.group(name="commands", aliases=["commands_"], autohelp=False)
     async def commands_(self, ctx: redcommands.Context):
         """`[p]logplus toggle commands <thisbot|otherbots>`"""
-        pass
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @commands_.command(name="thisbot")
     async def t_cmd_this(self, ctx: redcommands.Context):

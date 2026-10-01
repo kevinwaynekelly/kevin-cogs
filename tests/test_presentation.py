@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 from conftest import make_channel, make_context, make_member
+from redbot.core import commands
 
 from audioplus import AudioPlus
 from audioplus.presentation import COLORS, Presentation, units
@@ -156,8 +157,90 @@ async def test_long_owo_preview_paginates_instead_of_rejecting(bot, guild):
     await OwoPlus.owoplus_preview.callback(cog, ctx, text=text)
     assert ctx.send.await_count > 1
     values = [
-        field.value for call in ctx.send.await_args_list for field in call.kwargs["embed"].fields
+        field.value
+        for call in ctx.send.await_args_list
+        for field in call.kwargs["embed"].fields
+        if field.name.startswith("Output")
     ]
     assert "".join(values) == text
     for call in ctx.send.await_args_list:
         assert_limits(call.kwargs["embed"])
+
+
+async def test_nested_help_filters_permissions_and_restores_context(guild):
+    ctx = make_context(guild)
+    ctx.permission_state = "original"
+    children = [
+        SimpleNamespace(
+            name="allowed",
+            qualified_name="level formula allowed",
+            signature="<value>",
+            hidden=False,
+            can_run=AsyncMock(return_value=True),
+        ),
+        SimpleNamespace(
+            name="denied",
+            qualified_name="level formula denied",
+            signature="",
+            hidden=False,
+            can_run=AsyncMock(side_effect=commands.CheckFailure()),
+        ),
+        SimpleNamespace(
+            name="hidden",
+            qualified_name="level formula hidden",
+            signature="",
+            hidden=True,
+            can_run=AsyncMock(return_value=True),
+        ),
+    ]
+    group = SimpleNamespace(qualified_name="level formula", commands=children)
+    ctx.command = group
+    await Presentation("LevelPlus", "level").help(ctx)
+    embed = ctx.send.await_args.kwargs["embed"]
+    assert [field.value for field in embed.fields] == ["`!level formula allowed <value>`"]
+    assert ctx.command is group
+    assert ctx.permission_state == "original"
+
+
+@pytest.mark.parametrize("cls,root", COGS)
+async def test_input_errors_use_theme_and_unexpected_errors_go_to_red(bot, guild, cls, root):
+    cog = cls(bot)
+    ctx = make_context(guild)
+    ctx.bot = bot
+    ctx.command = SimpleNamespace(qualified_name=f"{root} example", signature="<value>")
+    await cog.cog_command_error(ctx, commands.BadArgument("Enter a valid value."))
+    embed = ctx.send.await_args.kwargs["embed"]
+    assert embed.color.value == COLORS["error"]
+    assert embed.description == "Enter a valid value."
+    assert embed.fields[0].value == f"`!{root} example <value>`"
+    bot.on_command_error = AsyncMock()
+    unexpected = commands.CommandInvokeError(RuntimeError("Unexpected failure"))
+    await cog.cog_command_error(ctx, unexpected)
+    bot.on_command_error.assert_awaited_once_with(ctx, unexpected, unhandled_by_cog=True)
+    assert ctx.send.await_count == 1
+
+
+@pytest.mark.parametrize(
+    "maximum,xp,expected",
+    [(0, 50, "XP to level 1"), (1, 1000, "Maximum level reached."), (0, 0, "XP to level 1")],
+)
+async def test_member_level_card_handles_progress_and_cap(bot, guild, maximum, xp, expected):
+    cog = LevelPlus(bot)
+    member = make_member(guild)
+    await cog.config.guild(guild).max_level.set(maximum)
+    await cog.config.guild(guild).xp.set({str(member.id): xp})
+    ctx = make_context(guild, author=member)
+    await LevelPlus.show.callback(cog, ctx)
+    embed = ctx.send.await_args.kwargs["embed"]
+    assert embed.thumbnail.url == member.display_avatar.url
+    assert embed.fields[1].value == f"{xp:,}"
+    assert expected in embed.fields[2].value
+
+
+async def test_preview_metadata_and_success_colors_survive_restyling(bot, guild):
+    cog = OwoPlus(bot)
+    ctx = make_context(guild)
+    await OwoPlus.owoplus_enable.callback(cog, ctx)
+    assert ctx.send.await_args.kwargs["embed"].color.value == COLORS["success"]
+    await OwoPlus.owoplus_onein.callback(cog, ctx, n=0)
+    assert ctx.send.await_args.kwargs["embed"].color.value == COLORS["warning"]
