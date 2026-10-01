@@ -67,4 +67,8 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
 
         assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS
         assert defaults["MEMBER"].pop("participation") == PARTICIPATION_DEFAULTS
+    if package == "logplus":
+        from logplus.delivery import FEATURE_DEFAULTS
+
+        assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS
     assert defaults == BASELINE[package]["defaults"]

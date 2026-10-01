@@ -31,7 +31,7 @@ No destination is configured initially. Event switches default to on, compact st
 
 All retain Red administrator or **Manage Server** checks and honor the grouped command's permission/disabled state. The renamed root is `log`; `logplus` is now only the package name for installation and reload.
 
-Enable the 16 slash actions once as the bot owner:
+Enable the 23 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog logplus
@@ -41,6 +41,26 @@ Enable the 16 slash actions once as the bot owner:
 Use `/log status`, `/log setchannel`, `/log route set`, `/log style preview`, or `/log diag`. `/log event` offers autocomplete for all 45 event switches. Select an event such as `message.delete`, `voice.join`, or `sched.create` and a boolean to turn it on/off. Omit the boolean to inspect the current switch without changing it. This command also works as `[p]log event voice.join false`.
 
 The existing `log toggle ...` paths remain text-only because of Discord's nesting limit. `/log event` covers those switches and scheduled events. After updates, reload `logplus` and run `slash sync` again. Custom Red rules referencing `logplus ...` need to be reapplied under `log ...`.
+
+## Category routing, exemptions, and delivery recovery
+
+All commands below have slash equivalents and retain the root administrator checks.
+
+| Command | Purpose |
+| --- | --- |
+| `[p]log route category <category> [#channel]` | Set a category destination, or omit the channel to clear it. |
+| `[p]log route categories` | List category routes. |
+| `[p]log ignore add <channel> [scope=all]` | Exempt a channel and its threads from message/server events. |
+| `[p]log ignore remove <channel> [scope=all]` | Remove an exemption. |
+| `[p]log ignore list` | List message/server exclusions. |
+| `[p]log delivery [retry]` | Inspect delivery counters, queue depth, and the latest safe error, or enable/disable retries. |
+| `[p]log setup` | Open a destination picker and message/member/voice/server group toggles. |
+
+Categories are `message`, `reactions`, `server`, `invites`, `member`, `voice`, `sched`, and `commands`. Source-channel overrides have priority, followed by a thread-parent override, category routing, and the default channel. An explicitly selected missing destination discards the event instead of silently sending to another channel. Exemption scopes are `message`, `server`, or `all`; `all` means both of those scopes, preserving the existing exemption semantics. It does not suppress voice, member, command, invite, or reaction events. Settings and setup writes use their existing section locks.
+
+Failed Discord sends retry three times after 2, 4, and 8 seconds. Only unacknowledged pages or text chunks remain queued, preserving the original event timestamp. Each retry checks the current routes, exemptions, event switch, and cog disabled state. There is no audit fetch during retry. Missing destinations, disabled events, expired records, and exhausted attempts are discarded. A Discord response lost after accepting a send can still cause a duplicate on retry.
+
+Queues stay in memory, with at most 100 events/2 MiB of serialized payload per server and 1000 events/8 MiB across the cog. Events expire after five minutes, and each send has a 15-second timeout. Disabling retries, removing the server, or unloading cancels owned workers and clears pending records. Delivery counters reset on reload. The additive `features` Config section preserves all original settings and routes through Red's merged defaults.
 
 ## Grouped text commands
 
@@ -75,15 +95,17 @@ Each toggle flips the current value. For example, `[p]log toggle message edit` s
 
 ## Behavior and limitations
 
-- Source-specific routing applies only when the event passes a source channel. Member, role, server, and voice logs use the default destination.
-- Single-message edit and delete events depend on Discord's message cache. Deleted text is limited to 1,024 characters, and each before/after edit field is limited to 1,000 characters. Bulk deletions log a count rather than message contents.
-- Channel-update logs cover name, topic, and NSFW changes. They do not provide a full permission diff.
+- Source-specific routing applies when an event supplies a source channel. All recognized events support category routes, including member and voice events without a source.
+- Cached edits/deletes retain author and content details, with deleted text limited to 1,024 characters and each before/after edit field limited to 1,000 characters. Raw events also cover messages outside the cache. Uncached edits show the new content when supplied, with the previous text explicitly unavailable. Uncached deletes show message/channel IDs with author and content unavailable. Raw handlers skip cached payloads so the same event is not logged twice. Bulk deletions log a count. Unknown-author raw events in configured destinations and known own log messages are skipped to avoid logging the logger.
+- Channel updates show names/topics, NSFW, slowmode, voice settings, and per-target overwrite changes with Allow/Deny/Inherit states. Role updates show names, color, display settings, position, and allowed/removed permissions. Server updates show changed visible settings. Unchanged updates are skipped. Permission labels use current Discord names.
 - The other-bot logger detects messages authored by other bots that begin with certain prefix-like characters. It does not observe or verify another bot's command execution.
 - Audit attribution is best effort. Recent entries are shared through a one-second per-server cache, matched by action and target, and discarded for attribution after the lookback window. No audit request is made without permission or configured destinations. Missing entries or event timing can still result in an unknown actor.
-- Embed titles, descriptions, fields, footer/author text, and total size are clipped to Discord limits. Mentions are suppressed. Delivery failures are logged without breaking event listeners.
+- Embed titles, descriptions, fields, footer/author text, and total size are clipped to Discord limits. Mentions are suppressed. Delivery failures are counted and retried within the stated limits without breaking event listeners.
 - Event listeners respect Red's per-server cog disable setting.
-- Clearing the default channel does not remove overrides. Clear individual routes too if you want all destinations removed.
+- Clearing the default channel does not remove overrides. Clear source and category routes too if you want all destinations removed.
 
 ## Stored data
 
-Red Config stores server settings, event switches, destination channel IDs, routing overrides, channel exemption lists, and style/rate preferences. It does not persist message text in Config. Logs posted to Discord can contain user IDs, names, invite codes, message contents, and event details, and remain in the destination channels until removed there.
+Red Config stores server settings, event switches, destination channel IDs, source/category routing overrides, channel exemption lists, retry preferences, and style/rate preferences. It does not persist message text in Config. Logs posted to Discord can contain user IDs, names, invite codes, message contents, and event details, and remain in the destination channels until removed there.
+
+Pending retry records temporarily contain the same event details and message contents in memory. User-data export/deletion hooks return or remove pending records containing that user's Discord ID and clear cached audit entries on deletion. Config holds no per-user history; posted Discord logs are managed in Discord.

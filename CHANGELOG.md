@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Log feature expansion
+
+- Add channel overwrite Allow/Deny/Inherit diffs, role permission/display changes, visible server-setting changes, and raw uncached message edit/delete coverage without duplicating cached handlers or inventing missing text/authors.
+- Add category destinations behind source/thread routes, administrator exemption controls, guided setup, and slash equivalents. Merge additive defaults without changing original switches or routes.
+- Add bounded memory delivery queues, three delayed retries of only unsent parts, current routing/disable/exemption checks, safe error counters, user-data cleanup, and worker cancellation. Validate partial embed/text failures, route precedence, queue/expiry limits, permission-only changes, and raw-event coverage with mocked Discord transport.
+
 ## 2026-10-01: Community feature expansion
 
 - Add safe self-service role menus with persistent message registration, bounded offers/menus, current clicker checks, and refreshed options. Keep unrelated and no-longer-offered roles unchanged.

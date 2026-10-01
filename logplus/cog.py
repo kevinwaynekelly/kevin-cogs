@@ -5,9 +5,9 @@ import logging
 import math
 import re
 import time
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, deque
 from datetime import timedelta
-from typing import Optional
+from typing import Optional, Union
 
 import discord
 from discord.ext import commands
@@ -18,7 +18,10 @@ from redbot.core.config import Config
 
 from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
 from .constants import _UI, DEFAULTS_GUILD, EVENT_STYLE
+from .delivery import CATEGORIES, FEATURE_DEFAULTS, EventEmbed, LogDelivery, fresh_status
+from .diffs import attribute_changes, overwrite_changes, permission_changes
 from .events import guild_enabled
+from .interactive import SetupView, close_views
 from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
@@ -47,7 +50,7 @@ EVENT_SWITCHES = tuple(
 # ========================= Defaults =========================
 
 
-class LogPlus(redcommands.Cog):
+class LogPlus(LogDelivery, redcommands.Cog):
     """Server event logging with channel routing and audit attribution."""
 
     async def cog_command_error(self, ctx, error):
@@ -61,13 +64,19 @@ class LogPlus(redcommands.Cog):
         self.bot: Red = bot
         self._presentation = Presentation("LogPlus", "log")
         self.config: Config = Config.get_conf(self, identifier=0x51A7E11, force_registration=True)
-        self.config.register_guild(**DEFAULTS_GUILD)
+        self.config.register_guild(**DEFAULTS_GUILD, features=FEATURE_DEFAULTS)
 
         self._last_event_at = OrderedDict()
         self._settings_cache = {}
         self._settings_locks = defaultdict(asyncio.Lock)
         self._audit_cache = {}
         self._audit_locks = defaultdict(asyncio.Lock)
+        self._retry_queues = defaultdict(deque)
+        self._retry_tasks = {}
+        self._delivery_status = defaultdict(fresh_status)
+        self._own_log_ids = OrderedDict()
+        self._views = set()
+        self._closing = False
         self._cmd_prefix_re = re.compile(r"^(<@!?|[/!?.~+\-$&%=>:#])")
 
     # ---------------- helpers ----------------
@@ -101,7 +110,8 @@ class LogPlus(redcommands.Cog):
             title = f"{style['emoji']} {title}"
         if color is None and style.get("color"):
             color = style["color"]
-        e = discord.Embed(
+        e = EventEmbed(
+            event_type=etype,
             title=title,
             description=description,
             color=color or discord.Color.blurple(),
@@ -130,7 +140,7 @@ class LogPlus(redcommands.Cog):
             compact=await self._is_compact(guild),
         )
 
-    async def _log_channel(self, guild, source_channel_id=None):
+    async def _log_channel(self, guild, source_channel_id=None, category=None):
         settings = await self._settings(guild)
         overrides = settings["overrides"]
         destination = None
@@ -139,7 +149,9 @@ class LogPlus(redcommands.Cog):
             source = guild.get_channel_or_thread(source_channel_id)
             if not destination and isinstance(source, discord.Thread):
                 destination = overrides.get(str(source.parent_id))
-        destination = destination or settings["log_channel"]
+        destination = (
+            destination or settings["features"]["routes"].get(category) or settings["log_channel"]
+        )
         channel = guild.get_channel(int(destination)) if destination else None
         return channel if isinstance(channel, discord.TextChannel) else None
 
@@ -153,18 +165,17 @@ class LogPlus(redcommands.Cog):
             isinstance(channel, discord.Thread) and channel.parent_id in excluded
         )
 
-    async def _send(self, guild, embed, source_channel_id=None):
-        channel = await self._log_channel(guild, source_channel_id)
-        if channel is None:
-            return
+    async def _send(self, guild, embed, source_channel_id=None, category=None):
+        record = self._pending_log(embed, source_channel_id, category)
         try:
-            await self._presentation.send(
-                channel,
-                embed=embed,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        except discord.HTTPException:
-            log.debug("Log delivery failed for guild %s", guild.id, exc_info=True)
+            if not await self._deliver_log(guild, record):
+                self._delivery_status[guild.id]["dropped"] += 1
+        except (discord.HTTPException, asyncio.TimeoutError) as error:
+            self._delivery_failed(guild.id, error)
+            if (await self._settings(guild))["features"]["retry"]:
+                self._enqueue_log(guild, record)
+            else:
+                self._delivery_status[guild.id]["dropped"] += 1
 
     async def _audit_actor(self, guild, action, target_id=None):
         return await self._audit_actor_recent(guild, action, target_id=target_id)
@@ -182,7 +193,11 @@ class LogPlus(redcommands.Cog):
         if not actions:
             return None
         settings = await self._settings(guild)
-        if not settings["log_channel"] and not settings["overrides"]:
+        if (
+            not settings["log_channel"]
+            and not settings["overrides"]
+            and not settings["features"]["routes"]
+        ):
             return None
         try:
             async with self._audit_locks[guild.id]:
@@ -265,6 +280,14 @@ class LogPlus(redcommands.Cog):
                 elif setting == "exempt_channels":
                     values.append(f"**Excluded channels** · {len(value)}")
             e.add_field(name=label, value="\n".join(values), inline=True)
+        e.add_field(
+            name="Delivery recovery",
+            value=f"**Category routes** · {len(g['features']['routes'])}\n"
+            f"**Retries** · {'Enabled' if g['features']['retry'] else 'Disabled'}\n"
+            f"**Pending events** · {len(self._retry_queues.get(guild.id, ()))}\n"
+            f"**Last error** · {self._delivery_status[guild.id]['last_error']}",
+            inline=False,
+        )
         return e
 
     # ---------------- commands: main & settings ----------------
@@ -317,7 +340,7 @@ class LogPlus(redcommands.Cog):
         )
         e.add_field(
             name="Notes",
-            value="Routing uses the global log channel unless an override is configured for a specific source channel.",
+            value="Routing checks the source channel, its thread parent, the event category, then the default channel.",
             inline=False,
         )
         await self._reply(ctx, embed=e)
@@ -484,6 +507,152 @@ class LogPlus(redcommands.Cog):
             lines.append("(none)")
         e = await self._E(ctx.guild, "Routing overrides", settings("\n".join(lines), lang="ini"))
         await self._reply(ctx, embed=e)
+
+    @route.command(name="category")
+    @app_commands.choices(category=[app_commands.Choice(name=key, value=key) for key in CATEGORIES])
+    async def route_category(
+        self, ctx, category: str, channel: Optional[discord.TextChannel] = None
+    ):
+        """Set or clear a destination for an event category."""
+        category = category.lower()
+        if category not in CATEGORIES:
+            raise redcommands.BadArgument("Choose " + ", ".join(CATEGORIES) + ".")
+        async with self.config.guild(ctx.guild).features() as features:
+            if channel:
+                features["routes"][category] = channel.id
+            else:
+                features["routes"].pop(category, None)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @route.command(name="categories")
+    async def route_categories(self, ctx):
+        """List configured destinations for event categories."""
+        routes = await self.config.guild(ctx.guild).features.routes()
+        await self._reply(
+            ctx,
+            "\n".join(f"**{key}** · <#{uid}>" for key, uid in routes.items())
+            or "No category routes configured.",
+        )
+
+    @logplus.group(name="ignore", autohelp=False)
+    async def ignore(self, ctx):
+        """Manage message and server-event channel exemptions."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
+
+    @ignore.command(name="add")
+    @app_commands.choices(
+        scope=[app_commands.Choice(name=key, value=key) for key in ("message", "server", "all")]
+    )
+    async def ignore_add(
+        self,
+        ctx,
+        channel: Union[
+            discord.TextChannel, discord.ForumChannel, discord.VoiceChannel, discord.StageChannel
+        ],
+        scope: str = "all",
+    ):
+        """Exclude a channel and its threads from selected logs."""
+        await self._set_exemption(ctx.guild, channel.id, scope, True)
+        await self._presentation.confirm(ctx)
+
+    @ignore.command(name="remove")
+    @app_commands.choices(
+        scope=[app_commands.Choice(name=key, value=key) for key in ("message", "server", "all")]
+    )
+    async def ignore_remove(
+        self,
+        ctx,
+        channel: Union[
+            discord.TextChannel, discord.ForumChannel, discord.VoiceChannel, discord.StageChannel
+        ],
+        scope: str = "all",
+    ):
+        """Remove message or server-event channel exemptions."""
+        await self._set_exemption(ctx.guild, channel.id, scope, False)
+        await self._presentation.confirm(ctx)
+
+    async def _set_exemption(self, guild, channel_id, scope, enabled):
+        if scope not in {"message", "server", "all"}:
+            raise redcommands.BadArgument("Choose message, server, or all.")
+        for name in ("message", "server") if scope == "all" else (scope,):
+            async with self.config.guild(guild).get_attr(name)() as section:
+                values = section["exempt_channels"]
+                if enabled and channel_id not in values:
+                    values.append(channel_id)
+                elif not enabled and channel_id in values:
+                    values.remove(channel_id)
+        self._settings_cache.pop(guild.id, None)
+
+    @ignore.command(name="list")
+    async def ignore_list(self, ctx):
+        """List channels excluded from message and server logs."""
+        conf = await self._settings(ctx.guild)
+        embed = self._presentation.embed("Channel exemptions")
+        for scope in ("message", "server"):
+            embed.add_field(
+                name=scope.capitalize(),
+                value="\n".join(f"<#{uid}>" for uid in conf[scope]["exempt_channels"]) or "None",
+                inline=False,
+            )
+        await self._reply(ctx, embed=embed)
+
+    @logplus.command(name="delivery")
+    async def delivery(self, ctx, retry: Optional[bool] = None):
+        """Inspect delivery failures and optionally toggle retries."""
+        if retry is not None:
+            async with self.config.guild(ctx.guild).features() as features:
+                features["retry"] = retry
+            self._settings_cache.pop(ctx.guild.id, None)
+            if not retry:
+                await self._cancel_retries(ctx.guild.id)
+                queue = self._retry_queues.pop(ctx.guild.id, ())
+                self._delivery_status[ctx.guild.id]["dropped"] += len(queue)
+        status = self._delivery_status[ctx.guild.id]
+        enabled = (await self._settings(ctx.guild))["features"]["retry"]
+        embed = self._presentation.embed(
+            "Delivery status",
+            f"Retries {'enabled' if enabled else 'disabled'} · {len(self._retry_queues.get(ctx.guild.id, ()))} pending",
+        )
+        for key in ("delivered", "recovered", "failures", "dropped", "last_error"):
+            embed.add_field(
+                name=key.replace("_", " ").capitalize(), value=str(status[key]), inline=True
+            )
+        if status["last_failure"]:
+            embed.add_field(name="Last failure", value=f"<t:{int(status['last_failure'])}:R>")
+        await self._reply(ctx, embed=embed)
+
+    @logplus.command(name="setup")
+    async def setup(self, ctx):
+        """Open guided destination and event-group setup."""
+
+        async def update(ctx, key, value):
+            if key == "channel":
+                await self.config.guild(ctx.guild).log_channel.set(value)
+            else:
+                async with self.config.guild(ctx.guild).get_attr(key)() as section:
+                    for option in section:
+                        if isinstance(section[option], bool):
+                            section[option] = value
+            self._settings_cache.pop(ctx.guild.id, None)
+
+        view = SetupView(
+            self,
+            ctx,
+            "log setup",
+            [
+                ("channel", "Default destination", "text"),
+                ("message", "Message logs", "toggle"),
+                ("member", "Member logs", "toggle"),
+                ("voice", "Voice logs", "toggle"),
+                ("server", "Server changes", "toggle"),
+            ],
+            update,
+        )
+        view.message = await self._reply(
+            ctx, "Choose a destination and the event groups to enable.", title="Setup", view=view
+        )
 
     @redcommands.hybrid_command(name="logstatus")
     @redcommands.guild_only()
@@ -898,6 +1067,66 @@ class LogPlus(redcommands.Cog):
             e.add_field(name="Content", value=message.content[:1024], inline=False)
         await self._send(message.guild, e, message.channel.id)
 
+    async def _raw_message_allowed(self, payload, switch):
+        if payload.guild_id is None or getattr(payload, "cached_message", None) is not None:
+            return None
+        guild = self.bot.get_guild(payload.guild_id)
+        if guild is None or await self.bot.cog_disabled_in_guild(self, guild):
+            return None
+        conf = await self._settings(guild)
+        if not conf["message"][switch] or await self._is_exempt(
+            guild, payload.channel_id, "message"
+        ):
+            return None
+        if (guild.id, payload.message_id) in self._own_log_ids:
+            return None
+        author = getattr(payload, "data", {}).get("author")
+        if author and (author.get("bot") or author.get("id") == str(self.bot.user.id)):
+            return None
+        # Uncached deletes do not identify an author. Avoid logging our own destinations.
+        destinations = {
+            conf["log_channel"],
+            *conf["overrides"].values(),
+            *conf["features"]["routes"].values(),
+        }
+        if author is None and payload.channel_id in destinations:
+            return None
+        return guild
+
+    @commands.Cog.listener()
+    async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent):
+        if "content" not in payload.data:
+            return
+        guild = await self._raw_message_allowed(payload, "edit")
+        if guild is None:
+            return
+        author = payload.data.get("author", {})
+        embed = await self._E(guild, "Message edited outside cache", etype="message_edited")
+        embed.add_field(name="Channel", value=f"<#{payload.channel_id}>")
+        embed.add_field(name="Message ID", value=str(payload.message_id))
+        embed.add_field(name="Author", value=author.get("id", "Unavailable in this event"))
+        embed.add_field(name="Before", value="Unavailable, message was not cached.", inline=False)
+        embed.add_field(name="After", value=payload.data["content"] or "<empty>", inline=False)
+        embed.add_field(
+            name="Jump",
+            value=f"https://discord.com/channels/{guild.id}/{payload.channel_id}/{payload.message_id}",
+            inline=False,
+        )
+        await self._send(guild, embed, payload.channel_id)
+
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent):
+        guild = await self._raw_message_allowed(payload, "delete")
+        if guild is None:
+            return
+        embed = await self._E(guild, "Message deleted outside cache", etype="message_deleted")
+        embed.add_field(name="Channel", value=f"<#{payload.channel_id}>")
+        embed.add_field(name="Message ID", value=str(payload.message_id))
+        embed.add_field(
+            name="Author and content", value="Unavailable, message was not cached.", inline=False
+        )
+        await self._send(guild, embed, payload.channel_id)
+
     @commands.Cog.listener()
     @guild_enabled
     async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent):
@@ -1086,24 +1315,36 @@ class LogPlus(redcommands.Cog):
     async def on_guild_channel_update(
         self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel
     ):
-        # IMPROVED: Now checks WHAT changed
         g = await self._settings(after.guild)
         if g["server"]["channel_update"] and not await self._is_exempt(
             after.guild, after.id, "server"
         ):
-            changes = []
-            if before.name != after.name:
-                changes.append(f"**Name:** {before.name} -> {after.name}")
-            if hasattr(before, "topic") and hasattr(after, "topic") and before.topic != after.topic:
-                changes.append("**Topic:** Changed")
-            if hasattr(before, "nsfw") and hasattr(after, "nsfw") and before.nsfw != after.nsfw:
-                changes.append(f"**NSFW:** {before.nsfw} -> {after.nsfw}")
-
-            if not changes:
-                return  # Don't log internal permission syncing if nothing visible changed
+            changes = attribute_changes(
+                before,
+                after,
+                (
+                    "name",
+                    "topic",
+                    "nsfw",
+                    "slowmode_delay",
+                    "bitrate",
+                    "user_limit",
+                    "rtc_region",
+                ),
+            )
+            overwrites = overwrite_changes(before, after)
+            if not changes and not overwrites:
+                return
 
             actor = await self._audit_actor_recent(
-                after.guild, discord.AuditLogAction.channel_update, target_id=after.id
+                after.guild,
+                [
+                    discord.AuditLogAction.channel_update,
+                    discord.AuditLogAction.overwrite_create,
+                    discord.AuditLogAction.overwrite_update,
+                    discord.AuditLogAction.overwrite_delete,
+                ],
+                target_id=after.id,
             )
             e = await self._E(
                 after.guild,
@@ -1112,7 +1353,9 @@ class LogPlus(redcommands.Cog):
                 etype="channel_updated",
             )
             e.add_field(name="Channel", value=after.mention, inline=True)
-            e.add_field(name="By", value=actor or "Unknown", inline=True)
+            e.add_field(name="Recent audit actor", value=actor or "Unknown", inline=True)
+            for target, changes in overwrites:
+                e.add_field(name=target, value=changes, inline=False)
             await self._send(after.guild, e, after.id)
 
     @commands.Cog.listener()
@@ -1155,6 +1398,12 @@ class LogPlus(redcommands.Cog):
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role):
         g = await self._settings(after.guild)
         if g["server"]["role_update"]:
+            changes = attribute_changes(
+                before, after, ("name", "color", "hoist", "mentionable", "position")
+            )
+            changes.extend(permission_changes(before.permissions, after.permissions))
+            if not changes:
+                return
             actor = await self._audit_actor_recent(
                 after.guild,
                 discord.AuditLogAction.role_update,
@@ -1163,10 +1412,10 @@ class LogPlus(redcommands.Cog):
             e = await self._E(
                 after.guild,
                 "Role updated",
-                description=after.mention,
+                description=after.mention + "\n" + "\n".join(changes),
                 etype="role_updated",
             )
-            e.add_field(name="By", value=actor or "Unknown", inline=True)
+            e.add_field(name="Recent audit actor", value=actor or "Unknown", inline=True)
             await self._send(after.guild, e)
 
     @commands.Cog.listener()
@@ -1174,10 +1423,32 @@ class LogPlus(redcommands.Cog):
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild):
         g = await self._settings(after)
         if g["server"]["server_update"]:
+            changes = attribute_changes(
+                before,
+                after,
+                (
+                    "name",
+                    "description",
+                    "verification_level",
+                    "explicit_content_filter",
+                    "afk_timeout",
+                    "afk_channel",
+                    "system_channel",
+                    "default_notifications",
+                    "premium_progress_bar_enabled",
+                    "icon",
+                    "banner",
+                    "splash",
+                ),
+            )
+            if not changes:
+                return
             actor = await self._audit_actor_recent(
                 after, discord.AuditLogAction.guild_update, lookback_s=60
             )
-            e = await self._E(after, "Server updated", etype="server_updated")
+            e = await self._E(
+                after, "Server updated", description="\n".join(changes), etype="server_updated"
+            )
             e.add_field(name="By", value=actor or "Unknown", inline=True)
             await self._send(after, e)
 
@@ -1747,7 +2018,14 @@ class LogPlus(redcommands.Cog):
     async def cog_after_invoke(self, ctx):
         self._settings_cache.pop(ctx.guild.id, None)
 
-    def cog_unload(self):
+    async def cog_unload(self):
+        self._closing = True
+        for gid in list(self._retry_tasks):
+            await self._cancel_retries(gid)
+        self._retry_queues.clear()
+        self._delivery_status.clear()
+        self._own_log_ids.clear()
+        await close_views(self)
         self._settings_cache.clear()
         self._audit_cache.clear()
         self._audit_locks.clear()
@@ -1870,6 +2148,12 @@ class LogPlus(redcommands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
+        await self._cancel_retries(guild.id)
+        self._retry_queues.pop(guild.id, None)
+        self._delivery_status.pop(guild.id, None)
+        for key in list(self._own_log_ids):
+            if key[0] == guild.id:
+                self._own_log_ids.pop(key, None)
         self._settings_cache.pop(guild.id, None)
         self._settings_locks.pop(guild.id, None)
         self._audit_cache.pop(guild.id, None)
@@ -1879,8 +2163,7 @@ class LogPlus(redcommands.Cog):
                 self._last_event_at.pop(key, None)
 
     async def red_delete_data_for_user(self, *, requester, user_id):
-        # Config contains only server settings; posted logs are managed in Discord.
-        return
+        await super().red_delete_data_for_user(requester=requester, user_id=user_id)
 
     async def red_get_data_for_user(self, *, user_id):
-        return {}
+        return await super().red_get_data_for_user(user_id=user_id)
