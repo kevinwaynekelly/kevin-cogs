@@ -17,6 +17,7 @@ from redbot.core.bot import Red
 from .backend import diagnostics, require_voice
 from .command_support import prepare_hybrid
 from .dependencies import VoiceDependencyRepair
+from .failures import log_failure, playback_stage
 from .features import DEFAULTS_GUILD, AudioCommands, check_control, vote_threshold
 from .interactive import close_views
 from .player import GuildPlayer
@@ -128,79 +129,98 @@ class AudioPlus(AudioCommands, commands.Cog):
         return bool(guild.voice_client or (player and (player.queue or player._restart)))
 
     async def _probe_playback(self, settings):
-        guild = self.bot.get_guild(settings["guild_id"])
-        if guild is None:
-            raise MediaError("The configured test server is unavailable to the bot.")
-        if await self.bot.cog_disabled_in_guild(self, guild):
-            return CheckResult("deferred", "AudioPlus is disabled in the test server.")
-        async with self._player_locks[guild.id]:
-            if self._check_voice_busy(guild):
+        with playback_stage("Server setup"):
+            guild = self.bot.get_guild(settings["guild_id"])
+            if guild is None:
+                raise MediaError("The configured test server is unavailable to the bot.")
+            if await self.bot.cog_disabled_in_guild(self, guild):
+                return CheckResult("deferred", "AudioPlus is disabled in the test server.")
+            async with self._player_locks[guild.id]:
+                if self._check_voice_busy(guild):
+                    return CheckResult(
+                        "deferred", "Voice is already in use. I will retry in 15 minutes."
+                    )
+        with playback_stage("Voice dependencies"):
+            if self._voice_repair.running:
                 return CheckResult(
-                    "deferred", "Voice is already in use. I will retry in 15 minutes."
+                    "deferred", "Voice dependency repair is running. I will retry in 15 minutes."
                 )
-        self._require_voice()
-        tracks = await self._load_tracks(settings["video_url"])
-        if not tracks:
-            raise MediaError("YouTube returned no playable test video.")
+            self._require_voice()
+        with playback_stage("YouTube lookup"):
+            tracks = await self._load_tracks(settings["video_url"])
+            if not tracks:
+                raise MediaError("YouTube returned no playable test video.")
         async with self._player_locks[guild.id]:
             if self._check_voice_busy(guild):
                 return CheckResult("deferred", "Voice became busy. I will retry in 15 minutes.")
-            channel = (
-                guild.get_channel(settings["channel_id"])
-                if settings["channel_id"]
-                else self._busiest_voice_channel(guild)
-            )
-            if not isinstance(channel, discord.VoiceChannel):
-                raise MediaError("The configured ordinary voice channel is unavailable.")
-            permissions = channel.permissions_for(guild.me)
-            if not all(getattr(permissions, name) for name in ("view_channel", "connect", "speak")):
-                raise MediaError(
-                    "The test channel needs View Channel, Connect, and Speak permissions."
+            with playback_stage("Voice channel selection"):
+                channel = (
+                    guild.get_channel(settings["channel_id"])
+                    if settings["channel_id"]
+                    else self._busiest_voice_channel(guild)
                 )
-            if (
-                channel.user_limit
-                and len(channel.members) >= channel.user_limit
-                and not permissions.move_members
-            ):
-                raise MediaError("The configured test voice channel is full.")
+                if not isinstance(channel, discord.VoiceChannel):
+                    raise MediaError("The configured ordinary voice channel is unavailable.")
+                permissions = channel.permissions_for(guild.me)
+                if not all(
+                    getattr(permissions, name) for name in ("view_channel", "connect", "speak")
+                ):
+                    raise MediaError(
+                        "The test channel needs View Channel, Connect, and Speak permissions."
+                    )
+                if (
+                    channel.user_limit
+                    and len(channel.members) >= channel.user_limit
+                    and not permissions.move_members
+                ):
+                    raise MediaError("The configured test voice channel is full.")
             player = None
             voice = None
+            primary_failure = None
             try:
-                voice = await self._connect_voice(channel)
-                flags = getattr(guild.me, "voice", None)
-                if flags and (flags.mute or flags.self_mute):
-                    raise MediaError("Discord is muting the bot in the test voice channel.")
+                with playback_stage("Discord voice connection"):
+                    voice = await self._connect_voice(channel)
+                    flags = getattr(guild.me, "voice", None)
+                    if flags and (flags.mute or flags.self_mute):
+                        raise MediaError("Discord is muting the bot in the test voice channel.")
 
                 async def report_error(player, track, cause):
                     pass  # The watchdog sends the private report after the probe closes.
 
-                player = GuildPlayer(voice, self._resolver, report_error)
-                player.volume = 0
-                await player.enqueue(tracks[:1])
-                while True:
-                    if player.last_error:
-                        raise MediaError(player.last_error)
-                    if not voice.is_connected():
-                        raise MediaError("Discord voice disconnected during the test.")
-                    if player.source and player.source.frames >= PROBE_FRAMES and player.playing:
-                        return CheckResult(
-                            "ok",
-                            "YouTube audio decoded and played silently in Discord for three seconds.",
-                        )
-                    if player._runner.done():
-                        raise MediaError(
-                            "The test video ended before three seconds of audio played."
-                        )
-                    await asyncio.sleep(0.05)
-            except (discord.HTTPException, discord.ClientException, RuntimeError) as exc:
-                raise MediaError(
-                    "Discord voice could not connect or play. Check audiostatus, voice permissions, and UDP network access."
-                ) from exc
+                with playback_stage("Native playback"):
+                    player = GuildPlayer(voice, self._resolver, report_error)
+                    player.volume = 0
+                    await player.enqueue(tracks[:1])
+                    while True:
+                        if player.last_error:
+                            raise MediaError(player.last_error)
+                        if not voice.is_connected():
+                            raise MediaError("Discord voice disconnected during the test.")
+                        source = player.source
+                        if source and source.frames >= PROBE_FRAMES and player.playing:
+                            return CheckResult(
+                                "ok",
+                                "YouTube audio decoded and played silently in Discord for three seconds.",
+                            )
+                        if player._runner.done():
+                            raise MediaError(
+                                "The test video ended before three seconds of audio played."
+                            )
+                        await asyncio.sleep(0.05)
+            except BaseException as exc:
+                primary_failure = exc
+                raise
             finally:
-                if player:
-                    await player.close()
-                elif voice:
-                    await voice.disconnect(force=True)
+                try:
+                    with playback_stage("Voice cleanup"):
+                        if player:
+                            await player.close()
+                        elif voice:
+                            await voice.disconnect(force=True)
+                except Exception:
+                    # Keep the original failure/cancellation; the cleanup failure is logged.
+                    if primary_failure is None:
+                        raise
 
     async def _notify_check_failure(self, settings, result):
         user = self.bot.get_user(settings["recipient_id"])
@@ -409,7 +429,14 @@ class AudioPlus(AudioCommands, commands.Cog):
         except BaseException:
             # discord.py's Connectable.connect does not clean up CancelledError.
             if owned:
-                await owned.disconnect(force=True)
+                try:
+                    await owned.disconnect(force=True)
+                except Exception as cleanup_error:
+                    log_failure(
+                        "Voice connection cleanup",
+                        cleanup_error,
+                        guild_id=getattr(getattr(channel, "guild", None), "id", None),
+                    )
             raise
 
     async def _connect_voice(self, channel):
@@ -706,6 +733,13 @@ class AudioPlus(AudioCommands, commands.Cog):
         ]
         if state["voice_error"]:
             lines.append("\n" + state["voice_error"])
+        check = await self.config.watchdog()
+        last = check["last_result"]
+        if check["guild_id"] == ctx.guild.id and last:
+            lines.append(
+                f"\n**Last daily playback check** · {last['status']} · <t:{int(last['at'])}:f>\n"
+                + last["detail"]
+            )
         player = self._get_player(ctx.guild)
         if player:
             lines += [
@@ -721,7 +755,10 @@ class AudioPlus(AudioCommands, commands.Cog):
             ctx,
             "\n".join(lines),
             title="Local player diagnostics",
-            tone="success" if state["ready"] else "warning",
+            tone="success"
+            if state["ready"]
+            and not (check["guild_id"] == ctx.guild.id and last.get("status") == "failed")
+            else "warning",
         )
 
     @commands.group(name="audio", invoke_without_command=True)

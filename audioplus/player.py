@@ -12,6 +12,7 @@ from collections import deque
 
 import discord
 
+from .failures import log_failure, safe_exception
 from .resolver import MAX_TRACKS, MediaError, Stream, Track
 
 log = logging.getLogger(__name__)
@@ -304,13 +305,9 @@ class GuildPlayer:
                     self.last_error = (
                         str(exc)
                         if isinstance(exc, MediaError)
-                        else "The local audio player failed. Check audio pingnode and the Red logs."
+                        else safe_exception(exc) + " Check audiostatus and the Red logs."
                     )
-                    log.warning(
-                        "AudioPlus playback failed in guild %s (%s)",
-                        self.guild.id,
-                        type(exc).__name__,
-                    )
+                    log_failure("Native playback", exc, guild_id=self.guild.id)
                     try:
                         await self.report_error(self, track, self.last_error)
                     except Exception:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Playback check failure diagnostics
+
+- Replace generic monitor/player failures with safe exception types, structured codes/names, and bounded traceback locations. Identify server setup, dependency checks, YouTube lookup, channel selection, voice connection, native playback, and cleanup stages without exposing arbitrary exception messages or signed stream URLs.
+- Preserve the primary playback error when cleanup also fails and postpone active voice-library repair. Show the saved daily-check result in audiostatus after its temporary player closes; clear the previous result when moving the monitor to another server.
+- Validate 527 tests on Python 3.10/3.11, plus lint, formatting, syntax, metadata, and whitespace checks. Test actual local FFmpeg/Opus probes with mocked Discord/provider boundaries; live Scarlet playback remains unverified.
+
 ## 2026-10-01: Native voice dependency repair
 
 - Add bot-owner-only `[p]audiorepair` for unimportable PyNaCl/davey, installing binary wheels in the running Red interpreter rather than Downloader's update target. Keep working voice libraries and normal cog-update requirements unchanged.

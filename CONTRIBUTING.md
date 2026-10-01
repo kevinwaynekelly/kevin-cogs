@@ -24,6 +24,8 @@ Config identifiers, cog class names, and defaults preserve existing saved settin
 
 AudioPlus's opt-in `watchdog` section uses Red's merged defaults on upgrade. Watchdog settings/results and legacy node setters share the global Config lock. Keep the persistent daily cursor and pending failure alert across reloads, bound probes, cancel owned tasks on settings changes/unload, and postpone existing voice connections. Recipient export/deletion hooks must exclude legacy credentials. Tests cover DST/local schedules, private delivery retries, and a silent probe using real FFmpeg, Discord's audio thread, and Opus with mocked voice transport.
 
+Playback error helpers in `failures.py` identify probe stages and preserve safe exception fields and bounded code locations. Never display/log arbitrary native/provider exception messages or raw HTTP bodies. Keep primary errors/cancellation when cleanup also fails. Show saved check results only in their monitored server and clear them when that server changes.
+
 AudioPlus also adds guild music preferences and bounded member playlists/favorites through merged defaults. Collection writers and data-deletion hooks share their field locks. Components build a fresh checked context for the clicking member, including Red permission and disabled-command rules. Cancel owned player-panel tasks and close views on disconnect/unload. The compatibility test permits these named additive sections while retaining the original snapshot.
 
 ## Local checks

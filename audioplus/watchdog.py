@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from redbot.core import commands
 
+from .failures import PlaybackFailure, log_failure
 from .resolver import MediaError, http_url
 
 log = logging.getLogger(__name__)
@@ -111,6 +112,12 @@ class PlaybackWatchdog:
         self._version += 1
         # All watchdog writers share the global lock with legacy node-setting writes.
         async with self.config.all() as data:
+            if (
+                "guild_id" in updates
+                and updates["guild_id"] != data["watchdog"]["guild_id"]
+                and "last_result" not in updates
+            ):
+                updates["last_result"] = {}
             data["watchdog"].update(
                 updates, pending_alert={}, alert_retry_at=0, last_alert_error=None
             )
@@ -148,10 +155,8 @@ class PlaybackWatchdog:
             except asyncio.TimeoutError:
                 result = CheckResult("failed", "The playback check timed out.")
             except Exception as exc:
-                log.warning("Playback check failed (%s)", type(exc).__name__)
-                result = CheckResult(
-                    "failed", "The local player failed. Check audiostatus and Red logs."
-                )
+                log_failure("Playback probe", exc, guild_id=settings["guild_id"])
+                result = CheckResult("failed", str(PlaybackFailure("Playback probe", exc)))
             now = self.clock()
             record = {"status": result.status, "detail": result.detail, "at": now.timestamp()}
             async with self.config.all() as data:
