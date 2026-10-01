@@ -151,8 +151,16 @@ class LogDelivery:
             channel = await self._delivery_route(guild, record)
             if channel is None:
                 return False
-            if not channel.permissions_for(guild.me).embed_links and "embed" in record.parts[0]:
-                page = record.parts.popleft()["embed"]
+            payload = record.parts[0]
+            if "embed" in payload:
+                payload = {
+                    "embed": self._presentation.apply_theme(
+                        payload["embed"], bot=self.bot, guild=guild
+                    )
+                }
+            if not channel.permissions_for(guild.me).embed_links and "embed" in payload:
+                page = payload["embed"]
+                record.parts.popleft()
                 text = f"**{page.title}**\n{page.description or ''}"
                 for entry in page.fields:
                     text += f"\n\n**{entry.name}**\n{entry.value}"
@@ -160,8 +168,9 @@ class LogDelivery:
                 record.parts.extendleft(
                     reversed([{"content": part} for part in chunks(text, 2000)])
                 )
+                payload = record.parts[0]
             message = await asyncio.wait_for(
-                channel.send(**record.parts[0], allowed_mentions=discord.AllowedMentions.none()), 15
+                channel.send(**payload, allowed_mentions=discord.AllowedMentions.none()), 15
             )
             if self._closing:
                 return False

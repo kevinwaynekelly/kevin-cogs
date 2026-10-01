@@ -143,7 +143,8 @@ class Presentation:
                 url=base.author.url,
                 icon_url=base.author.icon_url,
             )
-        overhead = units(base.title) + units(base.footer.text) + units(base.author.name) + 64
+        # Leave room for page labels and a later 80-character server brand on retries.
+        overhead = units(base.title) + units(base.footer.text) + units(base.author.name) + 192
         budget = 6000 - overhead
         pages = []
         descriptions = list(chunks(embed.description or "", min(3000, budget)))
@@ -172,6 +173,37 @@ class Presentation:
                 page.set_footer(text=f"{base.footer.text} · Page {index}/{len(pages)}")
         return pages
 
+    def apply_theme(self, embed: discord.Embed, *, bot, guild, tone=None):
+        """Apply the current optional server theme to a styled card or live edit."""
+        embed = deepcopy(embed)
+        themes = getattr(bot, "_kevin_cogs_themes", None)
+        theme = themes.get(guild.id) if guild and isinstance(themes, dict) else None
+        if not isinstance(theme, dict):
+            return embed
+        colors = theme.get("colors", {})
+        selected = tone or LEGACY_COLORS.get(getattr(embed.color, "value", None))
+        if selected is None:
+            selected = next(
+                (
+                    key
+                    for key, value in colors.items()
+                    if value == getattr(embed.color, "value", None)
+                ),
+                "info",
+            )
+        color = colors.get(selected)
+        if type(color) is int and 0 <= color <= 0xFFFFFF:
+            embed.color = color
+        brand = theme.get("footer")
+        if isinstance(brand, str) and 1 <= len(brand) <= 80:
+            footer = embed.footer.text or ""
+            if footer == "Kevin's Cogs" or footer == brand:
+                footer = ""
+            elif footer.startswith("Kevin's Cogs · ") or footer.startswith(brand + " · "):
+                footer = footer.partition(" · ")[2]
+            embed.set_footer(text=clip(brand + (" · " + footer if footer else ""), 1900))
+        return embed
+
     async def send(
         self,
         target,
@@ -181,6 +213,8 @@ class Presentation:
         title=None,
         tone=None,
         notification=None,
+        theme_guild=None,
+        theme_bot=None,
         **kwargs,
     ):
         prefix = getattr(target, "clean_prefix", None)
@@ -211,22 +245,12 @@ class Presentation:
         use_embeds = True
         channel = getattr(target, "channel", target)
         guild = getattr(target, "guild", None)
-        bot = getattr(target, "bot", None)
+        bot = theme_bot or getattr(target, "bot", None)
         if bot is None:
             state = getattr(channel, "_state", None)
             client = getattr(state, "_get_client", None)
             bot = client() if callable(client) else None
-        themes = getattr(bot, "_kevin_cogs_themes", None)
-        theme = themes.get(guild.id) if guild and isinstance(themes, dict) else None
-        if isinstance(theme, dict):
-            selected = tone or LEGACY_COLORS.get(getattr(embed.color, "value", None), "info")
-            color = theme.get("colors", {}).get(selected)
-            if type(color) is int and 0 <= color <= 0xFFFFFF:
-                embed.color = color
-            brand = theme.get("footer")
-            if isinstance(brand, str) and 1 <= len(brand) <= 80:
-                suffix = (embed.footer.text or "").partition(" · ")[2]
-                embed.set_footer(text=clip(brand + (" · " + suffix if suffix else ""), 1900))
+        embed = self.apply_theme(embed, bot=bot, guild=theme_guild or guild, tone=tone)
         if guild and hasattr(channel, "permissions_for"):
             use_embeds = channel.permissions_for(guild.me).embed_links
         # Respect Red's server/user embed preference as well as Discord permissions.

@@ -49,6 +49,7 @@ def test_vendored_themes_match_and_import_independently():
     for cls, _ in COGS:
         module = importlib.import_module(f"{cls.__module__.split('.')[0]}.presentation")
         sources.append(Path(module.__file__).read_text())
+    sources.append(Path(importlib.import_module("settingshub.presentation").__file__).read_text())
     assert len(set(sources)) == 1
 
 
@@ -135,6 +136,22 @@ async def test_event_delivery_uses_theme_and_retains_metadata(bot, guild):
     assert output.footer.text == "Kevin's Cogs · ID 123"
     assert output.thumbnail.url == embed.thumbnail.url
     assert output.timestamp == embed.timestamp
+
+
+async def test_long_logs_fit_discord_limits_after_unicode_footer_theme(bot, guild):
+    cog = LogPlus(bot)
+    channel = make_channel(guild)
+    await cog.config.guild(guild).log_channel.set(channel.id)
+    bot._kevin_cogs_themes = {guild.id: {"colors": {"error": 0x123456}, "footer": "😀" * 80}}
+    card = cog._presentation.embed("Details", "x" * 5990, tone="error")
+    for index in range(10):
+        card.add_field(name=str(index), value="x" * 1000)
+    await cog._send(guild, card)
+    assert channel.send.await_count > 1
+    for call in channel.send.await_args_list:
+        card = call.kwargs["embed"]
+        assert_limits(card)
+        assert card.color.value == 0x123456 and card.footer.text.startswith("😀" * 80)
 
 
 async def test_custom_levelup_template_keeps_text_and_mentions(bot, guild):

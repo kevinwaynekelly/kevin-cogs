@@ -157,6 +157,17 @@ class MilestoneCommands:
             str(member.id), default=member_progress()
         )
 
+        info_card = self._presentation.apply_theme(
+            self._presentation.embed("Rank"), bot=self.bot, guild=ctx.guild
+        )
+        success_card = self._presentation.apply_theme(
+            self._presentation.embed("Rank", tone="success"), bot=self.bot, guild=ctx.guild
+        )
+        palette = {
+            "info": info_card.color.value,
+            "success": success_card.color.value,
+            "footer": info_card.footer.text,
+        }
         async with self._card_slots:
             if self._closing:
                 raise commands.CommandError("Level is unloading. Try again after reload.")
@@ -170,6 +181,7 @@ class MilestoneCommands:
                     upper,
                     position,
                     len(record["badges"]),
+                    theme=palette,
                 )
             )
             self._card_tasks.add(task)

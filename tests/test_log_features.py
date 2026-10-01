@@ -7,12 +7,31 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import discord
+import pytest
 from conftest import forbidden, make_channel, make_context, make_member
 
 from logplus import LogPlus
 from logplus.constants import EVENT_STYLE
 from logplus.delivery import EVENT_SWITCH
 from logplus.diffs import overwrite_changes, permission_changes
+
+
+async def test_retry_uses_current_theme_without_losing_original_tone(bot, guild):
+    cog = LogPlus(bot)
+    channel = make_channel(guild)
+    await cog.config.guild(guild).log_channel.set(channel.id)
+    bot._kevin_cogs_themes = {guild.id: {"colors": {"error": 0x123456}, "footer": "Scarlet"}}
+    card = cog._presentation.embed("Failure", "details", tone="error")
+    record = cog._pending_log(card, None)
+    channel.send.side_effect = forbidden()
+    with pytest.raises(discord.Forbidden):
+        await cog._deliver_log(guild, record)
+    assert record.parts[0]["embed"].color.value == card.color.value
+    bot._kevin_cogs_themes[guild.id] = {"colors": {"error": 0x654321}, "footer": "New brand"}
+    channel.send.side_effect = None
+    assert await cog._deliver_log(guild, record)
+    card = channel.send.call_args.kwargs["embed"]
+    assert card.color.value == 0x654321 and card.footer.text == "New brand"
 
 
 def test_permissions_and_overwrites_distinguish_allow_deny_and_inherit():

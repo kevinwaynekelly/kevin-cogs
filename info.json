@@ -3,6 +3,6 @@
     "Kevin Kelly"
   ],
   "short": "Music, community tools, leveling, logging, and message transformations for Red.",
-  "description": "Custom Red Discord Bot cogs for native music/search/fair queues, community role menus/polls/events, XP rewards/challenges/rank cards, event logs with retained history, and expiring channel transformations. All five include guided setup and slash commands; optional SettingsHub unifies setup, health, and validated configuration backup/restore.",
+  "description": "Independent Red Discord Bot cogs for native music with recovery/normalization/shared playlists; community temporary rooms/onboarding/birthdays/recurring events; custom XP achievements/streaks/monthly seasons; moderation history/alerts/digests/incidents; and custom transformations with author Undo and haiku contests. All five feature cogs offer direct and slash commands. Optional SettingsHub adds shared themes, permission-aware examples, safe diagnostics and validated configuration snapshots/restore.",
   "install_msg": "Thanks for adding Kevin Cogs. List the available cogs with [p]cog list kevin-cogs, or use your chosen repository name. Setup guides: https://github.com/kevinwaynekelly/kevin-cogs. AudioPlus uses native Discord voice with local FFmpeg and yt-dlp. Use [p]play, [p]community, [p]level, [p]log, and [p]owo; each cog supports slash commands."
 }

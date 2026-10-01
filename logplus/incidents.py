@@ -253,6 +253,8 @@ class IncidentCommands:
                 f"Server ID: {guild.id}\nCommand: `{signature[0]}`\nError type: `{signature[1]}`\nAt least {count} failures within the configured window. Check Red logs for details.",
                 title="Repeated command error",
                 tone="error",
+                theme_guild=guild,
+                theme_bot=self.bot,
             ),
             10,
         )

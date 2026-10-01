@@ -77,5 +77,48 @@ async def test_theme_and_browser_use_real_red_commands(hub_runtime):
     ctx = await invoke("!commandbrowser level show")
     assert "level show" in ctx.send.call_args.kwargs["embed"].description
     assert "Usage:" in ctx.send.call_args.kwargs["embed"].description
+    assert "Example:" in ctx.send.call_args.kwargs["embed"].description
     await invoke("!theme reset")
     assert bot._kevin_cogs_themes[member.guild.id]["colors"] == COLORS
+
+
+async def test_browser_hides_admin_commands_and_disabled_shortcut_parents(hub_runtime):
+    import discord
+
+    bot, hub, member, invoke = hub_runtime
+    bot.owner_ids.clear()
+    member.guild_permissions = discord.Permissions.none()
+    ctx = await invoke("!commandbrowser normalize")
+    assert "No available commands" in ctx.send.call_args.kwargs["embed"].description
+    ctx = await invoke("!commandbrowser play")
+    assert any("**play**" in call.kwargs["embed"].description for call in ctx.send.await_args_list)
+    bot.get_command("audio").disable_in(member.guild)
+    ctx = await invoke("!commandbrowser play")
+    assert all(
+        "**play**" not in call.kwargs["embed"].description for call in ctx.send.await_args_list
+    )
+
+
+async def test_diagnostics_cover_all_cogs_and_omit_secrets_and_paths(hub_runtime):
+    import json
+
+    bot, hub, member, invoke = hub_runtime
+    await bot.get_cog("AudioPlus").config.password.set("diagnostic-secret-password")
+    ctx = await invoke("!settings diagnostics")
+    file = ctx.send.call_args.kwargs["file"]
+    raw = file.fp.read().decode()
+    report = json.loads(raw)
+    assert set(report["cogs"]) == {
+        "AudioPlus",
+        "CommunityPlus",
+        "LevelPlus",
+        "LogPlus",
+        "OwoPlus",
+        "SettingsHub",
+    }
+    assert "diagnostic-secret-password" not in raw and "/workspace/" not in raw
+    assert all(
+        len(entry["installed_source_sha256"]) == 64 and entry["source_files"] > 0
+        for entry in report["cogs"].values()
+    )
+    assert "permissions" in report and "native_player" in report["cogs"]["AudioPlus"]

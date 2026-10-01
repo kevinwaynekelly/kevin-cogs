@@ -250,7 +250,7 @@ class AudioPlus(AudioContinuity, AudioCommands, commands.Cog):
             f"**Server** · {name}\n**Checked** · <t:{int(result['at'])}:f>\n\n{result['detail']}\n\n**Test video** · {settings['video_url']}\n\nRun `audiostatus` for dependencies or `audiocheck now` to retry. A failure can also mean the test video was removed or restricted.",
             tone="error",
         )
-        await user.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        await self._presentation.send(user, embed=embed, theme_guild=guild, theme_bot=self.bot)
 
     @commands.group(name="audiocheck", invoke_without_command=True)
     @GUILD_ONLY

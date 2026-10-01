@@ -2,12 +2,14 @@
 
 import asyncio
 import hashlib
+import inspect
 import io
 import json
 import time
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 import discord
 from redbot.core import commands
@@ -20,6 +22,93 @@ HUB_DEFAULTS = {
     "theme": {"colors": dict(COLORS), "footer": "Kevin's Cogs"},
     "snapshots": {"enabled": False, "hours": 6, "last_at": 0, "records": []},
 }
+
+EXAMPLES = {
+    "play": "play quiet piano",
+    "seek": "seek 1:30",
+    "repeat": "repeat queue",
+    "recoverqueue": "recoverqueue",
+    "audioset recovery": "audioset recovery True",
+    "audioset emptypause": "audioset emptypause True 60",
+    "audioset normalize": "audioset normalize True",
+    "serverplaylist create": "serverplaylist create favourites",
+    "serverplaylist suggest": "serverplaylist suggest favourites quiet piano",
+    "serverplaylist approve": "serverplaylist approve favourites 1 True",
+    "rank": "rank",
+    "level show": "level show",
+    "achievement create": "achievement create chatty message 100 50",
+    "streakset": "streakset True 10 100",
+    "monthlyseason": "monthlyseason True #announcements",
+    "roleboard": 'roleboard "Members" week',
+    "voiceroom name": 'voiceroom name "Game night"',
+    "voiceroom limit": "voiceroom limit 8",
+    "voiceroom private": "voiceroom private True",
+    "onboard accept": "onboard accept",
+    "birthday set": "birthday set 10 1",
+    "eventpolicy": "eventpolicy <event_id> 10 7",
+    "logalerts burst": "logalerts burst joins True 10 60",
+    "logalerts digest": "logalerts digest True UTC 9",
+    "logalerts errors": "logalerts errors True 5 300",
+    "incident create": 'incident create "Permission review"',
+    "customstyle create": 'customstyle create space {"hello":"greetings"}',
+    "stylize": "stylize pirate hello friend",
+    "owoundo": "owoundo",
+    "haikucontest create": "haikucontest create 24 Autumn poems",
+    "theme color": "theme color info #818CF8",
+    "theme footer": "theme footer Scarlet",
+    "snapshots auto": "snapshots auto True 6",
+}
+SHORTCUT_TARGETS = {
+    **{
+        name: f"audio {name}"
+        for name in (
+            "play",
+            "join",
+            "skip",
+            "stop",
+            "pause",
+            "resume",
+            "volume",
+            "np",
+            "queue",
+            "shuffle",
+            "repeat",
+            "tone",
+            "playerstate",
+            "debugvc",
+            "speak",
+            "undeafen",
+            "fixvoice",
+            "rejoin",
+        )
+    },
+    "disconnect": "audio leave",
+    "audiostatus": "audio pingnode",
+    "rank": "level show",
+    "rankcard": "level show",
+    "leaderboard": "level leaderboard",
+    "levellookup": "level lookup",
+    "seen": "community seen",
+    "seendetail": "community seendetail",
+    "activity": "community stats",
+    "seenlist": "community seenlist",
+    "logstatus": "log",
+    "logchannel": "log channel",
+    "lograte": "log rate",
+}
+
+
+def source_identity(cog):
+    """Fingerprint installed Python files without exporting filesystem paths."""
+    try:
+        folder = Path(inspect.getfile(type(cog))).parent
+        digest = hashlib.sha256()
+        files = sorted(folder.glob("*.py"))
+        for path in files:
+            digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+        return {"installed_source_sha256": digest.hexdigest(), "source_files": len(files)}
+    except (OSError, TypeError):
+        return {"installed_source_sha256": "unavailable", "source_files": 0}
 
 
 def differences(before, after, path=""):
@@ -170,11 +259,28 @@ class MaintenanceCommands:
                 continue
             try:
                 await check_command(ctx, command)
+                source_path = SHORTCUT_TARGETS.get(command.qualified_name)
+                if source_path:
+                    source = self.bot.get_command(source_path)
+                    if source is None:
+                        continue
+                    await check_command(ctx, source)
             except commands.CommandError:
                 continue
             usage = f"{ctx.clean_prefix}{command.qualified_name} {command.signature}".strip()
+            example = EXAMPLES.get(command.qualified_name)
+            if example is None and all(
+                param.default is not inspect.Parameter.empty
+                for param in command.clean_params.values()
+            ):
+                example = command.qualified_name
+            guidance = (
+                f"Example: `{ctx.clean_prefix}{example}`"
+                if example
+                else f"Details: `{ctx.clean_prefix}help {command.qualified_name}`"
+            )
             matches.append(
-                f"**{command.qualified_name}**\n{clip(description, 180)}\nUsage: `{clip(usage, 300)}`"
+                f"**{command.qualified_name}**\n{clip(description, 180)}\nUsage: `{clip(usage, 300)}`\n{guidance}"
             )
             if len(matches) == 25:
                 break
@@ -288,11 +394,12 @@ class MaintenanceCommands:
             "permissions": dict(ctx.channel.permissions_for(ctx.guild.me)),
             "cogs": {},
         }
-        for name, cog in self._loaded().items():
+        for name, cog in {**self._loaded(), "SettingsHub": self}.items():
             entry = {
                 "loaded": True,
                 "disabled": await self.bot.cog_disabled_in_guild(cog, ctx.guild),
                 "module": type(cog).__module__,
+                **await asyncio.to_thread(source_identity, cog),
             }
             if name == "AudioPlus":
                 entry["native_player"] = await cog.diagnostic_report(ctx.guild.id)

@@ -1,6 +1,6 @@
 # Discord presentation
 
-All five cogs use one visual theme for their own command replies, nested command help, input errors, event notices, and direct messages.
+All six cogs use one visual theme for their own command replies, nested command help, input errors, event notices, and direct messages.
 
 Every command and group also has a description for Red's native help formatter. The main help menu lists readable summaries, while help for a group or individual command includes its purpose, syntax, and relevant details.
 
@@ -40,7 +40,7 @@ Custom welcome and goodbye templates keep their text and formatting inside the t
 
 ## Maintaining the theme
 
-Each cog includes identical `presentation.py`, `interactive.py`, and `command_support.py` helpers so Red Downloader can install it independently. Edit the canonical copy in `audioplus`, then copy it to the other four cogs; the consistency test rejects drift. The helper owns colors, heading/footer styling, pagination, fallback text, confirmations, nested help, and input-error formatting. Individual cogs own their screen content and event semantics.
+Each cog includes identical `presentation.py`, `interactive.py`, and `command_support.py` helpers so Red Downloader can install it independently. Edit the canonical copy in `audioplus`, then copy it to the other five packages; the consistency test rejects drift. The helper owns colors, heading/footer styling, pagination, fallback text, confirmations, nested help, and input-error formatting. Individual cogs own their screen content and event semantics.
 
 Regenerate the preview with the development dependencies installed:
 
@@ -51,3 +51,9 @@ python -m scripts.preview_presentation
 The preview generator uses temporary Config storage and mocked Discord/Lavalink objects. It does not connect to or post on Discord.
 
 The discovery additions use the same theme: music result selectors, poll/event attendance menus, achievement/challenge cards, locally rendered indigo rank PNGs, style previews, and history reports. Optional SettingsHub adds a requester-bound cog picker and restore preview. All six packages vendor identical presentation, command support, and interactive helpers.
+
+## Optional server themes
+
+SettingsHub provides `theme color` and `theme footer` for the current server. Normal replies, live music card edits, refreshed polls/events, PNG rank cards and delivery retries use the current brand and semantic colors. Log retries retain their original base card so a theme change does not lose error/success meaning. Pagination reserves room for a Unicode brand and page labels. Relevant daily playback/error DMs can use the monitored server theme. Replies still respect embed preferences and permissions. Unloading SettingsHub returns source cogs to default colors until the hub reloads.
+
+Owo Undo uses a separate themed bot card: incoming webhooks cannot host bot component controls. Author-only controls expire after two minutes and original text is cleared on expiration, unload or user-data deletion. Explicit haiku submission/review/contest cards share the same presentation; raw webhook sender attribution remains tied to the original author.

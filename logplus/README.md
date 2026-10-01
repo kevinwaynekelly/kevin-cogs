@@ -31,7 +31,7 @@ No destination is configured initially. Event switches default to on, compact st
 
 All retain Red administrator or **Manage Server** checks and honor the grouped command's permission/disabled state. The renamed root is `log`; `logplus` is now only the package name for installation and reload.
 
-Enable the 30 slash actions once as the bot owner:
+Enable the 41 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog logplus

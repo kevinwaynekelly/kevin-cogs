@@ -103,3 +103,13 @@ async def test_manual_style_does_not_delete_or_repost(bot, guild):
     await cog.stylize.callback(cog, ctx, style="robot", text="hello")
     cog._repost.assert_not_awaited()
     assert "GREETINGS" in ctx.send.await_args.kwargs["embed"].description
+
+
+async def test_channel_preview_does_not_leak_style_into_cached_manual_preferences(bot, guild):
+    cog = OwoPlus(bot)
+    channel = make_channel(guild)
+    ctx = make_context(guild, channel, make_member(guild))
+    await cog.owo_style_set.callback(cog, ctx, channel, "pirate", 0)
+    await cog.owoplus_preview.callback(cog, ctx, text="hello friend")
+    conf = await cog._settings(guild)
+    assert "style" not in conf["features"] and "poetry" not in conf

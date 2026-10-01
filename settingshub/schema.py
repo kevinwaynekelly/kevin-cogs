@@ -299,9 +299,9 @@ def validate_map(guild, path, value):
             server_id(guild, int(key), path)
             server_id(guild, item, path, text=True)
         elif path == "rewards.roles":
-            if int(key) > 1000000:
+            if type(item) is not int or not 1 <= item <= 100000:
                 fail(path)
-            server_id(guild, item, path, role=True, grant=True)
+            server_id(guild, int(key), path, role=True, grant=True)
         elif path == "features.routes":
             if key not in {
                 "message",

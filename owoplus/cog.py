@@ -606,7 +606,7 @@ class OwoPlus(FunCommands, redcommands.Cog):
 
     # ---------- pretty status ----------
     async def _status_embed(self, g: discord.Guild) -> discord.Embed:
-        cfg = await self.config.guild(g).all()
+        cfg = await self._settings(g)
         e = self._presentation.embed(
             "Status", "Message transformations and automatic haiku formatting."
         )
@@ -883,7 +883,7 @@ class OwoPlus(FunCommands, redcommands.Cog):
         Uses the server probability and does not post a webhook replacement or delete the
         original message.
         """
-        conf = await self.config.guild(ctx.guild).all()
+        conf = dict(await self._settings(ctx.guild))
         conf["features"] = channel_features(ctx.channel, conf["features"])
         n = conf["one_in"]
         forced = any(
@@ -920,7 +920,7 @@ class OwoPlus(FunCommands, redcommands.Cog):
     @owoplus.command(name="diag")
     async def owoplus_diag(self, ctx: redcommands.Context) -> None:
         """Check transformation settings and channel permissions."""
-        g = await self.config.guild(ctx.guild).all()
+        g = await self._settings(ctx.guild)
         perms = (
             ctx.channel.permissions_for(ctx.guild.me)
             if isinstance(ctx.channel, (discord.TextChannel, discord.Thread))

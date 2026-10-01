@@ -303,12 +303,14 @@ class SettingsHub(MaintenanceCommands, commands.Cog):
                     player = cog._get_player(ctx.guild)
                     if player:
                         music = await cog.config.guild(ctx.guild).music()
+                        continuity = await cog.config.guild(ctx.guild).continuity()
                         async with player.lock:
                             player.fair_queue, player.autoplay = (
                                 music["fair_queue"],
                                 music["autoplay"],
                             )
                             player._autoplay_generation += 1
+                            player.normalize = continuity["normalize"]
                             player._balance_queue()
                 elif name == "LogPlus":
                     await cog._history_query(ctx.guild, days=90)

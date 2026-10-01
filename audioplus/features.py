@@ -270,6 +270,7 @@ class AudioCommands:
             value=f"{'Paused' if player.paused else 'Playing' if track else 'Idle'} · {player.volume}% · Repeat {player.repeat}",
         )
         embed.add_field(name="Upcoming", value=str(len(player.queue)))
+        embed = self._presentation.apply_theme(embed, bot=self.bot, guild=player.guild)
         entry = self._panels.get(player.guild.id)
         use_embeds = channel.permissions_for(player.guild.me).embed_links
         requested = getattr(player.context, "embed_requested", None)
@@ -277,7 +278,8 @@ class AudioCommands:
             use_embeds = use_embeds and await requested()
         text = clip(
             f"**{embed.title}**\n{embed.description}\n"
-            + "\n".join(f"**{field.name}** · {field.value}" for field in embed.fields),
+            + "\n".join(f"**{field.name}** · {field.value}" for field in embed.fields)
+            + f"\n{embed.footer.text}",
             2000,
         )
         try:

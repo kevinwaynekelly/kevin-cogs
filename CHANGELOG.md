@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01: Integration and command discovery
+
+- Apply server themes to live music and community card edits, PNG rank cards, daily playback/error DMs and log delivery retries. Keep base retry cards unchanged and reserve Unicode footer space within Discord limits.
+- Add concrete command-browser examples and check disabled/permission-restricted shortcut sources. Include all six cogs and installed-source fingerprints in safe diagnostics. Keep large participation/poetry payloads out of routine policy caches and prevent preview styles leaking between channels.
+- Correct reward-role backup validation to role ID → level and refresh live audio normalization after restore. Validate all six cogs' slash payload names, nesting, option counts and 77 roots; document 313 available slash actions.
+- Pass all 583 regressions on Python 3.10 and 3.11, plus lint, formatting, syntax, metadata and whitespace checks. Discord transport/provider access is mocked; real local FFmpeg/native-library checks run, and live Scarlet deployment remains unverified.
+
 ## 2026-10-01: Custom styles, reversible transformations and haiku activities
 
 - Add bounded named style dictionaries/decorations and accept custom names in existing channel styles and previews, preserving protected code, links, mentions and emoji.

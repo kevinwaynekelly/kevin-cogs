@@ -1,6 +1,6 @@
 # Kevin Cogs
 
-Five custom cogs for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
+Five feature cogs and an optional shared settings hub for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
 
 Music, community tools, leveling, event logging, and message transformations. Each cog can be installed separately.
 
@@ -8,11 +8,12 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 
 | Cog | What it does | Commands | Guide |
 | --- | --- | --- | --- |
-| AudioPlus | Native music, search picks, fair queues/autoplay, saved music, DJ policies, and daily checks | `[p]play`, `/play`, `[p]audio` | [Setup and commands](audioplus/README.md) |
-| CommunityPlus | Roles, welcomes, solo voice controls, participation, polls, and events | `[p]community`, `[p]seen`, `/activity` | [Setup and commands](communityplus/README.md) |
-| LevelPlus | XP, rewards, seasons, earned badges, weekly challenges, and PNG rank cards | `[p]level`, `[p]rank`, `/leaderboard` | [Setup and commands](levelplus/README.md) |
-| LogPlus | Event logs, permission diffs, delivery recovery, and retained history/search/exports | `[p]log`, `[p]logchannel`, `/log event` | [Setup and commands](logplus/README.md) |
-| OwoPlus | Scoped Owo/pirate/robot styles, personal opt-outs, custom words, and haiku | `[p]owo`, `/owo preview` | [Setup and commands](owoplus/README.md) |
+| AudioPlus | Native playback, recovery, normalization, shared playlists, DJ policies and daily checks | `[p]play`, `/play`, `[p]audioset` | [Setup and commands](audioplus/README.md) |
+| CommunityPlus | Roles, welcomes, temporary rooms, onboarding, birthdays and recurring events | `[p]community`, `[p]voiceroom`, `/birthday set` | [Setup and commands](communityplus/README.md) |
+| LevelPlus | XP, custom achievements, streaks, monthly seasons, filtered boards and rank cards | `[p]level`, `[p]achievement`, `/streak` | [Setup and commands](levelplus/README.md) |
+| LogPlus | Event logs, retained history, burst alerts, daily digests and staff incidents | `[p]log`, `[p]logalerts`, `/incident list` | [Setup and commands](logplus/README.md) |
+| OwoPlus | Custom styles, author Undo, scoped transformations, approved haiku and contests | `[p]owo`, `[p]owoundo`, `/haikucontest list` | [Setup and commands](owoplus/README.md) |
+| SettingsHub | Shared themes, permission-aware command discovery, diagnostics and configuration snapshots | `[p]settings`, `/theme show`, `[p]snapshots` | [Setup and commands](settingshub/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
 
@@ -28,7 +29,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | LogPlus | `[p]log setup` or `/log setup` | Administrator routing, permission diffs, delivery recovery, and opt-in retained history with timeline/search/export. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The five cogs expose 232 slash actions across valid groups and direct commands. Optional SettingsHub adds four more. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
+The five feature cogs expose 297 slash actions; optional SettingsHub adds 16. The six cogs together register 77 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
@@ -43,7 +44,7 @@ Install optional [SettingsHub](settingshub/README.md) for `[p]settings` or `/set
 
 ## Discord presentation
 
-All five cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
+All six cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
 
 Red's native `[p]help` lists descriptions for every cog command. Use `[p]help community`, `[p]help level`, or `[p]help log` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
 
@@ -123,7 +124,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 193 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
+Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. These four cogs offer 245 slash actions; their guides list the deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 
@@ -157,11 +158,26 @@ The command rename intentionally replaces `com` with `community`, `logplus` with
 
 AudioPlus now has automatic player panels with checked buttons, `seek`, queue `remove`/`move`, private saved `playlist`/`favorite` collections, and `audioset` DJ/vote policies. Use `[p]audioset setup` for its guided settings panel. See the [new controls](audioplus/README.md#player-panels-queue-tools-and-saved-music) and run `slash sync` after reloading to upload their slash counterparts.
 
+## New server features
+
+| Cog | Added features | Starting commands |
+| --- | --- | --- |
+| AudioPlus | Opt-in queue/position recovery after restart, empty-room pause/departure, loudness normalization and DJ-approved shared playlists | `audioset recovery`, `recoverqueue`, `audioset emptypause`, `audioset normalize`, `serverplaylist` |
+| CommunityPlus | Join-to-create rooms with owner controls, rules acceptance, opt-in month/day birthdays and recurring events with capacity waitlists | `voiceroom`, `onboard`, `birthday`, `eventpolicy` |
+| LevelPlus | Administrator-defined achievement goals/rewards, bounded daily streak bonuses, role-filtered boards and automatic monthly season closure/winners | `achievement`, `streakset`, `streak`, `roleboard`, `monthlyseason` |
+| LogPlus | Join/delete/permission burst warnings, aggregate daily digests, staff incident notes/log attachments/resolution and private repeated-error notices | `logalerts`, `incident` |
+| OwoPlus | Named custom dictionaries/decorations, two-minute author Undo, approved haiku submissions and deadline/voting contests | `customstyle`, `stylize`, `owoundo`, `haikuhall`, `haikucontest` |
+| SettingsHub | Server colors/footer, safe diagnostics with installed-source fingerprints, permission-aware usage/examples and opt-in configuration snapshots/diffs/restore | `theme`, `settings diagnostics`, `commandbrowser`, `snapshots` |
+
+Use the prefix or matching slash action shown in each guide. Recovery needs an explicit `recoverqueue`; it does not automatically reconnect after restart. New automatic notices, birthday policies, streak bonuses, monthly seasons and snapshots require configuration. Owo Undo controls default on while automatic transformation itself remains disabled until enabled. Features have documented record/time limits and user-data hooks. Configuration snapshots cover selected source-cog settings; they preserve member and operational records rather than replacing them.
+
 ## Data
 
-Settings and persistent records use Red's Config system. CommunityPlus records member activity and sticky roles, LevelPlus retains XP and display names, and OwoPlus stores per-user probability overrides. AudioPlus preserves legacy Lavalink connection settings, including the old node password, for rollback. Its optional daily monitor stores the recipient ID, test server/channel/video, schedule, latest safe result, and pending alert. Native playback ignores legacy node settings; track metadata and queues are transient, and audio downloads and yt-dlp disk caching are disabled.
+Settings and persistent records use Red's Config system. CommunityPlus records activity, sticky roles, temporary-room ownership, opted-in birthday dates and rules acceptance. LevelPlus retains XP, display names, achievements/streaks and bounded season archives. OwoPlus stores personal preferences and explicitly submitted haiku/contest entries/votes for up to 90 days; author Undo text stays only in memory for two minutes. SettingsHub stores themes and up to ten selected configuration snapshots.
 
-LogPlus posts edited or deleted message text to Discord log channels. Optional local history also stores bounded event details, including message text, with 1 to 90 day retention. History starts disabled. OwoPlus reposts transformed messages through webhooks and attempts to delete the originals. Each cog's guide and `info.json` describe its stored data. All five cogs implement Red's user-data export/deletion hooks. Deletion removes their associated Config records; it does not delete messages already posted to Discord.
+AudioPlus preserves legacy Lavalink connection settings, including the old node password, for rollback. Native playback ignores them. The optional daily monitor stores recipient/test/schedule/result records. Personal/shared playlists retain public metadata and proposer/requester attribution. Opt-in queue recovery retains up to 100 public records and playback state for seven days; ordinary queues remain transient when recovery is off. Extracted stream URLs, downloaded audio and yt-dlp disk caches are not persisted.
+
+LogPlus posts edited/deleted text to configured Discord channels. Opt-in history retains bounded event details for 1 to 90 days; staff incident cases retain selected log excerpts/notes and attribution for up to 90 days. Daily digests store aggregate counts, and owner error policies store the configuring recipient. OwoPlus reposts transformed messages through webhooks and attempts to delete originals. Each guide and `info.json` describes its records and limits. All six cogs implement Red's user-data hooks. Deletion removes or anonymizes associated records; messages already posted to Discord remain managed there.
 
 ## Development and support
 

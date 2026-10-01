@@ -15,7 +15,7 @@ def display_number(value):
     return digits[0] + "." + digits[1:3] + "e" + str(len(digits) - 1)
 
 
-def render_card(name, level, xp, lower, upper, position, badges):
+def render_card(name, level, xp, lower, upper, position, badges, *, theme=None):
     from PIL import Image, ImageDraw, ImageFont
 
     image = Image.new("RGB", (900, 340), "#171923")
@@ -26,7 +26,11 @@ def render_card(name, level, xp, lower, upper, position, badges):
 
     title, body, small = font(34), font(21), font(16)
     draw.rounded_rectangle((16, 16, 884, 324), radius=22, fill="#232637")
-    info, success = f"#{COLORS['info']:06x}", f"#{COLORS['success']:06x}"
+    theme = theme or {}
+    info, success = (
+        f"#{theme.get('info', COLORS['info']):06x}",
+        f"#{theme.get('success', COLORS['success']):06x}",
+    )
     draw.rounded_rectangle((16, 16, 24, 324), radius=4, fill=info)
     draw.text((48, 47), "LEVEL", font=small, fill="#ABB2C8")
     level_text, level_size = display_number(level), 52
@@ -50,7 +54,10 @@ def render_card(name, level, xp, lower, upper, position, badges):
     )
     draw.text((164, 201), progress, font=body, fill="white")
     draw.text((164, 249), f"{badges} ACHIEVEMENTS EARNED", font=small, fill=success)
-    draw.text((48, 291), "Kevin's Cogs · Level", font=small, fill="#ABB2C8")
+    footer = (theme.get("footer", "Kevin's Cogs")[:80] or "Kevin's Cogs") + " · Level"
+    while draw.textbbox((0, 0), footer, font=small)[2] > 530:
+        footer = footer[:-2] + "…"
+    draw.text((48, 291), footer, font=small, fill="#ABB2C8")
     draw.text((610, 291), f"TOTAL XP  {display_number(xp)}", font=small, fill="#ABB2C8")
     output = io.BytesIO()
     image.save(output, format="PNG")

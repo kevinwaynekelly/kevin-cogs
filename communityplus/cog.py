@@ -1610,7 +1610,11 @@ class CommunityPlus(CommunityTools, CommunityFeatures, CommunitySocial, redcomma
             cached = self._settings_cache.get(guild.id)
             if cached is not None and now - cached[0] < 5:
                 return cached[1]
-            settings = await self.config.guild(guild).all()
+            group = self.config.guild(guild)
+            settings = {
+                key: await group.get_attr(key)()
+                for key in (*DEFAULTS_GUILD, "features", "community_tools")
+            }
             self._settings_cache[guild.id] = (now, settings)
             return settings
 

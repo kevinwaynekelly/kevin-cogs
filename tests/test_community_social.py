@@ -36,6 +36,17 @@ async def create_event(cog, ctx):
     return next(iter(await cog.config.guild(ctx.guild).social.events()))
 
 
+async def test_poll_refresh_keeps_server_theme(social):
+    cog, ctx = social
+    ctx.bot = cog.bot
+    cog.bot._kevin_cogs_themes = {ctx.guild.id: {"colors": {"info": 0x123456}, "footer": "Scarlet"}}
+    key = await create_poll(cog, ctx)
+    await cog._social_choice(ctx, "polls", key, 1)
+    await cog._social_refresh(ctx.guild, "polls", key)
+    card = ctx.channel.fetch_message.return_value.edit.call_args.kwargs["embed"]
+    assert card.color.value == 0x123456 and card.footer.text.startswith("Scarlet")
+
+
 async def test_one_vote_per_member_changes_without_duplicating_and_expiry_rejects(social):
     cog, ctx = social
     key = await create_poll(cog, ctx)

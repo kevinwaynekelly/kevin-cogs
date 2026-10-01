@@ -101,3 +101,19 @@ async def test_panel_tracks_changes_respects_embeds_and_closes(audio_runtime, em
         and not cog._panel_tasks
         and message.edit.await_args.kwargs == {"view": None}
     )
+
+
+async def test_live_panel_applies_current_server_theme_on_send_and_edit(audio_runtime):
+    cog, player, ctx = audio_runtime
+    message = SimpleNamespace(edit=AsyncMock())
+    ctx.channel.send.return_value = message
+    cog.bot._kevin_cogs_themes = {ctx.guild.id: {"colors": {"info": 0x123456}, "footer": "Scarlet"}}
+    await player.enqueue([track("one")], ctx)
+    await eventually(lambda: player.playing)
+    await cog._update_panel(player)
+    first = ctx.channel.send.call_args.kwargs["embed"]
+    assert first.color.value == 0x123456 and first.footer.text == "Scarlet"
+    cog.bot._kevin_cogs_themes[ctx.guild.id]["colors"]["info"] = 0x654321
+    await cog._update_panel(player)
+    changed = message.edit.call_args.kwargs["embed"]
+    assert changed.color.value == 0x654321 and changed.footer.text == "Scarlet"

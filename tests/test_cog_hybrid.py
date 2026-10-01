@@ -160,6 +160,7 @@ async def test_rankcard_runs_through_red_and_honors_original_show_disable(comman
     bot, loaded, member, invoke = command_runtime
     cog = bot.get_cog("LevelPlus")
     await cog._add_xp(member.guild, member, 1000)
+    cog.rankcard.reset_cooldown(await invoke("!help"))
     ctx = await invoke("!rankcard")
     assert not ctx.command_failed
     file = ctx.send.await_args.kwargs["file"]
@@ -169,6 +170,23 @@ async def test_rankcard_runs_through_red_and_honors_original_show_disable(comman
     ctx = await invoke("!rankcard")
     assert ctx.command_failed
     assert all("file" not in call.kwargs for call in ctx.send.await_args_list)
+
+
+async def test_rankcard_image_follows_server_palette(command_runtime):
+    import io
+
+    from PIL import Image
+
+    bot, loaded, member, invoke = command_runtime
+    bot._kevin_cogs_themes = {
+        member.guild.id: {"colors": {"info": 0x123456, "success": 0x654321}, "footer": "Scarlet"}
+    }
+    bot.get_cog("LevelPlus").rankcard.reset_cooldown(await invoke("!help"))
+    ctx = await invoke("!rankcard")
+    assert not ctx.command_failed, ctx.send.call_args
+    image = Image.open(io.BytesIO(ctx.send.call_args.kwargs["file"].fp.read()))
+    assert image.getpixel((20, 100)) == (0x12, 0x34, 0x56)
+    assert ctx.send.call_args.kwargs["embed"].footer.text.startswith("Scarlet")
 
 
 async def test_new_fun_commands_use_real_prefix_and_slash_pipeline(command_runtime, monkeypatch):

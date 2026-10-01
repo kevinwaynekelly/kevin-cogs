@@ -172,6 +172,7 @@ class CommunitySocial:
         try:
             message = await asyncio.wait_for(channel.fetch_message(record["message"]), 10)
             embed = social_embed(self, kind, key, record)
+            embed = self._presentation.apply_theme(embed, bot=self.bot, guild=guild)
             use_embeds = (
                 record.get("use_embeds", True) and channel.permissions_for(guild.me).embed_links
             )

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import discord
 import pytest
 from conftest import make_context, make_guild, make_member, make_message
+from discord.app_commands.commands import validate_name
 from redbot.core import commands
 from redbot.core.config import Value
 from test_audio_hybrid import red_command_runtime as audio_fixture
@@ -32,6 +33,25 @@ async def hub_runtime(command_runtime):
         yield bot, hub, member, invoke
     finally:
         await bot.remove_cog("SettingsHub")
+
+
+async def test_all_six_cogs_fit_slash_limits_and_validate_every_option(hub_runtime):
+    bot, hub, member, invoke = hub_runtime
+    roots = {**bot.tree._global_commands, **bot.tree._disabled_global_commands}
+    assert len(roots) <= 100
+
+    def check(payload, depth=0):
+        validate_name(payload["name"])
+        assert 1 <= len(payload["description"]) <= 100
+        options = payload.get("options", [])
+        assert len(options) <= 25
+        for option in options:
+            if option["type"] in (1, 2):
+                assert depth < 2
+            check(option, depth + 1)
+
+    for root in roots.values():
+        check(root.to_dict(bot.tree))
 
 
 async def test_backups_exclude_personal_data_and_restore_preserves_records(hub_runtime):
@@ -115,6 +135,52 @@ async def test_custom_styles_restore_without_poetry_or_undo_records(hub_runtime)
     }
     with pytest.raises(commands.BadArgument):
         await hub._validate_bundle(ctx, invalid)
+
+
+async def test_reward_role_backup_uses_role_id_to_level_mapping(hub_runtime):
+    bot, hub, member, invoke = hub_runtime
+    guild = member.guild
+    role = discord.Role(
+        guild=guild,
+        state=Mock(),
+        data={"id": "12345678901234567", "name": "Level reward", "permissions": "0", "position": 1},
+    )
+    guild.me.top_role = discord.Role(
+        guild=guild,
+        state=Mock(),
+        data={"id": "999", "name": "Scarlet", "permissions": "0", "position": 100},
+    )
+    guild.get_role.side_effect = lambda rid: role if rid == role.id else None
+    level = bot.get_cog("LevelPlus")
+    await level.config.guild(guild).rewards.roles.set({str(role.id): 5})
+    ctx = await invoke("!settings")
+    bundle = await hub._backup_bundle(ctx)
+    bundle["cogs"] = {"LevelPlus": bundle["cogs"]["LevelPlus"]}
+    selected = await hub._validate_bundle(ctx, bundle)
+    await level.config.guild(guild).rewards.roles.set({})
+    await hub._apply_bundle(ctx, bundle, selected)
+    assert await level.config.guild(guild).rewards.roles() == {str(role.id): 5}
+    bundle["cogs"]["LevelPlus"]["rewards"]["roles"][str(role.id)] = 100001
+    with pytest.raises(commands.BadArgument):
+        await hub._validate_bundle(ctx, bundle)
+
+
+async def test_restore_refreshes_live_audio_normalization_policy(hub_runtime):
+    import asyncio
+
+    bot, hub, member, invoke = hub_runtime
+    ctx = await invoke("!settings")
+    bundle = await hub._backup_bundle(ctx)
+    bundle["cogs"] = {"AudioPlus": bundle["cogs"]["AudioPlus"]}
+    bundle["cogs"]["AudioPlus"]["continuity"]["normalize"] = True
+    selected = await hub._validate_bundle(ctx, bundle)
+    cog = bot.get_cog("AudioPlus")
+    player = SimpleNamespace(
+        lock=asyncio.Lock(), normalize=False, _autoplay_generation=0, _balance_queue=Mock()
+    )
+    cog._get_player = lambda guild: player
+    await hub._apply_bundle(ctx, bundle, selected)
+    assert player.normalize
 
 
 @pytest.mark.parametrize(
@@ -321,7 +387,7 @@ async def test_restore_rejects_privileged_grant_roles_but_allows_safe_current_ro
     with pytest.raises(commands.BadArgument):
         await hub._validate_bundle(ctx, bundle)
     bundle["cogs"]["CommunityPlus"]["features"]["self_roles"] = [safe.id]
-    bundle["cogs"]["LevelPlus"]["rewards"]["roles"] = {"10": safe.id}
+    bundle["cogs"]["LevelPlus"]["rewards"]["roles"] = {str(safe.id): 10}
     assert len(await hub._validate_bundle(ctx, bundle)) == 5
 
 
