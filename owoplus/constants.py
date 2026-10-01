@@ -8,7 +8,8 @@ from typing import Dict
 __red_end_user_data_statement__ = (
     "This cog stores per-guild preferences for webhook-based message transformation "
     "(enable flag, 1-in-N owo probability, per-user overrides, owner bypass, and haiku toggle). "
-    "It does not store message contents."
+    "It also stores channel scopes, personal opt-out member IDs, custom word replacements, "
+    "syllable corrections, and intensity/cooldown preferences. It does not store message contents."
 )
 
 DEFAULTS_GUILD = {

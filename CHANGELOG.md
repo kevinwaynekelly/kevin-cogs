@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Owo feature expansion
+
+- Add all-channel/allowlist scopes, exclusions with thread inheritance, persistent personal opt-outs, member owoify/haiku commands, and requester-bound guided setup. Manual transformations leave source messages alone.
+- Add custom whole-word replacements, optional keyword triggers, fixed or automatic intensity, bounded per-member repost cooldowns, and server-local syllable corrections. Preserve code and original messages when replacement fails.
+- Merge additive feature defaults without changing existing settings; export/delete opt-outs and probability overrides. Validate scope precedence, concurrent failure reservations, cross-server dictionaries, pronunciation overrides, and original command compatibility.
+
 ## 2026-10-01: Level feature expansion
 
 - Add milestone reward roles with stacking/highest-only policies, hierarchy checks, current-level reconciliation, and synchronization independent of announcement settings.

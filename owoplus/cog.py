@@ -10,7 +10,7 @@ import re
 import time
 from collections import OrderedDict, defaultdict
 from functools import lru_cache
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, Union
 from weakref import WeakValueDictionary
 
 import discord
@@ -30,6 +30,7 @@ from .constants import (
     TARGETS,
 )
 from .events import guild_enabled
+from .features import FEATURE_DEFAULTS, channel_allowed, keyword_match, replace_keywords, valid_word
 from .haiku import (
     Haiku,
     HaikuMeter,
@@ -38,6 +39,7 @@ from .haiku import (
     _normalize_for_haiku,
     _reflow_text_as_haiku,
 )
+from .interactive import SetupView, close_views
 from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
@@ -65,12 +67,14 @@ class OwoPlus(redcommands.Cog):
         self.bot: Red = bot
         self._presentation = Presentation("OwoPlus", "owo")
         self.config: Config = Config.get_conf(self, identifier=0x5E0F1A, force_registration=True)
-        self.config.register_guild(**DEFAULTS_GUILD)
+        self.config.register_guild(**DEFAULTS_GUILD, features=FEATURE_DEFAULTS)
         self._wh_cache = OrderedDict()
         self._webhook_locks = WeakValueDictionary()
         self._settings_cache = {}
         self._settings_locks = defaultdict(asyncio.Lock)
         self._render_gate = asyncio.Semaphore(4)
+        self._transform_times = OrderedDict()
+        self._views = set()
 
     # ---------- transforms ----------
     @staticmethod
@@ -391,7 +395,7 @@ class OwoPlus(redcommands.Cog):
         )
 
     # ---------- render modes ----------
-    def _render_message_mode(self, raw: str, mode: str, *, use_haiku: bool) -> str:
+    def _render_message_mode(self, raw: str, mode: str, *, use_haiku: bool, features=None) -> str:
         """
         mode: 'full' | 'keys' | 'none'
         Haiku (when enabled) returns reflowed original (no OWO), fully italicized, and ends with 🌸.
@@ -399,7 +403,11 @@ class OwoPlus(redcommands.Cog):
         if use_haiku:
             plain = self._plain_text_if_no_code(raw)
             if plain:
-                cuts = self._detect_haiku_breaks(plain)
+                cuts = (
+                    _detect_haiku_breaks(plain, features["syllables"])
+                    if features
+                    else self._detect_haiku_breaks(plain)
+                )
                 if cuts:
                     haiku = self._reflow_text_as_haiku(plain, cuts)
                     haiku = self._format_haiku_lines(haiku)  # strip leading spaces
@@ -408,17 +416,29 @@ class OwoPlus(redcommands.Cog):
                     return self._wrap_all_italics(haiku)
 
         result: List[str] = []
-        intensity = self._auto_intensity(len(raw or ""))
+        intensity = (
+            features["intensity"]
+            if features and features["intensity"]
+            else self._auto_intensity(len(raw or ""))
+        )
         for seg, is_code in self._split_code_segments(raw):
             if is_code or mode == "none":
                 result.append(seg)
                 continue
             if mode == "keys":
-                mapped = self._apply_key_map(seg)
+                mapped = (
+                    replace_keywords(seg, features, self._case_like)
+                    if features
+                    else self._apply_key_map(seg)
+                )
                 mapped = self._ensure_targets_italic(mapped)
                 result.append(mapped)
             else:
-                seed = self._apply_key_map(seg)
+                seed = (
+                    replace_keywords(seg, features, self._case_like)
+                    if features
+                    else self._apply_key_map(seg)
+                )
                 owo = self._owoify_plain(seed, intensity=intensity)
                 marked = self._italicize_changes(seed, owo)
                 marked = self._ensure_targets_italic(marked)
@@ -483,6 +503,11 @@ class OwoPlus(redcommands.Cog):
         ):
             return False
         if conf.get("owner_bypass", True) and await self.bot.is_owner(message.author):
+            return False
+        features = conf.get("features", FEATURE_DEFAULTS)
+        if str(message.author.id) in features["optouts"] or not channel_allowed(
+            message.channel, features
+        ):
             return False
         return not self._starts_with_prefixes(
             message.content, await self.bot.get_valid_prefixes(message.guild)
@@ -686,13 +711,19 @@ class OwoPlus(redcommands.Cog):
         """Inspect syllable counts and possible haiku breaks."""
         norm = self._normalize_for_haiku(text)
         words = [w for w in re.findall(r"[A-Za-z']+", norm)]
-        syl = [self._count_syllables(w) for w in words]
+        features = await self.config.guild(ctx.guild).features()
+        syl = [
+            features["syllables"][w.lower()]
+            if w.lower() in features["syllables"]
+            else self._count_syllables(w)
+            for w in words
+        ]
         cum = []
         c = 0
         for s in syl:
             c += s
             cum.append(c)
-        cuts = self._detect_haiku_breaks(norm)
+        cuts = _detect_haiku_breaks(norm, features["syllables"])
         cut1, cut2 = cuts if cuts else (-1, -1)
         preview_tokens = []
         for i, w in enumerate(words, 1):
@@ -801,12 +832,16 @@ class OwoPlus(redcommands.Cog):
         """
         conf = await self.config.guild(ctx.guild).all()
         n = conf["one_in"]
-        forced = self._has_key_trigger(text)
+        forced = any(
+            keyword_match(seg, conf["features"])
+            for seg, code in self._split_code_segments(text)
+            if not code
+        )
         roll = 0 if n <= 1 else random.randrange(n)
         full = (n <= 1) or (roll == 0)
         mode = "full" if full else ("keys" if forced else "none")
-        out = self._render_message_mode(
-            text, mode=mode, use_haiku=bool(conf.get("haiku_enabled", True))
+        out = await self._render_async(
+            text, mode, bool(conf.get("haiku_enabled", True)), conf["features"]
         )
         e = _embed(
             "OwoPlus - Preview",
@@ -871,7 +906,7 @@ class OwoPlus(redcommands.Cog):
         conf = await self._settings(ctx.guild)
         mode = self._choose_mode(last.author, last.content, conf)
         content = await self._render_async(
-            last.content, mode, bool(conf.get("haiku_enabled", True))
+            last.content, mode, bool(conf.get("haiku_enabled", True)), conf["features"]
         )
         success = await self._repost(last, content)
         await self._reply(
@@ -898,14 +933,29 @@ class OwoPlus(redcommands.Cog):
         mode = self._choose_mode(message.author, original, conf)
         if mode == "none" and not conf.get("haiku_enabled", True):
             return
-        output = await self._render_async(original, mode, bool(conf.get("haiku_enabled", True)))
+        output = await self._render_async(
+            original, mode, bool(conf.get("haiku_enabled", True)), conf["features"]
+        )
         if output != original:
-            await self._repost(message, output)
+            if not await self._should_process(message) or await self.bot.cog_disabled_in_guild(
+                self, message.guild
+            ):
+                return
+            key = (message.guild.id, message.author.id)
+            now = time.monotonic()
+            if now - self._transform_times.get(key, -3601) < conf["features"]["cooldown"]:
+                return
+            self._transform_times[key] = now
+            while len(self._transform_times) > 50000:
+                self._transform_times.popitem(last=False)
+            if not await self._repost(message, output) and self._transform_times.get(key) == now:
+                self._transform_times.pop(key, None)
 
     async def cog_load(self):
         await asyncio.to_thread(HaikuMeter.initialize)
 
-    def cog_unload(self):
+    async def cog_unload(self):
+        await close_views(self)
         self._wh_cache.clear()
         self._settings_cache.clear()
         self._webhook_locks.clear()
@@ -935,12 +985,17 @@ class OwoPlus(redcommands.Cog):
         n = self._one_in(member, conf)
         if n == 1 or random.randrange(n) == 0:
             return "full"
-        return "keys" if self._has_key_trigger(text) else "none"
+        found = any(
+            keyword_match(seg, conf.get("features", FEATURE_DEFAULTS))
+            for seg, code in self._split_code_segments(text)
+            if not code
+        )
+        return "keys" if found else "none"
 
-    async def _render_async(self, raw, mode, use_haiku):
+    async def _render_async(self, raw, mode, use_haiku, features=None):
         async with self._render_gate:
             return await asyncio.to_thread(
-                self._render_message_mode, raw, mode, use_haiku=use_haiku
+                self._render_message_mode, raw, mode, use_haiku=use_haiku, features=features
             )
 
     async def _repost(self, message, content):
@@ -995,18 +1050,278 @@ class OwoPlus(redcommands.Cog):
                 file.close()
                 file.fp.close()
 
+    @redcommands.hybrid_command(name="owooptout")
+    @redcommands.guild_only()
+    async def owooptout(self, ctx, enabled: bool = True):
+        """Opt out of automatic transformations here."""
+        async with self.config.guild(ctx.guild).features() as data:
+            if enabled:
+                data["optouts"][str(ctx.author.id)] = True
+            else:
+                data["optouts"].pop(str(ctx.author.id), None)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._reply(
+            ctx,
+            "Automatic transformations are disabled for you here."
+            if enabled
+            else "You can receive automatic transformations again.",
+            tone="success",
+        )
+
+    @redcommands.hybrid_command(name="owoify")
+    @redcommands.guild_only()
+    async def owoify(self, ctx, *, text: str):
+        """Transform supplied text without deleting a message."""
+        if len(text) > 2000:
+            raise redcommands.BadArgument("Use at most 2000 characters.")
+        conf = await self._settings(ctx.guild)
+        output = await self._render_async(text, "full", False, conf["features"])
+        await self._reply(ctx, output, title="Owoify")
+
+    @redcommands.hybrid_command(name="haiku")
+    @redcommands.guild_only()
+    async def haiku_command(self, ctx, *, text: str):
+        """Format supplied text as a detected 5-7-5 haiku."""
+        if len(text) > 300:
+            raise redcommands.BadArgument("Use at most 300 characters for haiku detection.")
+        conf = await self._settings(ctx.guild)
+        output = await self._render_async(text, "none", True, conf["features"])
+        if output == text:
+            raise redcommands.BadArgument(
+                "No English 5-7-5 haiku was detected. Use owo poem diag to inspect syllables."
+            )
+        await self._reply(ctx, output, title="Haiku")
+
+    @owoplus.group(name="channels", autohelp=False)
+    async def owo_channels(self, ctx):
+        """Choose where automatic transformations run."""
+        data = await self.config.guild(ctx.guild).features()
+        await self._reply(
+            ctx,
+            f"Mode: {data['channel_mode']}\nAllowed: {', '.join(f'<#{cid}>' for cid in data['allowed']) or 'None'}\nExcluded: {', '.join(f'<#{cid}>' for cid in data['excluded']) or 'None'}",
+        )
+
+    @owo_channels.command(name="mode")
+    async def owo_channels_mode(self, ctx, mode: str):
+        """Use all accessible channels or only an allowlist."""
+        if mode not in {"all", "allowlist"}:
+            raise redcommands.BadArgument(
+                "Choose all or allowlist. An empty allowlist disables automatic processing everywhere."
+            )
+        await self.config.guild(ctx.guild).features.channel_mode.set(mode)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    async def _channel_option(self, ctx, channel, field):
+        async with self.config.guild(ctx.guild).features() as data:
+            if channel.id not in data[field]:
+                data[field].append(channel.id)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owo_channels.command(name="allow")
+    async def owo_channels_allow(
+        self, ctx, channel: Union[discord.TextChannel, discord.ForumChannel]
+    ):
+        """Add a text channel and its threads to the allowlist."""
+        await self._channel_option(ctx, channel, "allowed")
+
+    @owo_channels.command(name="exclude")
+    async def owo_channels_exclude(
+        self, ctx, channel: Union[discord.TextChannel, discord.ForumChannel]
+    ):
+        """Exclude a text channel and its threads."""
+        await self._channel_option(ctx, channel, "excluded")
+
+    @owo_channels.command(name="remove")
+    async def owo_channels_remove(
+        self, ctx, channel: Union[discord.TextChannel, discord.ForumChannel]
+    ):
+        """Remove a channel from both transformation lists."""
+        async with self.config.guild(ctx.guild).features() as data:
+            for field in ("allowed", "excluded"):
+                data[field] = [cid for cid in data[field] if cid != channel.id]
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owoplus.command(name="keywords")
+    async def owo_keywords(self, ctx, enabled: bool):
+        """Enable or disable keyword substitutions."""
+        await self.config.guild(ctx.guild).features.keywords.set(enabled)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owoplus.command(name="intensity")
+    async def owo_intensity(self, ctx, value: int):
+        """Set transformation intensity, 0 for automatic."""
+        if not 0 <= value <= 5:
+            raise redcommands.BadArgument(
+                "Choose 0 for automatic, or 1 through 5 for fixed intensity."
+            )
+        await self.config.guild(ctx.guild).features.intensity.set(value)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owoplus.command(name="cooldown")
+    async def owo_cooldown(self, ctx, seconds: int):
+        """Set an automatic transformation cooldown per member."""
+        if not 0 <= seconds <= 3600:
+            raise redcommands.BadArgument("Choose 0 through 3600 seconds; 0 disables the cooldown.")
+        await self.config.guild(ctx.guild).features.cooldown.set(seconds)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owoplus.group(name="words", autohelp=False)
+    async def owo_words(self, ctx):
+        """Manage custom whole-word replacements."""
+        await self.owo_words_list.callback(self, ctx)
+
+    @owo_words.command(name="list")
+    async def owo_words_list(self, ctx):
+        """List active keyword replacements."""
+        data = await self.config.guild(ctx.guild).features()
+        replacements = {**KEY_MAP, **data["words"]}
+        await self._reply(
+            ctx,
+            "\n".join(
+                f"**{word}** → {discord.utils.escape_markdown(replacement) if replacement is not None else 'Disabled'}"
+                for word, replacement in sorted(replacements.items())
+            ),
+        )
+
+    @owo_words.command(name="add")
+    async def owo_words_add(self, ctx, original: str, *, replacement: str):
+        """Set a case-preserving whole-word replacement."""
+        word = valid_word(original)
+        replacement = replacement.strip()
+        if not replacement or len(replacement) > 60 or any(ord(char) < 32 for char in replacement):
+            raise redcommands.BadArgument(
+                "Use a replacement of 1 to 60 characters without line breaks."
+            )
+        async with self.config.guild(ctx.guild).features() as data:
+            if word not in data["words"] and len(data["words"]) >= 100:
+                raise redcommands.BadArgument("You can configure 100 custom keyword entries.")
+            data["words"][word] = replacement
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owo_words.command(name="remove")
+    async def owo_words_remove(self, ctx, original: str):
+        """Disable a built-in keyword or remove a custom one."""
+        word = valid_word(original)
+        async with self.config.guild(ctx.guild).features() as data:
+            if word in KEY_MAP:
+                data["words"][word] = None
+            else:
+                data["words"].pop(word, None)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owo_words.command(name="reset")
+    async def owo_words_reset(self, ctx, confirm: str):
+        """Restore the original keyword map with confirmation."""
+        if confirm != "yes":
+            raise redcommands.BadArgument(
+                "Use owo words reset yes to erase custom words and restore the four original keywords."
+            )
+        await self.config.guild(ctx.guild).features.words.set({})
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owoplus.group(name="syllables", autohelp=False)
+    async def owo_syllables(self, ctx):
+        """Correct syllable counts for this server."""
+        await self.owo_syllables_list.callback(self, ctx)
+
+    @owo_syllables.command(name="list")
+    async def owo_syllables_list(self, ctx):
+        """Show server-specific syllable corrections."""
+        data = await self.config.guild(ctx.guild).features.syllables()
+        await self._reply(
+            ctx,
+            "\n".join(f"**{word}** · {count}" for word, count in sorted(data.items()))
+            or "No custom syllable counts.",
+        )
+
+    @owo_syllables.command(name="set")
+    async def owo_syllables_set(self, ctx, word: str, count: int):
+        """Set a word's syllable count for haiku detection."""
+        word = valid_word(word)
+        if not 1 <= count <= 10:
+            raise redcommands.BadArgument("Choose 1 through 10 syllables.")
+        async with self.config.guild(ctx.guild).features() as data:
+            if word not in data["syllables"] and len(data["syllables"]) >= 500:
+                raise redcommands.BadArgument("You can configure 500 syllable corrections.")
+            data["syllables"][word] = count
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owo_syllables.command(name="remove")
+    async def owo_syllables_remove(self, ctx, word: str):
+        """Remove a server-specific syllable correction."""
+        async with self.config.guild(ctx.guild).features() as data:
+            data["syllables"].pop(valid_word(word), None)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @owoplus.command(name="setup")
+    async def owo_setup(self, ctx):
+        """Choose transformation settings in a guided panel."""
+
+        async def update(context, key, value):
+            root, field = key.split(".")
+            if field in {"allow_channel", "exclude_channel"}:
+                async with self.config.guild(context.guild).features() as data:
+                    target = "allowed" if field == "allow_channel" else "excluded"
+                    if value not in data[target]:
+                        data[target].append(value)
+                    if field == "allow_channel":
+                        data["channel_mode"] = "allowlist"
+            elif root == "guild":
+                await self.config.guild(context.guild).set_raw(field, value=value)
+            else:
+                await self.config.guild(context.guild).set_raw(root, field, value=value)
+            self._settings_cache.pop(context.guild.id, None)
+
+        view = SetupView(
+            self,
+            ctx,
+            "owo setup",
+            [
+                ("guild.enabled", "automatic transformations", "toggle"),
+                ("guild.haiku_enabled", "haiku formatting", "toggle"),
+                ("features.keywords", "keyword replacements", "toggle"),
+                ("features.allow_channel", "Allow a channel and enable allowlist mode", "text"),
+                ("features.exclude_channel", "Exclude a channel", "text"),
+            ],
+            update,
+        )
+        view.message = await self._reply(
+            ctx,
+            "Choose automatic transformation options. Use owo channels for an allowlist/exclusions, owo words for custom replacements, and owo syllables for pronunciation corrections. Members can use owooptout at any time.",
+            title="Owo setup",
+            view=view,
+        )
+
     async def red_delete_data_for_user(self, *, requester, user_id):
         for guild_id in await self.config.all_guilds():
             group = self.config.guild_from_id(guild_id)
             async with group.user_probs() as probabilities:
                 probabilities.pop(str(user_id), None)
+            async with group.features() as data:
+                data["optouts"].pop(str(user_id), None)
             self._settings_cache.pop(guild_id, None)
+            self._transform_times.pop((guild_id, user_id), None)
 
     async def red_get_data_for_user(self, *, user_id):
         data = {
-            str(gid): conf["user_probs"][str(user_id)]
+            str(gid): {
+                "probability": conf["user_probs"].get(str(user_id)),
+                "optout": str(user_id) in conf["features"]["optouts"],
+            }
             for gid, conf in (await self.config.all_guilds()).items()
             if str(user_id) in conf.get("user_probs", {})
+            or str(user_id) in conf["features"]["optouts"]
         }
         return {"owoplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
 
@@ -1014,6 +1329,9 @@ class OwoPlus(redcommands.Cog):
     async def on_guild_remove(self, guild):
         self._settings_cache.pop(guild.id, None)
         self._settings_locks.pop(guild.id, None)
+        for key in tuple(self._transform_times):
+            if key[0] == guild.id:
+                self._transform_times.pop(key, None)
         for channel_id, webhook in list(self._wh_cache.items()):
             if webhook.guild_id == guild.id:
                 self._wh_cache.pop(channel_id, None)

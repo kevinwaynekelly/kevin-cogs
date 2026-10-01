@@ -238,14 +238,19 @@ class Haiku:
         return "\n".join(norm).strip()
 
     @staticmethod
-    def detect_breaks(text: str) -> Optional[Tuple[int, int]]:
+    def detect_breaks(text: str, overrides=None) -> Optional[Tuple[int, int]]:
         t = Haiku.normalize_text(text)
         words = Haiku.words(t)
         if not (3 <= len(words) <= 32):
             return None
         if len(t) > 300:
             return None
-        syl = [HaikuMeter.count(w) for w in words]
+        syl = [
+            overrides[_norm_word(w)]
+            if overrides and _norm_word(w) in overrides
+            else HaikuMeter.count(w)
+            for w in words
+        ]
 
         acc = i = 0
         while i < len(syl) and acc < 5:
@@ -311,8 +316,8 @@ def _count_syllables(word: str) -> int:
     return HaikuMeter.count(word)
 
 
-def _detect_haiku_breaks(text: str) -> Optional[Tuple[int, int]]:
-    return Haiku.detect_breaks(text)
+def _detect_haiku_breaks(text: str, overrides=None) -> Optional[Tuple[int, int]]:
+    return Haiku.detect_breaks(text, overrides)
 
 
 def _reflow_text_as_haiku(rendered: str, cuts: Tuple[int, int]) -> str:
