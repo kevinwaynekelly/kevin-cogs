@@ -700,6 +700,9 @@ class AudioPlus(AudioCommands, commands.Cog):
             "Controls": f"`{p}pause` · `{p}resume`\n`{p}volume [0..1000]` · `{p}shuffle`\n`{p}repeat [off|track|queue]`",
             "Voice": f"`{p}join` · `{p}disconnect`\n`{p}speak` · `{p}undeafen`\n`{p}fixvoice` · `{p}rejoin`",
             "Diagnostics": f"`{p}audiostatus` · `{p}playerstate`\n`{p}debugvc` · `{p}tone`\n`{p}audiocheck` (owner)",
+            "Queue editing": f"`{p}seek <seconds>` · `{p}remove <position>` · `{p}move <position> <destination>`",
+            "Saved music": f"`{p}playlist` · `{p}playlist save <name>` · `{p}playlist play <name>`\n`{p}favorite` · `{p}favorite add` · `{p}favorite play`",
+            "Music settings": f"`{p}audioset setup` · `{p}audioset panel <enabled>`\n`{p}audioset dj [@role]` · `{p}audioset voteskip <enabled>`",
             "Slash commands": "Use the same controls with `/play`, `/skip`, `/queue`, and more.",
         }
         for name, value in sections.items():

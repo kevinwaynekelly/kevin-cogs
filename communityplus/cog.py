@@ -220,7 +220,7 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
         e.add_field(
             name="Community features",
             value=settings(
-                f"Self-service roles = {len(g['features']['self_roles'])}\n"
+                f"Role offers = {len(g['features']['self_roles'])}\n"
                 f"Solo warning = {g['features']['warning_seconds']}s\n"
                 f"Weekly digest = {g['features']['summary']['enabled']}"
             ),
@@ -368,6 +368,18 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
         e.add_field(
             name="Slash commands",
             value="Use `/community status`, `/community welcome preview`, `/seen`, or `/activity`. Settings keep the same administrator permissions.",
+            inline=False,
+        )
+        e.add_field(
+            name="Roles and participation",
+            value=f"`{p}roles` · `{p}community rolemenu add @Role` · `{p}community rolemenu post #channel`\n"
+            f"`{p}voicehours [@Member]` · `{p}community summary show` · `{p}community summary enable <enabled>`",
+            inline=False,
+        )
+        e.add_field(
+            name="Preferences and setup",
+            value=f"`{p}community setup` · `{p}community tracking <enabled>`\n"
+            f"`{p}community vcsolo warning <seconds>` · `notify <enabled>` · `exemptchannel <channel>` · `exemptrole @Role`",
             inline=False,
         )
         await self._reply(ctx, embed=e)

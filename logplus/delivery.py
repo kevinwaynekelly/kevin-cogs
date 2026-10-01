@@ -129,7 +129,11 @@ class LogDelivery:
         )
 
     async def _delivery_route(self, guild, record):
-        if self._closing or await self.bot.cog_disabled_in_guild(self, guild):
+        if (
+            self._closing
+            or self.bot.get_guild(guild.id) is None
+            or await self.bot.cog_disabled_in_guild(self, guild)
+        ):
             return None
         conf = await self._settings(guild)
         switch = EVENT_SWITCH.get(record.event_type)
@@ -158,6 +162,8 @@ class LogDelivery:
             message = await asyncio.wait_for(
                 channel.send(**record.parts[0], allowed_mentions=discord.AllowedMentions.none()), 15
             )
+            if self._closing:
+                return False
             record.parts.popleft()
             self._own_log_ids[(guild.id, message.id)] = None
             while len(self._own_log_ids) > 10000:

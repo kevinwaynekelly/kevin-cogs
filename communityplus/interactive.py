@@ -50,6 +50,7 @@ class SetupView(discord.ui.View):
     def __init__(self, cog, ctx, path, fields, update):
         super().__init__(timeout=180)
         self.cog, self.owner_id, self.path = cog, ctx.author.id, path
+        self.guild_id = ctx.guild.id
         self.update = update
         self.message = None
         for key, label, kind in fields:
@@ -73,6 +74,8 @@ class SetupView(discord.ui.View):
 
             async def callback(interaction, item=item, key=key, kind=kind):
                 try:
+                    if interaction.guild is None or interaction.guild.id != self.guild_id:
+                        raise commands.CheckFailure("This setup panel belongs to another server.")
                     ctx = await component_context(
                         self.cog, interaction, self.path, owner_id=self.owner_id
                     )

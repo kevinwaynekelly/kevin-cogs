@@ -228,6 +228,28 @@ async def test_disable_between_pages_stops_the_rest_of_a_delivery(bot, guild):
     assert channel.send.await_count == 1 and len(record.parts) == 2
 
 
+async def test_inflight_failure_after_unload_does_not_start_a_retry(bot, guild):
+    cog = LogPlus(bot)
+    channel = make_channel(guild)
+    await cog.config.guild(guild).log_channel.set(channel.id)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def send(**kwargs):
+        started.set()
+        await release.wait()
+        raise forbidden()
+
+    channel.send.side_effect = send
+    task = asyncio.create_task(
+        cog._send(guild, await cog._E(guild, "Joined", etype="member_joined"))
+    )
+    await started.wait()
+    await cog.cog_unload()
+    release.set()
+    await task
+    assert not cog._retry_tasks and not cog._retry_queues and not cog._delivery_status
+
+
 async def test_raw_edits_and_deletes_cover_uncached_only_and_skip_log_destinations(bot, guild):
     cog = LogPlus(bot)
     channel = make_channel(guild)

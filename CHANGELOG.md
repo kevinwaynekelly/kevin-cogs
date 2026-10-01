@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Feature integration and final validation
+
+- Unify new control labels and command overviews, add guided setup to every cog, bind panels to their requester/server, and keep presentation/interaction/permission helpers identical for independent installs. Refresh the actual-payload visual preview for native audio.
+- Tighten self-service/reward role policies against message/thread/event/voice moderation, mass mentions, and private audit/insight permissions. Share section locks between scalar controls and compound policy/collection updates.
+- Validate all 202 slash actions beside Red Core, root/options/depth/name limits, member versus administrator prefix/slash permissions, original 209-command compatibility, queue shutdown races, and data hooks. Run 399 regression checks on Python 3.10 and 3.11, plus lint, formatting, syntax, metadata, whitespace, and rendered preview checks. Update the repository overview, individual guides, development instructions, and Downloader metadata.
+
 ## 2026-10-01: Log feature expansion
 
 - Add channel overwrite Allow/Deny/Inherit diffs, role permission/display changes, visible server-setting changes, and raw uncached message edit/delete coverage without duplicating cached handlers or inventing missing text/authors.

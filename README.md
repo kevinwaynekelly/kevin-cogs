@@ -8,13 +8,27 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 
 | Cog | What it does | Commands | Guide |
 | --- | --- | --- | --- |
-| AudioPlus | Native Discord music playback, YouTube/SoundCloud search, queues, and voice diagnostics | `[p]play`, `/play`, `[p]audio` | [Setup and commands](audioplus/README.md) |
-| CommunityPlus | Autoroles, sticky roles, welcome/goodbye messages, activity tracking, and solo voice cleanup | `[p]community`, `[p]seen`, `/activity` | [Setup and commands](communityplus/README.md) |
-| LevelPlus | Message, reaction, and voice XP with configurable level curves and import/export tools | `[p]level`, `[p]rank`, `/leaderboard` | [Setup and commands](levelplus/README.md) |
-| LogPlus | Server event logs with a default destination and per-channel routing | `[p]log`, `[p]logchannel`, `/log event` | [Setup and commands](logplus/README.md) |
-| OwoPlus | Webhook message transformations and automatic haiku formatting | `[p]owo`, `/owo preview` | [Setup and commands](owoplus/README.md) |
+| AudioPlus | Native music playback, player controls, saved playlists/favorites, DJ policies, and daily checks | `[p]play`, `/play`, `[p]audio` | [Setup and commands](audioplus/README.md) |
+| CommunityPlus | Self-service/automatic roles, welcomes, solo voice controls, voice time, and weekly summaries | `[p]community`, `[p]seen`, `/activity` | [Setup and commands](communityplus/README.md) |
+| LevelPlus | XP, reward roles, calendar/season rankings, earned-XP boosts, and farming controls | `[p]level`, `[p]rank`, `/leaderboard` | [Setup and commands](levelplus/README.md) |
+| LogPlus | Event logs, permission diffs, category routing, uncached messages, and delivery recovery | `[p]log`, `[p]logchannel`, `/log event` | [Setup and commands](logplus/README.md) |
+| OwoPlus | Scoped transformations, personal opt-outs, custom words, and automatic/manual haiku | `[p]owo`, `/owo preview` | [Setup and commands](owoplus/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
+
+## Guided setup and member tools
+
+Each setup panel offers current-server channel/role pickers or toggles, expires after three minutes, and repeats the original requester and administrator checks on every click. The guides describe feature defaults, limits, and saved data.
+
+| Cog | Administrator setup | Member features |
+| --- | --- | --- |
+| AudioPlus | `[p]audioset setup` or `/audioset setup` | Playback buttons, seek/queue editing, private saved playlists/favorites, and optional listener vote skipping. |
+| CommunityPlus | `[p]community setup` or `/community setup` | `[p]roles` and posted safe self-service role pickers. Voice reports and weekly summaries retain administrator checks. |
+| LevelPlus | `[p]level setup` or `/level setup` | Rank/lifetime boards, `[p]periodboard`, and season history. Administrators configure rewards, boosts, and farming controls. |
+| LogPlus | `[p]log setup` or `/log setup` | Administrator event routing, exemptions, permission diffs, raw-event coverage, and delivery status/retries. |
+| OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
+
+The five cogs expose 202 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
 
 ## Discord presentation
 
@@ -94,7 +108,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community and logging shortcuts retain administrator checks. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 166 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
+Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 166 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 

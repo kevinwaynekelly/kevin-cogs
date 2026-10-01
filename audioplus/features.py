@@ -11,7 +11,7 @@ import discord
 from redbot.core import commands
 
 from .interactive import SetupView, component_context, component_error
-from .presentation import clip
+from .presentation import clip, settings
 from .resolver import MAX_TRACKS, MediaError, Track, http_url
 
 DEFAULTS_GUILD = {
@@ -369,6 +369,11 @@ class AudioCommands:
             player.end_queue_request()
         await self._reply_queued(ctx, tracks)
 
+    async def _set_music_setting(self, guild, key, value):
+        group = self.config.guild(guild).music
+        async with group.get_lock():
+            await group.get_attr(key).set(value)
+
     @commands.hybrid_group(name="audioset", invoke_without_command=True, fallback="status")
     @commands.guild_only()
     @commands.admin_or_permissions(manage_guild=True)
@@ -377,13 +382,18 @@ class AudioCommands:
         conf = await self.config.guild(ctx.guild).music()
         await self._reply(
             ctx,
-            f"Player panel: {conf['panel']}\nDJ role: {conf['dj_role'] or 'Open controls'}\nVote skip: {conf['vote_skip']}\nUse audioset setup for the guided panel.",
+            settings(
+                f"Player panel = {conf['panel']}\n"
+                f"DJ role = {'<@&' + str(conf['dj_role']) + '>' if conf['dj_role'] else 'Open controls'}\n"
+                f"Vote skipping = {conf['vote_skip']}"
+            )
+            + f"\nUse `{ctx.clean_prefix}audioset setup` for guided settings.",
         )
 
     @audioset.command(name="panel")
     async def audioset_panel(self, ctx, enabled: bool):
         """Enable or disable automatic player panels."""
-        await self.config.guild(ctx.guild).music.panel.set(enabled)
+        await self._set_music_setting(ctx.guild, "panel", enabled)
         if not enabled:
             await self._close_panel(ctx.guild.id)
         await self._presentation.confirm(ctx)
@@ -391,13 +401,13 @@ class AudioCommands:
     @audioset.command(name="dj")
     async def audioset_dj(self, ctx, role: Optional[discord.Role] = None):
         """Set a DJ role, or clear it for open controls."""
-        await self.config.guild(ctx.guild).music.dj_role.set(role.id if role else None)
+        await self._set_music_setting(ctx.guild, "dj_role", role.id if role else None)
         await self._presentation.confirm(ctx)
 
     @audioset.command(name="voteskip")
     async def audioset_voteskip(self, ctx, enabled: bool):
         """Require a listener vote for non-DJ skips."""
-        await self.config.guild(ctx.guild).music.vote_skip.set(enabled)
+        await self._set_music_setting(ctx.guild, "vote_skip", enabled)
         self._skip_votes.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -406,7 +416,7 @@ class AudioCommands:
         """Choose music settings in a guided panel."""
 
         async def update(context, key, value):
-            await self.config.guild(context.guild).set_raw("music", key, value=value)
+            await self._set_music_setting(context.guild, key, value)
             if key == "panel" and not value:
                 await self._close_panel(context.guild.id)
             self._skip_votes.pop(context.guild.id, None)

@@ -24,6 +24,12 @@ This preview uses actual command and event payloads with sample data. It illustr
 
 Settings confirmations are small success cards rather than checkmark reactions. AudioPlus has a sectioned command overview and a now-playing card. LevelPlus member cards show an avatar, total XP, level, and progress to the next level. OwoPlus previews separate transformation metadata from the output.
 
+## Interactive controls
+
+Audio now-playing panels update progress and offer Pause/Resume, Skip, Queue, and Stop buttons. Their clicks repeat current command/DJ/listener checks. Persistent community role menus check the current safe-role list and affect only selected configured roles. Personal role pickers and guided setup panels belong to the requester and server, expire after three minutes, and keep current Red permission and disabled-command rules.
+
+Every cog offers guided setup using the same role/channel pickers and toggle controls. New command overviews include saved music, role menus, earned-XP controls, scopes, and delivery recovery. Output retains the common colors, headings, working mentions, pagination, and text fallback. Control expiration removes the active controls when Discord allows editing the message.
+
 ## Delivery and compatibility
 
 Long descriptions and fields are paginated within Discord's individual and combined embed limits, counting UTF-16 units. Lists and transformed previews retain their complete text. Export attachments appear on the first delivered part only.
@@ -34,7 +40,7 @@ Custom welcome and goodbye templates keep their text and formatting inside the t
 
 ## Maintaining the theme
 
-Each cog includes `presentation.py` so Red Downloader can install it independently. Edit the canonical copy in `audioplus`, then copy it to the other four cogs; the consistency test rejects drift. The helper owns colors, heading/footer styling, pagination, fallback text, confirmations, nested help, and input-error formatting. Individual cogs own their screen content and event semantics.
+Each cog includes identical `presentation.py`, `interactive.py`, and `command_support.py` helpers so Red Downloader can install it independently. Edit the canonical copy in `audioplus`, then copy it to the other four cogs; the consistency test rejects drift. The helper owns colors, heading/footer styling, pagination, fallback text, confirmations, nested help, and input-error formatting. Individual cogs own their screen content and event semantics.
 
 Regenerate the preview with the development dependencies installed:
 

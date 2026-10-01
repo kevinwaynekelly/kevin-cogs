@@ -166,11 +166,15 @@ class LogPlus(LogDelivery, redcommands.Cog):
         )
 
     async def _send(self, guild, embed, source_channel_id=None, category=None):
+        if self._closing:
+            return
         record = self._pending_log(embed, source_channel_id, category)
         try:
             if not await self._deliver_log(guild, record):
                 self._delivery_status[guild.id]["dropped"] += 1
         except (discord.HTTPException, asyncio.TimeoutError) as error:
+            if self._closing:
+                return
             self._delivery_failed(guild.id, error)
             if (await self._settings(guild))["features"]["retry"]:
                 self._enqueue_log(guild, record)
@@ -341,6 +345,13 @@ class LogPlus(LogDelivery, redcommands.Cog):
         e.add_field(
             name="Notes",
             value="Routing checks the source channel, its thread parent, the event category, then the default channel.",
+            inline=False,
+        )
+        e.add_field(
+            name="Routing and recovery",
+            value=f"`{p}log route category <category> [#channel]` · `{p}log route categories`\n"
+            f"`{p}log ignore add <channel> [scope]` · `remove <channel> [scope]` · `list`\n"
+            f"`{p}log delivery [retry]` · `{p}log setup`",
             inline=False,
         )
         await self._reply(ctx, embed=e)

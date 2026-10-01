@@ -52,20 +52,26 @@ def validate_zone(name):
 def safe_role(guild, role):
     dangerous = (
         "administrator",
-        "manage_roles",
-        "manage_guild",
-        "manage_channels",
         "ban_members",
         "kick_members",
         "moderate_members",
-        "manage_webhooks",
+        "mute_members",
+        "deafen_members",
+        "move_members",
+        "mention_everyone",
+        "view_audit_log",
+        "view_guild_insights",
+        "view_creator_monetization_analytics",
     )
     if (
         guild.me is None
         or role.is_default()
         or role.managed
         or role >= guild.me.top_role
-        or any(getattr(role.permissions, key) for key in dangerous)
+        or any(
+            value and (key.startswith("manage_") or key in dangerous)
+            for key, value in role.permissions
+        )
     ):
         raise commands.BadArgument(
             "Choose an unmanaged role below the bot without management or moderation permissions."

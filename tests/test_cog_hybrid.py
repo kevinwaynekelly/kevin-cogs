@@ -97,6 +97,28 @@ async def test_all_cogs_register_with_core_and_serialize_slash_payloads(command_
             assert "plus" not in command.name
             assert all("plus" not in alias for alias in command.aliases)
     assert set(SHORTCUTS) <= set(bot.tree._disabled_global_commands)
+    all_roots = {**bot.tree._global_commands, **bot.tree._disabled_global_commands}
+    assert len(all_roots) <= 100
+    counts = {}
+    for app in all_roots.values():
+        if isinstance(app, discord.app_commands.Group):
+            for leaf in app.walk_commands():
+                if isinstance(leaf, discord.app_commands.Command) and leaf.binding:
+                    cog_name = leaf.binding.qualified_name
+                    counts[cog_name] = counts.get(cog_name, 0) + 1
+        elif app.binding:
+            cog_name = app.binding.qualified_name
+            counts[cog_name] = counts.get(cog_name, 0) + 1
+    assert {
+        key: counts.get(key, 0)
+        for key in (
+            "AudioPlus",
+            "CommunityPlus",
+            "LevelPlus",
+            "LogPlus",
+            "OwoPlus",
+        )
+    } == {"AudioPlus": 36, "CommunityPlus": 51, "LevelPlus": 59, "LogPlus": 23, "OwoPlus": 33}
 
     def check_options(payload, depth=0):
         # Discord.py does not validate unrenamed callback parameter names at registration.
@@ -223,6 +245,54 @@ async def test_direct_rank_and_leaderboard_parse_for_regular_members(command_run
         assert ctx.command.cog is level
     output = (await invoke("!rank")).send.await_args.kwargs["embed"]
     assert next(field.value for field in output.fields if field.name == "Total XP") == "42"
+
+
+@pytest.mark.parametrize("slash", [False, True])
+async def test_feature_member_commands_and_admin_settings_keep_permissions(
+    command_runtime, monkeypatch, slash
+):
+    bot, loaded, member, invoke = command_runtime
+    if slash:
+        ctx = await invoke_slash(bot, invoke, monkeypatch, "owooptout", enabled=True)
+    else:
+        ctx = await invoke("!owooptout true")
+    assert not ctx.command_failed
+    owo = bot.get_cog("OwoPlus")
+    assert (await owo.config.guild(member.guild).features.optouts())[str(member.id)]
+    if slash:
+        ctx = await invoke_slash(bot, invoke, monkeypatch, "roles")
+    else:
+        ctx = await invoke("!roles")
+    assert not ctx.command_failed
+    cases = [
+        ("community tracking", {"enabled": False}, "!community tracking false"),
+        ("level guard minwords", {"count": 2}, "!level guard minwords 2"),
+        ("log delivery", {"retry": False}, "!log delivery false"),
+        ("owo intensity", {"value": 2}, "!owo intensity 2"),
+    ]
+    for path, options, text in cases:
+        ctx = (
+            await invoke_slash(bot, invoke, monkeypatch, path, **options)
+            if slash
+            else await invoke(text)
+        )
+        assert ctx.command_failed, path
+    assert await bot.get_cog("CommunityPlus").config.guild(member.guild).seen.enabled()
+    assert await bot.get_cog("LevelPlus").config.guild(member.guild).xp_features.min_words() == 0
+    assert await bot.get_cog("LogPlus").config.guild(member.guild).features.retry()
+    assert await owo.config.guild(member.guild).features.intensity() == 0
+    bot.owner_ids.add(member.id)
+    for path, options, text in cases:
+        ctx = (
+            await invoke_slash(bot, invoke, monkeypatch, path, **options)
+            if slash
+            else await invoke(text)
+        )
+        assert not ctx.command_failed, path
+    assert not await bot.get_cog("CommunityPlus").config.guild(member.guild).seen.enabled()
+    assert await bot.get_cog("LevelPlus").config.guild(member.guild).xp_features.min_words() == 2
+    assert not await bot.get_cog("LogPlus").config.guild(member.guild).features.retry()
+    assert await owo.config.guild(member.guild).features.intensity() == 2
 
 
 @pytest.mark.parametrize("permission", ["none", "manage_guild", "owner"])

@@ -13,11 +13,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import discord
-import wavelink
 from redbot.core import Config
 from redbot.core._drivers.json import JsonDriver
 
 from audioplus import AudioPlus
+from audioplus.player import GuildPlayer
+from audioplus.resolver import Track
 from communityplus import CommunityPlus
 from levelplus import LevelPlus
 from logplus import LogPlus
@@ -62,12 +63,18 @@ async def samples(directory):
 
     with patch.object(Config, "get_conf", staticmethod(get_conf)):
         audio = AudioPlus(bot)
-        node = object()
-        audio._node = node
-        player = Mock(spec=wavelink.Player)
-        player.node, player.volume, player.paused, player.position = node, 70, False, 98000
-        player.current = SimpleNamespace(title="Midnight City", author="M83", length=242000)
-        guild.voice_client = player
+        voice = Mock(spec=discord.VoiceClient)
+        voice.guild = guild
+        voice.is_paused.return_value = False
+        voice.is_playing.return_value = True
+        player = GuildPlayer(voice, audio._resolver, AsyncMock())
+        player.volume = 70
+        player.source = SimpleNamespace(position=98000)
+        player.current = Track(
+            "https://example.invalid/track", "Midnight City", "M83", 242000, "youtube"
+        )
+        guild.voice_client = voice
+        audio._players[guild.id] = player
         await capture(AudioPlus.audio_nowplaying.callback(audio, ctx))
 
         level = LevelPlus(bot)
@@ -103,7 +110,7 @@ async def samples(directory):
 
 
 def plain(text):
-    return re.sub(r"[*`\\]", "", text or "")
+    return re.sub(r"[*`\\]", "", re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text or ""))
 
 
 def render(cards):

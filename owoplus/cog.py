@@ -603,8 +603,22 @@ class OwoPlus(redcommands.Cog):
         )
         e.add_field(
             name="Member overrides",
-            value=f"{len(cfg['user_probs']):,} custom probabilities",
+            value=f"{len(cfg['user_probs']):,} custom probabilities\n{len(cfg['features']['optouts']):,} personal opt-outs",
             inline=True,
+        )
+        features = cfg["features"]
+        e.add_field(
+            name="Channel scope",
+            value=f"**Mode** · {features['channel_mode']}\n"
+            f"**Allowed channels** · {len(features['allowed'])}\n**Excluded channels** · {len(features['excluded'])}",
+            inline=True,
+        )
+        e.add_field(
+            name="Transform controls",
+            value=f"**Keyword triggers** · {'Enabled' if features['keywords'] else 'Disabled'}\n"
+            f"**Intensity** · {features['intensity'] or 'Automatic'}\n**Repost cooldown** · {features['cooldown']}s\n"
+            f"**Custom words / syllable corrections** · {len(features['words'])} / {len(features['syllables'])}",
+            inline=False,
         )
         e.add_field(name="Key substitutions", value="meow · bwo · duwde · bwud", inline=True)
         return e
@@ -661,6 +675,18 @@ class OwoPlus(redcommands.Cog):
         e.add_field(
             name="Behavior",
             value="Haiku detected ⇒ three italic lines with a blossom; otherwise RNG full vs keys-only.",
+            inline=False,
+        )
+        e.add_field(
+            name="Member commands",
+            value=f"`{p}owooptout [enabled]` · `{p}owoify <text>` · `{p}haiku <text>`",
+            inline=False,
+        )
+        e.add_field(
+            name="Scopes and custom words",
+            value=f"`{p}owo setup` · `{p}owo channels mode <all|allowlist>`\n"
+            f"`{p}owo channels allow|exclude|remove <channel>` · `{p}owo intensity <0..5>`\n"
+            f"`{p}owo words add <word> <replacement>` · `{p}owo syllables set <word> <count>` · `{p}owo cooldown <seconds>`",
             inline=False,
         )
         await self._reply(ctx, embed=e)
@@ -1050,6 +1076,12 @@ class OwoPlus(redcommands.Cog):
                 file.close()
                 file.fp.close()
 
+    async def _set_feature_setting(self, guild, key, value):
+        group = self.config.guild(guild).features
+        async with group.get_lock():
+            await group.get_attr(key).set(value)
+        self._settings_cache.pop(guild.id, None)
+
     @redcommands.hybrid_command(name="owooptout")
     @redcommands.guild_only()
     async def owooptout(self, ctx, enabled: bool = True):
@@ -1108,7 +1140,7 @@ class OwoPlus(redcommands.Cog):
             raise redcommands.BadArgument(
                 "Choose all or allowlist. An empty allowlist disables automatic processing everywhere."
             )
-        await self.config.guild(ctx.guild).features.channel_mode.set(mode)
+        await self._set_feature_setting(ctx.guild, "channel_mode", mode)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1147,7 +1179,7 @@ class OwoPlus(redcommands.Cog):
     @owoplus.command(name="keywords")
     async def owo_keywords(self, ctx, enabled: bool):
         """Enable or disable keyword substitutions."""
-        await self.config.guild(ctx.guild).features.keywords.set(enabled)
+        await self._set_feature_setting(ctx.guild, "keywords", enabled)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1158,7 +1190,7 @@ class OwoPlus(redcommands.Cog):
             raise redcommands.BadArgument(
                 "Choose 0 for automatic, or 1 through 5 for fixed intensity."
             )
-        await self.config.guild(ctx.guild).features.intensity.set(value)
+        await self._set_feature_setting(ctx.guild, "intensity", value)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1167,7 +1199,7 @@ class OwoPlus(redcommands.Cog):
         """Set an automatic transformation cooldown per member."""
         if not 0 <= seconds <= 3600:
             raise redcommands.BadArgument("Choose 0 through 3600 seconds; 0 disables the cooldown.")
-        await self.config.guild(ctx.guild).features.cooldown.set(seconds)
+        await self._set_feature_setting(ctx.guild, "cooldown", seconds)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1224,7 +1256,7 @@ class OwoPlus(redcommands.Cog):
             raise redcommands.BadArgument(
                 "Use owo words reset yes to erase custom words and restore the four original keywords."
             )
-        await self.config.guild(ctx.guild).features.words.set({})
+        await self._set_feature_setting(ctx.guild, "words", {})
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1280,7 +1312,7 @@ class OwoPlus(redcommands.Cog):
             elif root == "guild":
                 await self.config.guild(context.guild).set_raw(field, value=value)
             else:
-                await self.config.guild(context.guild).set_raw(root, field, value=value)
+                await self._set_feature_setting(context.guild, field, value)
             self._settings_cache.pop(context.guild.id, None)
 
         view = SetupView(

@@ -546,6 +546,19 @@ class LevelPlus(redcommands.Cog):
             value=f"• `{p}level lookup <name|@|id>`\n• `{p}level name set @user <alias>` • `name setid <id> <alias>` • `name get <id>`",
             inline=False,
         )
+        e.add_field(
+            name="Rewards and seasons",
+            value=f"`{p}level rewards add @Role <level>` · `stack <enabled>` · `sync [@Member]`\n"
+            f"`{p}periodboard [week|month|season]` · `{p}level season start <name>` · `{p}level season history`",
+            inline=False,
+        )
+        e.add_field(
+            name="Earned XP controls",
+            value=f"`{p}level boost [factor] [minutes] [@Role] [#channel]`\n"
+            f"`{p}level guard repeat <seconds>` · `reactions <enabled>` · `dailycap <XP>` · `minwords <count>`\n"
+            f"`{p}level setup`",
+            inline=False,
+        )
         await self._reply(ctx, embed=e)
 
     @level.command()
@@ -1530,6 +1543,12 @@ class LevelPlus(redcommands.Cog):
             return False
         return True
 
+    async def _set_feature_setting(self, guild, section, key, value):
+        group = self.config.guild(guild).get_attr(section)
+        async with group.get_lock():
+            await group.get_attr(key).set(value)
+        self._settings_cache.pop(guild.id, None)
+
     @level.group(name="rewards", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
     async def rewards(self, ctx):
@@ -1571,7 +1590,7 @@ class LevelPlus(redcommands.Cog):
     @rewards.command(name="stack")
     async def rewards_stack(self, ctx, enabled: bool):
         """Keep all qualified rewards or only the highest."""
-        await self.config.guild(ctx.guild).rewards.stack.set(enabled)
+        await self._set_feature_setting(ctx.guild, "rewards", "stack", enabled)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1654,7 +1673,7 @@ class LevelPlus(redcommands.Cog):
     @redcommands.admin_or_permissions(manage_guild=True)
     async def season_enable(self, ctx, enabled: bool):
         """Enable or pause calendar and seasonal XP tracking."""
-        await self.config.guild(ctx.guild).xp_features.periods.set(enabled)
+        await self._set_feature_setting(ctx.guild, "xp_features", "periods", enabled)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1662,7 +1681,7 @@ class LevelPlus(redcommands.Cog):
     @redcommands.admin_or_permissions(manage_guild=True)
     async def season_timezone(self, ctx, zone: str):
         """Choose an IANA timezone for calendar boundaries."""
-        await self.config.guild(ctx.guild).xp_features.timezone.set(valid_timezone(zone))
+        await self._set_feature_setting(ctx.guild, "xp_features", "timezone", valid_timezone(zone))
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1726,14 +1745,14 @@ class LevelPlus(redcommands.Cog):
         """Reject repeated messages within a time window."""
         if not 0 <= seconds <= 86400:
             raise redcommands.BadArgument("Choose 0 through 86400 seconds; 0 disables detection.")
-        await self.config.guild(ctx.guild).xp_features.repeat_seconds.set(seconds)
+        await self._set_feature_setting(ctx.guild, "xp_features", "repeat_seconds", seconds)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
     @guard.command(name="reactions")
     async def guard_reactions(self, ctx, enabled: bool):
         """Limit reactions per message for 24 hours."""
-        await self.config.guild(ctx.guild).xp_features.reaction_once.set(enabled)
+        await self._set_feature_setting(ctx.guild, "xp_features", "reaction_once", enabled)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1742,7 +1761,7 @@ class LevelPlus(redcommands.Cog):
         """Cap earned XP per member per local day."""
         if not 0 <= xp <= 1000000000:
             raise redcommands.BadArgument("Choose 0 through 1000000000 XP; 0 disables the cap.")
-        await self.config.guild(ctx.guild).xp_features.daily_cap.set(xp)
+        await self._set_feature_setting(ctx.guild, "xp_features", "daily_cap", xp)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1751,7 +1770,7 @@ class LevelPlus(redcommands.Cog):
         """Require a minimum word count for message XP."""
         if not 0 <= count <= 100:
             raise redcommands.BadArgument("Choose 0 through 100 words.")
-        await self.config.guild(ctx.guild).xp_features.min_words.set(count)
+        await self._set_feature_setting(ctx.guild, "xp_features", "min_words", count)
         self._settings_cache.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
@@ -1762,7 +1781,7 @@ class LevelPlus(redcommands.Cog):
 
         async def update(context, key, value):
             root, field = key.split(".")
-            await self.config.guild(context.guild).set_raw(root, field, value=value)
+            await self._set_feature_setting(context.guild, root, field, value)
             self._settings_cache.pop(context.guild.id, None)
 
         view = SetupView(
