@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import secrets
 import time
 from collections import defaultdict
@@ -49,6 +50,8 @@ class AudioPlus(commands.Cog):
         self._http = None
         self._connect_lock = asyncio.Lock()
         self._player_locks = defaultdict(asyncio.Lock)
+        self._playback_contexts = {}
+        self._last_playback_errors = {}
 
     # ---- helpers ----
 
@@ -90,6 +93,8 @@ class AudioPlus(commands.Cog):
                 return
             if self._node is not None:
                 await self._node.close(eject=True)
+            self._playback_contexts.clear()
+            self._last_playback_errors.clear()
             node = wavelink.Node(
                 identifier=self._new_identifier(),
                 uri=cfg.uri,
@@ -107,9 +112,17 @@ class AudioPlus(commands.Cog):
                     raise commands.CommandError(
                         "Lavalink is unavailable. Check host, port, password, TLS, and node logs."
                     )
-            except BaseException:
-                await node.close(eject=True)
-                self._node = None
+            except BaseException as exc:
+                try:
+                    await node.close(eject=True)
+                finally:
+                    self._node = None
+                if isinstance(
+                    exc, (wavelink.WavelinkException, aiohttp.ClientError, asyncio.TimeoutError)
+                ):
+                    raise commands.CommandError(
+                        "Lavalink connection failed. Check audio pingnode and the node's logs."
+                    ) from exc
                 raise
 
     async def _ensure_nodes(self, node_cfg):
@@ -170,6 +183,9 @@ class AudioPlus(commands.Cog):
                     self_mute=False,
                 )
                 player.autoplay = wavelink.AutoPlayMode.partial
+                request = self._playback_contexts.get(guild.id)
+                if request is not None and request[0] is old:
+                    self._playback_contexts[guild.id] = (player, request[1])
                 self._queue_put_many(player.queue, queued)
                 await player.set_volume(volume)
                 if track:
@@ -195,6 +211,8 @@ class AudioPlus(commands.Cog):
             if self._http is not None:
                 await self._http.close()
             self._player_locks.clear()
+            self._playback_contexts.clear()
+            self._last_playback_errors.clear()
 
     # ---- events / logs ----
 
@@ -212,6 +230,7 @@ class AudioPlus(commands.Cog):
     async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload) -> None:
         if payload.player is None or payload.player.node is not self._node:
             return
+        self._last_playback_errors.pop(payload.player.guild.id, None)
         try:
             guild = payload.player.guild
             ch = payload.player.channel
@@ -238,13 +257,69 @@ class AudioPlus(commands.Cog):
         if payload.player is None or payload.player.node is not self._node:
             return
         ex = getattr(payload, "exception", None)
-        log.debug(f"[audioplus] Track exception: {ex}")
+        cause = ex.get("cause") or ex.get("message", "") if isinstance(ex, dict) else str(ex or "")
+        await self._report_playback_failure(payload.player, payload.track, cause)
 
     @commands.Cog.listener()
     async def on_wavelink_track_stuck(self, payload: wavelink.TrackStuckEventPayload) -> None:
         if payload.player is None or payload.player.node is not self._node:
             return
-        log.debug(f"[audioplus] Track stuck: thresholdMs={getattr(payload, 'threshold_ms', 'n/a')}")
+        player = payload.player
+        # A delayed event for an old track must not skip a newly started track.
+        async with self._player_locks[player.guild.id]:
+            if player.current != payload.track:
+                return
+            try:
+                await player.skip(force=True)
+            except (wavelink.WavelinkException, aiohttp.ClientError, asyncio.TimeoutError):
+                log.warning(
+                    "Could not skip a stuck track in guild %s", player.guild.id, exc_info=True
+                )
+        await self._report_playback_failure(
+            player, payload.track, "Playback stalled. A skip was requested to recover the queue."
+        )
+
+    @staticmethod
+    def _playback_failure_hint(cause, source=""):
+        text = str(cause).lower()
+        if text.startswith("playback stalled."):
+            return str(cause)
+        if "no supported audio streams" in text:
+            return (
+                "Lavalink found the track, but its source returned no playable audio stream. "
+                "For YouTube, check the Lavalink youtube-source plugin and its client configuration."
+            )
+        if source == "youtube" and any(
+            word in text for word in ("sign in", "login", "bot", "cipher", "sig function")
+        ):
+            return (
+                "YouTube rejected the stream or its signature could not be decoded. "
+                "Check the node's youtube-source plugin, clients, and authentication in Lavalink's logs."
+            )
+        return "Lavalink could not play this track. Check the node's source configuration and logs."
+
+    async def _report_playback_failure(self, player, track, cause):
+        request = self._playback_contexts.get(player.guild.id)
+        if request is not None and request[0] is not player:
+            return
+        title = discord.utils.escape_markdown(str(getattr(track, "title", "Unknown track")))
+        hint = self._playback_failure_hint(cause, getattr(track, "source", ""))
+        message = f"**{title}**\n{hint}"
+        self._last_playback_errors[player.guild.id] = message
+        log.warning("Playback failed in guild %s: %s", player.guild.id, cause)
+        if request is None:
+            return
+        ctx = request[1]
+        prefix = ctx.clean_prefix
+        message += (
+            f"\n\nRun `{prefix}audio pingnode` for sources and plugin versions. "
+            f"Try `{prefix}audio tone` to test a direct MP3. "
+            f"If SoundCloud is enabled, use `{prefix}audio play scsearch:<search terms>`."
+        )
+        try:
+            await self._reply(ctx, message, title="Playback failed", tone="error")
+        except discord.HTTPException:
+            log.warning("Could not send playback failure to guild %s", player.guild.id)
 
     # ---- VC / playback helpers ----
 
@@ -264,10 +339,9 @@ class AudioPlus(commands.Cog):
                 )
             if player is None:
                 permissions = channel.permissions_for(ctx.guild.me)
-                if not permissions.connect or not permissions.speak:
-                    raise commands.CheckFailure(
-                        "I need Connect and Speak permissions in your voice channel."
-                    )
+                missing = [name for name in ("connect", "speak") if not getattr(permissions, name)]
+                if missing:
+                    raise commands.BotMissingPermissions(missing)
                 try:
                     player = await channel.connect(
                         cls=partial(wavelink.Player, nodes=[self._node]),
@@ -287,12 +361,51 @@ class AudioPlus(commands.Cog):
                 await player.move_to(channel, self_deaf=False, self_mute=False)
             player.autoplay = wavelink.AutoPlayMode.partial
             await self._stage_unsuppress_if_needed(ctx.guild, channel)
+            self._playback_contexts[ctx.guild.id] = (player, ctx)
             return player, channel
 
     async def _maybe_start_queue(self, player):
         async with self._player_locks[player.guild.id]:
-            if not player.playing and not player.paused and player.queue:
-                await player.play(player.queue.get())
+            # Wavelink's playing property is also true for a paused, loaded track.
+            # An idle player can retain its old pause flag after stop/end.
+            if not player.playing and player.queue:
+                track = player.queue.get()
+                try:
+                    await player.play(track, paused=False)
+                except BaseException:
+                    player.queue.put_at(0, track)
+                    raise
+
+    @staticmethod
+    def _normalize_query(query):
+        query = query.strip()
+        if not query:
+            raise commands.BadArgument("Provide search terms, a source search, or a track URL.")
+        if query.lower().startswith(("http://", "https://")) or re.match(
+            r"^[a-z][a-z0-9_-]*search:", query, re.IGNORECASE
+        ):
+            return query
+        return f"ytsearch:{query}"
+
+    async def _load_tracks(self, query):
+        try:
+            return await wavelink.Pool.fetch_tracks(query, node=self._node)
+        except wavelink.LavalinkLoadException as exc:
+            source = "youtube" if query.startswith(("ytsearch:", "ytmsearch:")) else ""
+            raise commands.CommandError(self._playback_failure_hint(exc.cause, source)) from exc
+        except (wavelink.WavelinkException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise commands.CommandError(
+                "Lavalink could not load that query. Check audio pingnode and the node's source logs."
+            ) from exc
+
+    async def _start_queued_tracks(self, player):
+        try:
+            await self._maybe_start_queue(player)
+        except (wavelink.WavelinkException, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise commands.CommandError(
+                "Lavalink did not accept the playback request. The track is still queued. "
+                "Check audio pingnode and the node's logs before retrying."
+            ) from exc
 
     @staticmethod
     def _queue_put_many(queue, items):
@@ -430,6 +543,30 @@ class AudioPlus(commands.Cog):
             )
             if build:
                 lines.append(f"Build time: `{build}`")
+            lines.append(f"Lavaplayer: `{info.get('lavaplayer', 'unknown')}`")
+            sources = info.get("sourceManagers")
+            lines.append(
+                "Sources: "
+                + (
+                    ", ".join(str(source) for source in sources) or "None enabled"
+                    if isinstance(sources, list)
+                    else "Not reported"
+                )
+            )
+            plugins = info.get("plugins")
+            lines.append(
+                "Plugins: "
+                + (
+                    ", ".join(
+                        f"{plugin.get('name', 'unknown')} {plugin.get('version', 'unknown')}"
+                        for plugin in plugins
+                        if isinstance(plugin, dict)
+                    )
+                    or "None installed"
+                    if isinstance(plugins, list)
+                    else "Not reported"
+                )
+            )
         else:
             lines.append("Version: `unknown` (info endpoint not reachable)")
 
@@ -444,6 +581,8 @@ class AudioPlus(commands.Cog):
                 + (f" | Uptime: `{uptime} ms`" if uptime is not None else "")
             )
 
+        if ctx.guild.id in self._last_playback_errors:
+            lines.append("\n**Last playback failure**\n" + self._last_playback_errors[ctx.guild.id])
         await self._reply(ctx, "\n".join(lines))
 
     @audio.command(name="playerstate")
@@ -465,7 +604,8 @@ class AudioPlus(commands.Cog):
         paused = bool(data.get("paused", False))
         vol = data.get("volume", "n/a")
         pos = state.get("position", 0)
-        connected = bool(data.get("connected", True))
+        connected = bool(state.get("connected", False))
+        playing = connected and bool(data.get("track")) and not paused
 
         tinfo = {}
         track_container = data.get("track")
@@ -477,7 +617,7 @@ class AudioPlus(commands.Cog):
 
         lines = [
             "**Lavalink Player State**",
-            f"Connected: `{connected}`  Playing: `{not paused}`  Volume: `{vol}`  Position(ms): `{pos}`",
+            f"Connected: `{connected}`  Playing: `{playing}`  Paused: `{paused}`  Volume: `{vol}`  Position(ms): `{pos}`",
             f"Track: `{title}` by `{author}` (len={length})",
             f"Voice: endpoint=`{voice.get('endpoint', 'n/a')}` sessionId=`{voice.get('sessionId', 'n/a')}`",
             f"Filters: keys={list(filters.keys()) if isinstance(filters, dict) else 'n/a'}",
@@ -552,8 +692,13 @@ class AudioPlus(commands.Cog):
         state = await self._fetch_player_state(ctx.guild.id)
         if state:
             s = state.get("state", {}) or {}
+            playing = (
+                bool(s.get("connected"))
+                and bool(state.get("track"))
+                and not state.get("paused", False)
+            )
             lines.append(
-                f"Lavalink: playing=`{not state.get('paused', False)}` pos=`{s.get('position', 0)}` vol=`{state.get('volume')}`"
+                f"Lavalink: connected=`{bool(s.get('connected'))}` playing=`{playing}` pos=`{s.get('position', 0)}` vol=`{state.get('volume')}`"
             )
         await self._reply(ctx, "\n".join(lines))
 
@@ -575,14 +720,13 @@ class AudioPlus(commands.Cog):
     async def audio_tone(self, ctx: commands.Context):
         """Queue a direct MP3 track to test audio playback."""
         player, _ = await self._fetch_or_connect_player(ctx)
-        tracks = await wavelink.Pool.fetch_tracks(
-            "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-            node=self._node,
+        tracks = await self._load_tracks(
+            "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
         )
         if not tracks:
             return await self._reply(ctx, "The test source is unavailable.", tone="warning")
         player.queue.put(tracks[0])
-        await self._maybe_start_queue(player)
+        await self._start_queued_tracks(player)
         await self._reply(
             ctx,
             "Queued the direct MP3 test track. Use audio playerstate or audio debugvc to inspect playback.",
@@ -603,6 +747,8 @@ class AudioPlus(commands.Cog):
         vc = self._get_player(ctx.guild)
         if vc and isinstance(vc, wavelink.Player):
             await vc.disconnect()
+            self._playback_contexts.pop(ctx.guild.id, None)
+            self._last_playback_errors.pop(ctx.guild.id, None)
             await self._reply(ctx, "Disconnected.", tone="success")
         else:
             await self._reply(ctx, "Not connected.", tone="warning")
@@ -612,24 +758,17 @@ class AudioPlus(commands.Cog):
     async def audio_play(self, ctx: commands.Context, *, query: str):
         """Search for music or queue tracks from a URL.
 
-        Search terms use YouTube search. URL and search support depend on the Lavalink node's
-        source plugins.
+        Plain search terms use YouTube. Use scsearch: for SoundCloud or another source plugin's
+        search prefix to select a source explicitly. Support depends on the Lavalink node.
         """
+        query = self._normalize_query(query)
         player, _ = await self._fetch_or_connect_player(ctx)
-        query = query.strip()
-        if not query.startswith(("http://", "https://")):
-            query = f"ytsearch:{query}"
-        try:
-            results = await wavelink.Pool.fetch_tracks(query, node=self._node)
-        except wavelink.WavelinkException as exc:
-            raise commands.CommandError(
-                "Lavalink could not load that query. Check source plugins and node logs."
-            ) from exc
+        results = await self._load_tracks(query)
         if not results:
             return await self._reply(ctx, "No results.", tone="warning")
         tracks = list(results.tracks) if isinstance(results, wavelink.Playlist) else [results[0]]
         self._queue_put_many(player.queue, tracks)
-        await self._maybe_start_queue(player)
+        await self._start_queued_tracks(player)
         await self._reply(ctx, f"Queued {len(tracks)} track(s).", tone="success")
 
     @audio.command(name="skip", aliases=["next", "s"])
@@ -788,6 +927,8 @@ class AudioPlus(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         self._player_locks.pop(guild.id, None)
+        self._playback_contexts.pop(guild.id, None)
+        self._last_playback_errors.pop(guild.id, None)
 
     def _get_player(self, guild):
         player = guild.voice_client

@@ -56,7 +56,16 @@ Join a voice channel, then:
 [p]audio np
 ```
 
-Search terms use `ytsearch:`. URL playback and search availability depend on the Lavalink node's source configuration. A search or URL adds tracks to the queue and starts playback when the player is idle.
+Plain search terms use `ytsearch:`. Explicit search prefixes are preserved, so you can choose another enabled source:
+
+```text
+[p]audio play scsearch:artist and song
+[p]audio play ytmsearch:artist and song
+```
+
+URL playback and search availability depend on the Lavalink node's source configuration. A search or URL adds tracks to the queue and starts playback when the player is idle, clearing an old idle pause flag. Adding tracks while the current track is paused preserves that pause. If the node rejects the initial playback request, the track stays at the front of the queue for a later retry.
+
+Finding a track and accepting a playback request do not prove that the source can stream it. Asynchronous playback failures are reported in the most recent AudioPlus request channel and recorded temporarily for `[p]audio pingnode`. Stuck tracks receive one skip request; Wavelink advances the queue after the resulting track-end event.
 
 ## Commands
 
@@ -75,7 +84,7 @@ All commands below use your bot prefix in place of `[p]` and run in a server.
 | `[p]audio np` | Show the current track. Alias: `nowplaying`. |
 | `[p]audio queue` | Show up to ten queued tracks. Alias: `q`. |
 | `[p]audio shuffle` | Shuffle queued tracks. |
-| `[p]audio pingnode` | Show node connectivity and available version/statistics information. |
+| `[p]audio pingnode` | Show node connectivity, sources, Lavalink/Lavaplayer/plugin versions, statistics, and the latest playback failure. |
 | `[p]audio playerstate` | Inspect the Lavalink REST player state. |
 | `[p]audio debugvc` | Show Discord voice flags and player status. |
 | `[p]audio speak` | Try to unsuppress the bot or request to speak on a Stage channel. |
@@ -96,14 +105,26 @@ Use `[p]help audio` or `[p]help audio <subcommand>` for Red's generated help. Pl
 
 ## Troubleshooting
 
-1. Check the node with `[p]audio pingnode` and reconnect with `[p]audio connectnode` as the owner.
+1. Check the node with `[p]audio pingnode` and reconnect with `[p]audio connectnode` as the owner. A connected node confirms the bot can reach Lavalink; source playback and Discord voice still need separate checks.
 2. Check **Connect/Speak** permissions and inspect `[p]audio debugvc` and `[p]audio playerstate`.
 3. Try `[p]audio fixvoice` or `[p]audio rejoin` if voice state is stuck.
-4. Try `[p]audio tone`. This plays a direct MP3 rather than a YouTube search. If it also fails, inspect Lavalink's logs and network access to Discord voice, including UDP egress.
+4. Run `[p]audio stop` to clear the existing queue, then `[p]audio tone`. This plays a direct MP3 rather than a YouTube search. The node must have its HTTP source enabled and be able to reach the MP3 URL. If it also fails, inspect Lavalink's logs and network access to the source and Discord voice, including UDP egress.
+
+### No supported audio streams
+
+`No supported audio streams available` is a source playback error inside Lavalink. The source may find a track's metadata and still fail to obtain a playable stream. A cog reload or a successful node connection does not establish that the source is working.
+
+If the MP3 test works but YouTube fails, inspect the Lavalink startup logs and `application.yml`. Use the maintained [youtube-source plugin](https://github.com/lavalink-devs/youtube-source#plugin), disable Lavalink's built-in YouTube source when using that plugin, and check the installed plugin version and configured clients against its documentation. Some client failures require authentication or changes to signature deciphering; choose those changes from the actual node logs rather than replacing unrelated settings.
+
+If SoundCloud appears in `[p]audio pingnode`, `[p]audio play scsearch:artist and song` can test it independently. AudioPlus does not silently substitute another provider for a requested track.
+
+For a playback report, include `[p]audio pingnode`, `[p]audio playerstate`, the failed query or URL, and Lavalink's matching log entry. Include a redacted `application.yml` when troubleshooting source configuration; remove node passwords, OAuth refresh tokens, and other credentials.
 
 ## Data
 
 Red Config stores global node settings, including the password. AudioPlus does not persist listening histories or saved playlists in its own Config. The active player and queue are maintained in memory and on Lavalink.
+
+The most recent request context and playback failure are held in memory per server and cleared when leaving voice, reconnecting the node, unloading the cog, or removing the server. A successful track start clears the previous failure.
 
 AudioPlus owns one node in Wavelink's shared pool. Reconnecting or unloading closes that node and its own HTTP session, preserving other cogs' nodes. Players use partial autoplay to progress through queued tracks without adding recommendations. Diagnostic REST calls use AudioPlus's own Lavalink session and have timeouts. Live Discord voice and Lavalink playback still need a deployment smoke test.
 
