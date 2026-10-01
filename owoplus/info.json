@@ -1,13 +1,24 @@
 {
-  "author": ["Kevin Kelly"],
+  "author": [
+    "Kevin Kelly"
+  ],
   "short": "Webhook message transformations and haiku formatting.",
   "description": "Repost eligible server messages through webhooks with keyword replacements, configurable random owo transformations, and optional English haiku formatting, then attempt to delete the originals.",
   "install_msg": "Load with [p]load owoplus. Automatic processing starts disabled. Use [p]owoplus preview <text> and read the cog README before [p]owoplus enable; transformations repost messages through webhooks and attempt to delete the originals.",
   "requirements": [],
-  "tags": ["fun", "webhook", "haiku"],
+  "tags": [
+    "fun",
+    "webhook",
+    "haiku"
+  ],
   "min_bot_version": "3.5.0",
   "type": "COG",
   "hidden": false,
   "disabled": false,
-  "end_user_data_statement": "This cog stores per-guild enable, probability, owner-bypass, and haiku settings, plus member IDs and their probability overrides in Red Config. It does not persist message contents in Config. Transformed content and copied attachments are posted to Discord through webhooks using the author's display name and avatar, and the original message is deleted when permitted. Posted messages remain in Discord until removed there."
+  "end_user_data_statement": "This cog stores per-guild enable, probability, owner-bypass, and haiku settings, plus member IDs and their probability overrides in Red Config. It does not persist message contents in Config. Transformed content and copied attachments are posted to Discord through webhooks using the author's display name and avatar, and the original message is deleted when permitted. Posted messages remain in Discord until removed there. Red user-data export and deletion hooks return or remove probability overrides across servers.",
+  "min_python_version": [
+    3,
+    10,
+    0
+  ]
 }
