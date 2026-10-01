@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Moderation alerts and incident cases
+
+- Add opt-in threshold/window alerts for joins, logical deletion events and actual permission edits, plus aggregate daily moderation summaries independent of delivery retries.
+- Add private owner-configured grouped unexpected command error notifications with current-owner checks and sanitized signatures.
+- Add staff incident cases with retained-log excerpts, notes, resolution, count/byte/age limits and identified-user export/deletion.
+
 ## 2026-10-01: Custom progression and monthly seasons
 
 - Add administrator-defined achievements with safe role and once-only XP rewards, bounded local-day streak bonuses and member views. Serialize earned rewards with existing XP updates and daily caps.

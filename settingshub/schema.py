@@ -61,12 +61,14 @@ FIELDS = {
         "style",
         "features",
         "history_settings",
+        "alert_settings",
     ),
     "OwoPlus": ("enabled", "one_in", "owner_bypass", "haiku_enabled", "features"),
 }
 EXCLUDED = {
     "CommunityPlus": ("features.role_menus", "features.summary.last_week"),
     "LevelPlus": ("xp_features.boosts",),
+    "LogPlus": ("alert_settings.errors.recipient",),
     "OwoPlus": ("features.optouts",),
 }
 ROLE_LISTS = {
@@ -101,6 +103,14 @@ RANGES = {
     "community_tools.birthdays.hour": (0, 23),
     "progress_settings.daily_bonus": (0, 100),
     "progress_settings.max_bonus": (0, 1000),
+    "alert_settings.digest.hour": (0, 23),
+    "alert_settings.errors.threshold": (2, 50),
+    "alert_settings.errors.window": (30, 3600),
+    **{
+        f"alert_settings.bursts.{metric}.{field}": bounds
+        for metric in ("joins", "deletes", "permissions")
+        for field, bounds in (("threshold", (2, 1000)), ("window", (10, 3600)))
+    },
     "multiplier": (0.1, 10),
     "voice.min_members": (1, 99),
     "message.cooldown": (0, 3600),
@@ -349,6 +359,7 @@ def validate_fields(guild, expected, incoming, path=""):
                     "features.summary.channel",
                     "community_tools.birthdays.channel",
                     "progress_settings.announce_channel",
+                    "alert_settings.channel",
                 },
             )
     elif isinstance(expected, bool):

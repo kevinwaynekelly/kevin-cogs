@@ -163,6 +163,7 @@ class LogHistory:
         while not self._closing:
             try:
                 await self._history_tick()
+                await self._prune_incidents()
             except Exception:
                 log.exception("Could not prune expired local log history")
             await asyncio.sleep(3600)

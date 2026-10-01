@@ -28,6 +28,7 @@ from .delivery import CATEGORIES, FEATURE_DEFAULTS, EventEmbed, LogDelivery, fre
 from .diffs import attribute_changes, overwrite_changes, permission_changes
 from .events import guild_enabled
 from .history import HISTORY_DEFAULTS, LogHistory, export_history
+from .incidents import ALERT_DEFAULTS, SUMMARY_DEFAULTS, IncidentCommands
 from .interactive import SetupView, close_views
 from .presentation import Presentation, settings
 
@@ -57,7 +58,7 @@ EVENT_SWITCHES = tuple(
 # ========================= Defaults =========================
 
 
-class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
+class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
     """Server event logging with channel routing and audit attribution."""
 
     async def cog_command_error(self, ctx, error):
@@ -76,6 +77,9 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
             features=FEATURE_DEFAULTS,
             history_settings=HISTORY_DEFAULTS,
             history_records=[],
+            alert_settings=ALERT_DEFAULTS,
+            moderation_summary=SUMMARY_DEFAULTS,
+            incident_cases={},
         )
 
         self._last_event_at = OrderedDict()
@@ -90,6 +94,10 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
         self._views = set()
         self._closing = False
         self._history_task = None
+        self._moderation_task = None
+        self._alert_tasks = set()
+        self._alert_windows = OrderedDict()
+        self._alert_sent = {}
         self._cmd_prefix_re = re.compile(r"^(<@!?|[/!?.~+\-$&%=>:#])")
 
     # ---------------- helpers ----------------
@@ -178,10 +186,17 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
             isinstance(channel, discord.Thread) and channel.parent_id in excluded
         )
 
-    async def _send(self, guild, embed, source_channel_id=None, category=None):
+    async def _send(
+        self, guild, embed, source_channel_id=None, category=None, *, permission_change=False
+    ):
         if self._closing:
             return
         record = self._pending_log(embed, source_channel_id, category)
+        record.permission_change = permission_change
+        try:
+            await self._observe_log(guild, record)
+        except Exception:
+            log.exception("Moderation observer failed; continuing normal log delivery")
         if (await self._settings(guild))["history_settings"]["enabled"]:
             await self._save_history(guild, embed, record)
         try:
@@ -1472,7 +1487,7 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
             e.add_field(name="Recent audit actor", value=actor or "Unknown", inline=True)
             for target, changes in overwrites:
                 e.add_field(name=target, value=changes, inline=False)
-            await self._send(after.guild, e, after.id)
+            await self._send(after.guild, e, after.id, permission_change=bool(overwrites))
 
     @commands.Cog.listener()
     @guild_enabled
@@ -1532,7 +1547,11 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
                 etype="role_updated",
             )
             e.add_field(name="Recent audit actor", value=actor or "Unknown", inline=True)
-            await self._send(after.guild, e)
+            await self._send(
+                after.guild,
+                e,
+                permission_change=bool(permission_changes(before.permissions, after.permissions)),
+            )
 
     @commands.Cog.listener()
     @guild_enabled
@@ -2139,9 +2158,19 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
         self._history_task = asyncio.create_task(
             self._history_maintenance(), name="logplus-history-retention"
         )
+        self._moderation_task = asyncio.create_task(self._moderation_loop())
 
     async def cog_unload(self):
         self._closing = True
+        tasks = tuple(self._alert_tasks) + (
+            (self._moderation_task,) if self._moderation_task else ()
+        )
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._alert_tasks.clear()
+        self._alert_windows.clear()
+        self._alert_sent.clear()
         if self._history_task:
             self._history_task.cancel()
             await asyncio.gather(self._history_task, return_exceptions=True)
@@ -2168,7 +2197,7 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
             if cached is not None and now - cached[0] < 5:
                 return cached[1]
             group = self.config.guild(guild)
-            keys = [*DEFAULTS_GUILD, "features", "history_settings"]
+            keys = [*DEFAULTS_GUILD, "features", "history_settings", "alert_settings"]
             values = await asyncio.gather(*(group.get_attr(key)() for key in keys))
             settings = dict(zip(keys, values))
             self._settings_cache[guild.id] = (now, settings)
@@ -2292,7 +2321,10 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
                 self._last_event_at.pop(key, None)
 
     async def red_delete_data_for_user(self, *, requester, user_id):
+        await self._incident_user_data(user_id, delete=True)
         await super().red_delete_data_for_user(requester=requester, user_id=user_id)
 
     async def red_get_data_for_user(self, *, user_id):
-        return await super().red_get_data_for_user(user_id=user_id)
+        data = await super().red_get_data_for_user(user_id=user_id)
+        data.update(await self._incident_export(user_id))
+        return data

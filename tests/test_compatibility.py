@@ -93,6 +93,11 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
 
         assert defaults["GUILD"].pop("history_settings") == HISTORY_DEFAULTS
         assert defaults["GUILD"].pop("history_records") == []
+        from logplus.incidents import ALERT_DEFAULTS, SUMMARY_DEFAULTS
+
+        assert defaults["GUILD"].pop("alert_settings") == ALERT_DEFAULTS
+        assert defaults["GUILD"].pop("moderation_summary") == SUMMARY_DEFAULTS
+        assert defaults["GUILD"].pop("incident_cases") == {}
         from logplus.delivery import FEATURE_DEFAULTS
 
         assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS

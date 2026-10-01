@@ -92,6 +92,7 @@ class PendingLog:
     size: int = 0
     created: float = field(default_factory=time.monotonic)
     retries: int = 0
+    permission_change: bool = False
 
 
 class LogDelivery:
