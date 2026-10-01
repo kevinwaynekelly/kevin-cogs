@@ -42,7 +42,11 @@ CONTROLS = {
     "undeafen",
     "fixvoice",
     "rejoin",
+    "seek",
+    "remove",
+    "move",
 }
+NEW_GROUPS = {"audioset", "playlist", "favorite"}
 
 
 @pytest.fixture
@@ -183,7 +187,9 @@ async def test_real_red_tree_registers_controls_without_replacing_core_leave():
     try:
         await bot.add_cog(cog)
         assert bot.get_command("leave") is original_leave
-        assert set(bot.tree._disabled_global_commands) == CONTROLS
+        assert set(bot.tree._disabled_global_commands) == CONTROLS | NEW_GROUPS
+        for name in NEW_GROUPS:
+            bot.get_command(name).app_command.to_dict(bot.tree)
         for name in CONTROLS:
             command = bot.get_command(name)
             assert isinstance(command, commands.HybridCommand)

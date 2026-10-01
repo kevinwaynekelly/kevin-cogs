@@ -72,12 +72,22 @@ class NativeSource(discord.AudioSource):
 
 
 class GuildPlayer:
-    def __init__(self, voice, resolver, report_error, *, source_factory=NativeSource, on_idle=None):
+    def __init__(
+        self,
+        voice,
+        resolver,
+        report_error,
+        *,
+        source_factory=NativeSource,
+        on_idle=None,
+        on_start=None,
+    ):
         self.voice = voice
         self.resolver = resolver
         self.report_error = report_error
         self.source_factory = source_factory
         self.on_idle = on_idle
+        self.on_start = on_start
         self.guild = voice.guild
         self.queue: deque[Track] = deque()
         self.current: Track | None = None
@@ -210,6 +220,11 @@ class GuildPlayer:
                 self.voice.pause()
             self.preparing = False
             self.last_error = None
+            if self.on_start:
+                try:
+                    await self.on_start(self)
+                except Exception:
+                    log.warning("Could not update the music panel", exc_info=True)
             error = await ended
             if error:
                 raise error
@@ -300,6 +315,38 @@ class GuildPlayer:
             items = list(self.queue)
             random.shuffle(items)
             self.queue = deque(items)
+
+    async def remove(self, position):
+        async with self.lock:
+            if not 1 <= position <= len(self.queue):
+                raise MediaError("Choose an upcoming queue position shown by queue.")
+            items = list(self.queue)
+            selected = items.pop(position - 1)
+            self.queue = deque(items)
+            return selected
+
+    async def move(self, source, destination):
+        async with self.lock:
+            if not 1 <= source <= len(self.queue) or not 1 <= destination <= len(self.queue):
+                raise MediaError("Both positions must be in the upcoming queue.")
+            items = list(self.queue)
+            selected = items.pop(source - 1)
+            items.insert(destination - 1, selected)
+            self.queue = deque(items)
+            return selected
+
+    async def seek(self, position):
+        async with self.lock:
+            if not self.current or self.preparing or not self.current.length:
+                raise MediaError(
+                    "Wait for a track with a known duration before seeking. Live streams cannot seek."
+                )
+            if not 0 <= position < self.current.length:
+                raise MediaError("Choose a position before the end of this track.")
+            self._restart = (self.current, position, self.paused)
+            self._cancel_idle()
+            self._cancel_track()
+            self._start_worker()
 
     async def restart(self, track, *, start=0, paused=False):
         async with self.lock:

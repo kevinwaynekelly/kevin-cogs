@@ -15,6 +15,9 @@ from redbot.core import Config, app_commands, checks, commands
 from redbot.core.bot import Red
 
 from .backend import diagnostics, require_voice
+from .command_support import prepare_hybrid
+from .features import DEFAULTS_GUILD, AudioCommands, check_control, vote_threshold
+from .interactive import close_views
 from .player import GuildPlayer
 from .presentation import Presentation
 from .resolver import MediaError, MediaResolver, normalize_query
@@ -31,7 +34,7 @@ log = logging.getLogger(__name__)
 GUILD_ONLY = commands.guild_only()
 
 
-class AudioPlus(commands.Cog):
+class AudioPlus(AudioCommands, commands.Cog):
     """Music search, native Discord playback, queues, and voice diagnostics."""
 
     # Retain the old Config namespace/defaults for upgrades and rollbacks. These
@@ -49,12 +52,17 @@ class AudioPlus(commands.Cog):
         self._presentation = Presentation("AudioPlus", "audio")
         self.config = Config.get_conf(self, identifier=0xA10DEFAB, force_registration=True)
         self.config.register_global(**self.default_global, watchdog=DEFAULT_WATCHDOG)
+        self.config.register_guild(**DEFAULTS_GUILD)
         self._resolver = MediaResolver()
         self._players = {}
         self._player_locks = defaultdict(asyncio.Lock)
         self._lookups = set()
         self._connections = set()
         self._closing = False
+        self._views = set()
+        self._panels = {}
+        self._panel_tasks = {}
+        self._skip_votes = {}
         self._watchdog = PlaybackWatchdog(
             self.config, self._check_ready, self._probe_playback, self._notify_check_failure
         )
@@ -72,6 +80,9 @@ class AudioPlus(commands.Cog):
             await ctx.defer()
         return await command.callback(self, ctx, **kwargs)
 
+    async def cog_before_invoke(self, ctx):
+        await prepare_hybrid(ctx)
+
     async def cog_load(self):
         # Setup/help remain available when the container needs dependencies.
         self._closing = False
@@ -80,6 +91,9 @@ class AudioPlus(commands.Cog):
     async def cog_unload(self):
         self._closing = True
         await self._watchdog.close()
+        await close_views(self)
+        for guild_id in tuple(self._panels):
+            await self._close_panel(guild_id)
         pending = tuple(self._lookups | self._connections)
         for task in pending:
             task.cancel()
@@ -340,6 +354,8 @@ class AudioPlus(commands.Cog):
             return False
 
     async def _dispose_player(self, guild_id, *, disconnect=True):
+        await self._close_panel(guild_id)
+        self._skip_votes.pop(guild_id, None)
         player = self._players.pop(guild_id, None)
         if player:
             await player.close(disconnect=disconnect)
@@ -353,6 +369,8 @@ class AudioPlus(commands.Cog):
             elif await player.disconnect_if_idle():
                 if self._players.get(player.guild.id) is player:
                     self._players.pop(player.guild.id)
+                await self._close_panel(player.guild.id)
+                self._skip_votes.pop(player.guild.id, None)
 
     async def _open_voice(self, channel):
         owned = None
@@ -460,6 +478,8 @@ class AudioPlus(commands.Cog):
                 raise commands.CommandError(
                     "Another cog owns the voice connection. Disconnect it before using AudioPlus."
                 )
+            if player and player.voice.channel != channel:
+                await check_control(self, ctx)
             permissions = channel.permissions_for(ctx.guild.me)
             missing = [name for name in ("connect", "speak") if not getattr(permissions, name)]
             if missing:
@@ -484,6 +504,7 @@ class AudioPlus(commands.Cog):
                         self._resolver,
                         self._report_playback_failure,
                         on_idle=self._disconnect_idle_player,
+                        on_start=self._track_started,
                     )
                     self._players[ctx.guild.id] = player
                     if snapshot:
@@ -606,6 +627,7 @@ class AudioPlus(commands.Cog):
                     self._resolver,
                     self._report_playback_failure,
                     on_idle=self._disconnect_idle_player,
+                    on_start=self._track_started,
                 )
                 self._players[guild.id] = player
                 await self._restore(player, snapshot)
@@ -820,6 +842,7 @@ class AudioPlus(commands.Cog):
         Playback resumes at the prior position for seekable streams. Live streams may
         restart at their live edge.
         """
+        await check_control(self, ctx)
         ok = await self._rebind_voice(ctx.guild)
         await self._reply(
             ctx, "Rejoin: " + ("OK" if ok else "failed"), tone="success" if ok else "error"
@@ -845,6 +868,7 @@ class AudioPlus(commands.Cog):
     @GUILD_ONLY
     async def audio_leave(self, ctx: commands.Context) -> None:
         """Disconnect AudioPlus from voice and clear its queue."""
+        await check_control(self, ctx)
         async with self._player_locks[ctx.guild.id]:
             if not self._get_player(ctx.guild):
                 return await self._reply(ctx, "Not connected.", tone="warning")
@@ -874,6 +898,18 @@ class AudioPlus(commands.Cog):
         player = self._get_player(ctx.guild)
         if not player:
             return await self._reply(ctx, "Not connected.", tone="warning")
+        if not await check_control(self, ctx, vote=True):
+            key, votes = self._skip_votes.get(ctx.guild.id, (None, set()))
+            if key is not player.current:
+                votes = set()
+            humans = {member.id for member in player.voice.channel.members if not member.bot}
+            votes.intersection_update(humans)
+            votes.add(ctx.author.id)
+            self._skip_votes[ctx.guild.id] = (player.current, votes)
+            needed = vote_threshold(player.voice.channel)
+            if len(votes) < needed:
+                return await self._reply(ctx, f"Skip vote recorded: {len(votes)}/{needed}.")
+        self._skip_votes.pop(ctx.guild.id, None)
         track = await player.skip()
         await self._reply(
             ctx,
@@ -890,6 +926,7 @@ class AudioPlus(commands.Cog):
         player = self._get_player(ctx.guild)
         if not player:
             return await self._reply(ctx, "Not connected.", tone="warning")
+        await check_control(self, ctx)
         await player.stop()
         await self._reply(ctx, "Stopped and cleared the queue.", tone="success")
 
@@ -900,6 +937,7 @@ class AudioPlus(commands.Cog):
         player = self._get_player(ctx.guild)
         if not player or not player.current or player.preparing:
             return await self._reply(ctx, "No track is ready to pause.", tone="warning")
+        await check_control(self, ctx)
         player.voice.pause()
         await self._reply(ctx, "Paused.", tone="success")
 
@@ -910,6 +948,7 @@ class AudioPlus(commands.Cog):
         player = self._get_player(ctx.guild)
         if not player or not player.paused:
             return await self._reply(ctx, "No paused track.", tone="warning")
+        await check_control(self, ctx)
         player.voice.resume()
         await self._reply(ctx, "Resumed.", tone="success")
 
@@ -925,6 +964,7 @@ class AudioPlus(commands.Cog):
             return await self._reply(ctx, "Not connected.", tone="warning")
         if value is None:
             return await self._reply(ctx, f"Volume: {player.volume}%")
+        await check_control(self, ctx)
         await player.set_volume(value)
         await self._reply(ctx, f"Volume set to {player.volume}%.", tone="success")
 
@@ -982,6 +1022,7 @@ class AudioPlus(commands.Cog):
         player = self._get_player(ctx.guild)
         if not player:
             return await self._reply(ctx, "Not connected.", tone="warning")
+        await check_control(self, ctx)
         await player.shuffle()
         await self._reply(ctx, "Queue shuffled.", tone="success")
 
@@ -993,6 +1034,7 @@ class AudioPlus(commands.Cog):
         if not player:
             return await self._reply(ctx, "Not connected.", tone="warning")
         if mode is not None:
+            await check_control(self, ctx)
             mode = mode.lower()
             if mode not in {"off", "track", "queue"}:
                 raise commands.BadArgument("Choose off, track, or queue.")
@@ -1132,12 +1174,27 @@ class AudioPlus(commands.Cog):
     async def red_delete_data_for_user(self, *, requester, user_id):
         if (await self.config.watchdog())["recipient_id"] == user_id:
             await self._watchdog.configure(**DEFAULT_WATCHDOG)
+        for guild_id in await self.config.all_guilds():
+            group = self.config.guild_from_id(guild_id)
+            for section in (group.playlists, group.favorites):
+                async with section() as records:
+                    records.pop(str(user_id), None)
 
     async def red_get_data_for_user(self, *, user_id):
         state = await self.config.watchdog()
-        if state["recipient_id"] != user_id:
-            return {}
-        return {"audioplus.json": io.BytesIO(json.dumps({"watchdog": state}, indent=2).encode())}
+        data = {"watchdog": state} if state["recipient_id"] == user_id else {}
+        saved = {}
+        for guild_id, conf in (await self.config.all_guilds()).items():
+            records = {
+                key: conf.get(key, {}).get(str(user_id))
+                for key in ("playlists", "favorites")
+                if str(user_id) in conf.get(key, {})
+            }
+            if records:
+                saved[str(guild_id)] = records
+        if saved:
+            data["collections"] = saved
+        return {"audioplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):

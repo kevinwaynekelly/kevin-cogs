@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01: Audio feature expansion
+
+- Add automatically updating now-playing panels with checked Discord buttons and embed/text fallback. Cancel panel tasks/views on disconnect or unload and keep the ten-second idle deadline.
+- Add direct/slash seek, queue remove/move, private saved playlists and favorites, and administrator audioset controls/setup. Bound saved collections and include them in user-data export/deletion.
+- Add opt-in DJ controls and listener vote skipping, retain open controls by default, count unique current listeners, and protect active players from unauthorized moves. Preserve legacy command arguments and settings with additive guild defaults.
+- Validate resumed seeking, queue ordering, collection isolation/deletion, votes, panel updates, native command registration, and existing regression coverage. Live Discord/provider boundaries remain mocked.
+
 ## 2026-10-01: daily AudioPlus playback checks
 
 - Add owner-only `audiocheck` setup/status, immediate test, disable, schedule, and video commands. Default to 09:00 America/Chicago with DST handling and DM the owner who enables checking in the test server. Verify setup DM delivery before enabling.

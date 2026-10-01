@@ -217,6 +217,31 @@ All playback and voice commands are server commands. The bot needs Connect and S
 
 Use `[p]audio` for the themed overview or `[p]help AudioPlus` for Red's full command help. Legacy `[p]audio ...` commands retain their names and aliases, including `[p]audio leave` and `[p]audio pingnode`. The four legacy node commands are described in the upgrade table above. Music disconnection uses `[p]disconnect`; Red's core `[p]leave` command retains its server-leaving behavior.
 
+## Player panels, queue tools, and saved music
+
+New music controls have matching slash commands. Automatic now-playing panels are enabled by default and follow queue transitions, with Pause/Resume, Skip, Queue, and Stop buttons. Progress refreshes every 15 seconds while connected. Controls repeat current Red permission and disabled-command checks for the clicking member. Panels respect embed preferences, close on idle disconnect/reload, and never display resolved stream URLs.
+
+| Command | Purpose |
+| --- | --- |
+| `[p]seek <seconds or 1:23>` | Seek within a playing track with a known duration; preserve pause and upcoming tracks. Live/unknown-duration streams cannot seek. |
+| `[p]remove <position>` | Remove an upcoming queue entry. |
+| `[p]move <source> <destination>` | Reorder upcoming entries. |
+| `[p]playlist` | List your saved playlists in this server. |
+| `[p]playlist save <name>` | Save the current track and queue, up to 100 tracks. Replaces that named playlist. |
+| `[p]playlist play <name>` / `delete <name>` | Queue or remove your own playlist. Maximum ten playlists per member/server. |
+| `[p]favorite` | List your favorites in this server. |
+| `[p]favorite add [query]` | Save the current track, or the first result of a search. |
+| `[p]favorite remove <position>` / `play [position]` | Remove or queue a favorite; omit the play position to queue all. Maximum 100 favorites. |
+| `[p]audioset` | Show player policy settings. |
+| `[p]audioset setup` | Open a three-minute guided settings panel with a DJ role picker and feature switches. |
+| `[p]audioset panel <true\|false>` | Control automatic player panels. |
+| `[p]audioset dj [@Role]` | Require a DJ role for destructive controls. Omit the role to clear it. |
+| `[p]audioset voteskip <true\|false>` | Let non-DJ listeners vote to skip. |
+
+`audioset` requires Red admin or Manage Server. Open controls remain the default. With a DJ role, DJs, members with Manage Server, and bot owners can manage playback; other members can still queue music. Vote skip requires at least half of current human listeners, rounded up, and each person counts once per track. Nonprivileged controls require sharing the bot's voice channel when a policy is enabled. A play request cannot move an active protected player to another channel. Private saved collections contain source URLs and track metadata, never extracted playback streams; they survive reloads, while the live queue remains transient.
+
+There are now 36 slash music/settings actions, including `/playlist list`, `/favorite list`, and `/audioset status`. After updating and reloading, run `[p]slash sync` to upload the additions.
+
 ## Daily YouTube playback checks
 
 The bot owner can enable a daily check that privately reports failures:
@@ -267,7 +292,7 @@ For bug reports, include Red/Discord.py versions, `[p]audiostatus`, `[p]playerst
 
 Legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The daily monitor adds an optional `watchdog` section, disabled by default, without changing those legacy values. Red initializes the added defaults on existing installations. It stores the recipient's Discord ID, test server/channel IDs, public test video URL, schedule/timezone, daily cursor, latest safe result, and pending failure alert/delivery state. User-data hooks export that recipient's monitor record or remove it and disable checking. Deletion does not remove already delivered Discord DMs.
 
-The cog does not persist listening histories, playlists, user profiles, audio files, signed playback URLs, or yt-dlp disk caches. Normal track metadata, command contexts, errors, queues, volume, and repeat settings stay in memory.
+Guild Config additionally stores music panel/DJ/vote preferences, and member-specific saved playlists/favorites containing supplied public source URLs and track metadata. These are exported/deleted by the user's Red data hooks. The new sections use merged defaults, preserving all legacy values. The cog does not store extracted signed streams, listening histories, audio files, or yt-dlp disk caches. Normal command contexts, errors, live queues, volume, repeat settings, skip votes, and panel references stay in memory.
 
 Unload closes only AudioPlus's players and cancels the daily scheduler/probe, owned lookups/decoders, and idle timers. Other cogs' voice connections are left alone. Removing a guild also closes its player. Each cog remains independently installable through Downloader.
 
