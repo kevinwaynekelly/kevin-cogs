@@ -2,7 +2,7 @@
   "author": [
     "Kevin Kelly"
   ],
-  "description": "Community tools for first-time autoroles, sticky roles, welcome and goodbye embeds, solo voice disconnection, and member seen/presence statistics. Direct seen/activity commands and /community settings are included. Add safe persistent self-role menus, solo voice exemptions/warnings, tracking/DM switches, recorded voice hours, bounded daily participation totals, weekly digests, and guided setup.",
+  "description": "Community tools for first-time autoroles, sticky roles, welcome and goodbye embeds, solo voice disconnection, and member seen/presence statistics. Direct seen/activity commands and /community settings are included. Add safe persistent self-role menus, solo voice exemptions/warnings, tracking/DM switches, recorded voice hours, bounded daily participation totals, weekly digests, and guided setup. Includes bounded persistent community polls, event RSVPs, optional private reminders, and matching slash commands.",
   "short": "Self-service roles, greetings, voice time, and weekly summaries.",
   "install_msg": "Load with [p]load communityplus, then use [p]community help and [p]community diag. Solo voice disconnection starts enabled with a 900-second timeout; use [p]community vcsolo disable to turn it off while configuring the cog. Enable slash commands as the bot owner with [p]slash enablecog communityplus, then [p]slash sync. Use [p]community setup for guided settings and [p]roles for configured self-service roles.",
   "tags": [
@@ -19,7 +19,7 @@
   "type": "COG",
   "hidden": false,
   "disabled": false,
-  "end_user_data_statement": "This cog stores per-server settings, channel and role IDs, and welcome/goodbye templates. Per member, keyed by server and user IDs, it stores a first-seen flag, sticky role IDs, event timestamps and channel IDs, presence and platform statuses, last-online/offline times, message/voice/activity/status counters, and game names with launch counts. It also stores lifetime voice seconds and up to 35 daily message/voice buckets per member, self-role offer IDs, posted menu channel/message IDs, solo exemption IDs, and weekly digest settings/cursors. Ordinary message contents are not stored. The seenlistcsv command exports a summary for current members, and sticky purge clears only saved roles. Red user-data export and deletion hooks return or remove all stored member records across servers.",
+  "end_user_data_statement": "This cog stores per-server settings, channel and role IDs, and welcome/goodbye templates. Per member, keyed by server and user IDs, it stores a first-seen flag, sticky role IDs, event timestamps and channel IDs, presence and platform statuses, last-online/offline times, message/voice/activity/status counters, and game names with launch counts. It also stores lifetime voice seconds and up to 35 daily message/voice buckets per member, self-role offer IDs, posted menu channel/message IDs, solo exemption IDs, and weekly digest settings/cursors. Ordinary message contents are not stored. The seenlistcsv command exports a summary for current members, and sticky purge clears only saved roles. Red user-data export and deletion hooks return or remove all stored member records across servers. Stores bounded poll/event records, titles/options, creator and announcement IDs, times, member votes/RSVPs, private reminder opt-ins, and sent markers. User-data hooks export/delete personal choices and creator attribution; already delivered Discord messages remain.",
   "min_python_version": [
     3,
     10,

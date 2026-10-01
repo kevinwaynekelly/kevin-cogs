@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Community polls and events
+
+- Add persistent member poll voting and event attendance selectors, administrator creation/closing, offset-aware event times, optional private reminders, and matching slash actions.
+- Bound active/retained records and participant counts; close/prune expired records, persist successful reminder delivery, recover selectors after reload, and stop owned deliveries on unload. Export/delete personal votes, RSVPs, reminder settings, and creator attribution.
+
+
 ## 2026-10-01: Music discovery and fair queues
 
 - Add a requester-bound search-results picker with fresh permission checks and matching slash commands. Selection joins voice only after choosing a track.

@@ -69,7 +69,7 @@ async def test_native_group_and_leaf_help_show_descriptions_and_syntax(bot, guil
     formatter.make_and_send_embeds = AsyncMock()
     formatter.send_pages = AsyncMock()
     settings = HelpSettings(verify_checks=False, verify_exists=True)
-    root = bot.cogs["CommunityPlus"].get_commands()[0]
+    root = next(cmd for cmd in bot.cogs["CommunityPlus"].get_commands() if cmd.name == "community")
     for command in (root, root.get_command("welcome"), root.get_command("welcome channel")):
         await formatter.format_command_help(ctx, command, help_settings=settings)
         if embeds:
@@ -100,7 +100,9 @@ async def test_native_help_keeps_hidden_commands_and_aliases_filtered(bot, guild
     await formatter.format_bot_help(ctx, help_settings=HelpSettings(verify_checks=False))
     payload = formatter.make_and_send_embeds.await_args.args[1]
     assert not any("LogPlus" in field.name for field in payload["fields"])
-    community = bot.cogs["CommunityPlus"].get_commands()[0]
+    community = next(
+        cmd for cmd in bot.cogs["CommunityPlus"].get_commands() if cmd.name == "community"
+    )
     await formatter.format_command_help(
         ctx, community, help_settings=HelpSettings(verify_checks=False, verify_exists=True)
     )

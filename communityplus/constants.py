@@ -87,3 +87,5 @@ EVENT_COLOR = {
     "warn": discord.Color.orange(),
     "err": discord.Color.red(),
 }
+
+__red_end_user_data_statement__ += " Stores bounded poll/event records, titles/options, creator and announcement IDs, times, member votes/RSVPs, private reminder opt-ins, and sent markers. User-data hooks export/delete personal choices and creator attribution; already delivered Discord messages remain."

@@ -35,6 +35,7 @@ from .features import (
 )
 from .interactive import SetupView, close_views
 from .presentation import Presentation, settings
+from .social import SOCIAL_DEFAULTS, CommunitySocial
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ log = logging.getLogger(__name__)
 # ------------------------ defaults ------------------------
 
 
-class CommunityPlus(CommunityFeatures, redcommands.Cog):
+class CommunityPlus(CommunityFeatures, CommunitySocial, redcommands.Cog):
     """Community roles, notices, voice cleanup, and member activity."""
 
     async def cog_command_error(self, ctx, error):
@@ -56,7 +57,9 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
         self.bot: Red = bot
         self._presentation = Presentation("CommunityPlus", "community")
         self.config: Config = Config.get_conf(self, identifier=0xC0DE505, force_registration=True)
-        self.config.register_guild(**DEFAULTS_GUILD, features=FEATURE_DEFAULTS)
+        self.config.register_guild(
+            **DEFAULTS_GUILD, features=FEATURE_DEFAULTS, social=SOCIAL_DEFAULTS
+        )
         self.config.register_member(**DEFAULTS_MEMBER, participation=PARTICIPATION_DEFAULTS)
         self._solo_tasks = {}
         self._startup_task = None
@@ -68,6 +71,8 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
         self._role_views = {}
         self._views = set()
         self._closing = False
+        self._social_views = {}
+        self._social_locks = defaultdict(asyncio.Lock)
         self._settings_cache = {}
         self._settings_locks = defaultdict(asyncio.Lock)
 
@@ -75,6 +80,7 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
         await self.bot.wait_until_red_ready()
         for guild in self.bot.guilds:
             await self._restore_role_menus(guild)
+            await self._restore_social(guild)
             if await self.bot.cog_disabled_in_guild(self, guild):
                 continue
             for channel in (*guild.voice_channels, *guild.stage_channels):
@@ -1544,6 +1550,10 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
 
     async def cog_unload(self):
         self._closing = True
+        for view in self._social_views.values():
+            view.stop()
+        self._social_views.clear()
+        self._social_locks.clear()
         tasks = list(self._solo_tasks.values())
         if self._startup_task:
             tasks.append(self._startup_task)
@@ -1611,6 +1621,7 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
                 task.cancel()
 
     async def red_delete_data_for_user(self, *, requester, user_id):
+        await self._social_user_data(user_id, delete=True)
         for guild_id in await self.config.all_members():
             group = self.config.member_from_ids(guild_id, user_id)
             async with self._voice_locks[(guild_id, user_id)]:
@@ -1627,12 +1638,21 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
             for gid, members in (await self.config.all_members()).items()
             if user_id in members
         }
+        social = await self._social_user_data(user_id)
+        if social:
+            data["social"] = social
         return (
             {"communityplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
         )
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
+        for key in list(self._social_locks):
+            if key[0] == guild.id:
+                self._social_locks.pop(key)
+        for key, view in list(self._social_views.items()):
+            if key[0] == guild.id:
+                self._social_views.pop(key).stop()
         await self._cancel_guild_timers(guild.id)
         for key in list(self._voice_sessions):
             if key[0] == guild.id:

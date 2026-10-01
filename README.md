@@ -23,12 +23,12 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | Cog | Administrator setup | Member features |
 | --- | --- | --- |
 | AudioPlus | `[p]audioset setup` or `/audioset setup` | Playback buttons, seek/queue editing, private saved playlists/favorites, and optional listener vote skipping. |
-| CommunityPlus | `[p]community setup` or `/community setup` | `[p]roles` and posted safe self-service role pickers. Voice reports and weekly summaries retain administrator checks. |
+| CommunityPlus | `[p]community setup` or `/community setup` | `[p]roles`, polls, event RSVPs/reminders, and posted safe self-service role pickers. Voice reports and weekly summaries retain administrator checks. |
 | LevelPlus | `[p]level setup` or `/level setup` | Rank/lifetime boards, `[p]periodboard`, and season history. Administrators configure rewards, boosts, and farming controls. |
 | LogPlus | `[p]log setup` or `/log setup` | Administrator event routing, exemptions, permission diffs, raw-event coverage, and delivery status/retries. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The five cogs expose 205 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
+The five cogs expose 214 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
 
 ## Discord presentation
 
@@ -108,7 +108,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 166 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
+Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 175 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 

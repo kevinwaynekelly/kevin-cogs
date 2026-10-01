@@ -63,6 +63,9 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
 
         assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS
     if package == "communityplus":
+        from communityplus.social import SOCIAL_DEFAULTS
+
+        assert defaults["GUILD"].pop("social") == SOCIAL_DEFAULTS
         from communityplus.features import FEATURE_DEFAULTS, PARTICIPATION_DEFAULTS
 
         assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS
