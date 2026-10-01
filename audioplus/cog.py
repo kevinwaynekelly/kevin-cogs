@@ -282,6 +282,7 @@ class AudioPlus(commands.Cog):
             "**Backend** · Native Discord voice",
             "**Lavalink** · Not used",
             f"**Discord.py** · {discord.__version__}",
+            "**Discord voice** · " + ("Unavailable" if state["voice_error"] else "Ready"),
             f"**FFmpeg** · {state['ffmpeg']}",
         ]
         lines += [f"**{name}** · {version}" for name, version in state["packages"].items()]

@@ -46,7 +46,7 @@ AudioPlus can load before its local system dependencies are installed. Follow th
 [p]load audioplus
 ```
 
-The other cogs declare Red **3.5.0 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**; Downloader installs its declared Python dependencies. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. Restart Red after installing voice dependencies. Its guide includes an optional persistent container image recipe. The other cogs have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
+The other cogs declare Red **3.5.0 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**; Downloader installs its declared Python dependencies. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. It initializes voice libraries made available by Downloader after Discord.py startup. Restart Red when upgrading a voice library already loaded in the process. Its guide includes Deno installation commands and an optional persistent container image recipe. The other cogs have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
 
 These guides describe the current source. Compatibility metadata is not a record of live testing on every Red, Discord, or media-provider version.
 

@@ -171,6 +171,7 @@ async def test_pingnode_reports_local_packages_and_latest_failure(audio_runtime,
     await AudioPlus.audio_pingnode.callback(cog, ctx)
     output = ctx.send.await_args.kwargs["embed"].description
     assert "Native Discord voice" in output and "2026.8.19" in output and "Decoder failed" in output
+    assert "**Discord voice** · Ready" in output
     assert "Not used" in output and "Dependency checks do not test" in output
 
 
