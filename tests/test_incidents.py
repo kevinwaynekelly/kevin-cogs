@@ -96,3 +96,12 @@ async def test_incident_resolution_and_user_deletion_remove_identified_cases(bot
         await cog.incident_note.callback(cog, ctx, key, text="Too late.")
     await cog.red_delete_data_for_user(requester="discord_deleted_user", user_id=subject.id)
     assert not await cog.config.guild(guild).incident_cases()
+
+
+async def test_incident_budget_failure_does_not_save_new_case(bot, guild, monkeypatch):
+    cog = LogPlus(bot)
+    ctx = make_context(guild, author=make_member(guild))
+    monkeypatch.setattr("logplus.incidents.CASE_BYTES", 1)
+    with pytest.raises(Exception, match="storage limit"):
+        await cog.incident_create.callback(cog, ctx, "Too large")
+    assert not await cog.config.guild(guild).incident_cases()

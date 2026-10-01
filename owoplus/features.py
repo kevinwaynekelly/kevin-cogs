@@ -19,6 +19,7 @@ FEATURE_DEFAULTS = {
     "cooldown": 0,
     "syllables": {},
     "channel_styles": {},
+    "custom_styles": {},
 }
 
 STYLE_WORDS = {
@@ -56,20 +57,28 @@ def channel_features(channel, features, now=None):
         if entry and (not entry["expires"] or entry["expires"] > now):
             style = entry["style"]
             break
+    if style not in STYLE_WORDS and style not in features.get("custom_styles", {}):
+        style = "owo"
     return {**features, "style": style}
 
 
 def transform_style(text, features, case_like, *, full):
     """Keep URLs, mentions and emoji intact in the additional text styles."""
     parts = PROTECTED.split(text)
+    style = features["style"]
+    custom = features.get("custom_styles", {}).get(style, {})
     for index in range(0, len(parts), 2):
         mapped = replace_keywords(parts[index], features, case_like)
-        parts[index] = mapped.upper() if full and features["style"] == "robot" else mapped
+        parts[index] = (
+            mapped.upper() if full and (style == "robot" or custom.get("uppercase")) else mapped
+        )
     output = "".join(parts)
     if full and text.strip():
-        return (
-            f"Ahoy! {output} Arrr!" if features["style"] == "pirate" else f"[TRANSMISSION] {output}"
-        )
+        if style == "pirate":
+            return f"Ahoy! {output} Arrr!"
+        if style == "robot":
+            return f"[TRANSMISSION] {output}"
+        return custom.get("prefix", "") + output + custom.get("suffix", "")
     return output
 
 
@@ -83,7 +92,9 @@ def channel_allowed(channel, features):
 def word_map(features):
     if not features["keywords"]:
         return {}
-    words = {**STYLE_WORDS[features.get("style", "owo")], **features["words"]}
+    style = features.get("style", "owo")
+    base = STYLE_WORDS.get(style, features.get("custom_styles", {}).get(style, {}).get("words", {}))
+    words = {**base, **features["words"]}
     return {key: value for key, value in words.items() if value is not None}
 
 

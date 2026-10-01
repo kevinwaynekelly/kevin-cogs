@@ -63,7 +63,7 @@ FIELDS = {
         "history_settings",
         "alert_settings",
     ),
-    "OwoPlus": ("enabled", "one_in", "owner_bypass", "haiku_enabled", "features"),
+    "OwoPlus": ("enabled", "one_in", "owner_bypass", "haiku_enabled", "features", "fun_settings"),
 }
 EXCLUDED = {
     "CommunityPlus": ("features.role_menus", "features.summary.last_week"),
@@ -90,6 +90,7 @@ MAP_PATHS = {
     "features.words",
     "features.syllables",
     "features.channel_styles",
+    "features.custom_styles",
     "progress_settings.goals",
 }
 ENUMS = {
@@ -228,6 +229,40 @@ def server_id(guild, value, path, *, role=False, grant=False, text=False):
 
 
 def validate_map(guild, path, value):
+    if path == "features.custom_styles":
+        if len(value) > 10:
+            fail(path)
+        for name, item in value.items():
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", name) or name in {
+                "owo",
+                "pirate",
+                "robot",
+            }:
+                fail(path)
+            if not isinstance(item, dict) or set(item) != {
+                "words",
+                "prefix",
+                "suffix",
+                "uppercase",
+            }:
+                fail(path)
+            if (
+                not isinstance(item["words"], dict)
+                or len(item["words"]) > 50
+                or type(item["uppercase"]) is not bool
+            ):
+                fail(path)
+            for text in (item["prefix"], item["suffix"]):
+                if (
+                    not isinstance(text, str)
+                    or len(text) > 80
+                    or any(ord(char) < 32 for char in text)
+                ):
+                    fail(path)
+            validate_map(guild, "features.words", item["words"])
+            if any(word is None for word in item["words"].values()):
+                fail(path)
+        return
     if path == "progress_settings.goals":
         if len(value) > 25:
             fail(path)
@@ -285,7 +320,8 @@ def validate_map(guild, path, value):
             if (
                 not isinstance(item, dict)
                 or set(item) != {"style", "expires"}
-                or item["style"] not in {"owo", "pirate", "robot"}
+                or not isinstance(item["style"], str)
+                or not re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", item["style"])
                 or type(item["expires"]) not in {int, float}
                 or not math.isfinite(item["expires"])
                 or not 0 <= item["expires"] < 2**53
@@ -316,6 +352,19 @@ def validate_fields(guild, expected, incoming, path=""):
         else:
             if set(expected) != set(incoming):
                 fail(path)
+            if path == "features" and "custom_styles" in incoming:
+                if not isinstance(incoming["custom_styles"], dict) or not isinstance(
+                    incoming["channel_styles"], dict
+                ):
+                    fail("features.custom_styles")
+                valid_styles = {"owo", "pirate", "robot", *incoming["custom_styles"]}
+                if any(
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("style"), str)
+                    or item.get("style") not in valid_styles
+                    for item in incoming["channel_styles"].values()
+                ):
+                    fail("features.channel_styles")
             for key in expected:
                 validate_fields(guild, expected[key], incoming[key], f"{path}.{key}".lstrip("."))
     elif isinstance(expected, list):

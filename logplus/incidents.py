@@ -8,6 +8,7 @@ import re
 import time
 import uuid
 from collections import deque
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -380,13 +381,22 @@ class IncidentCommands:
         if len(json.dumps(cases).encode()) > CASE_BYTES:
             raise commands.BadArgument("The server case storage limit was reached.")
 
+    @asynccontextmanager
+    async def _case_edit(self, guild_id):
+        section = self.config.guild_from_id(guild_id).incident_cases
+        async with section.get_lock():
+            cases = await section()
+            yield cases
+            self._case_budget(cases)
+            await section.set(cases)
+
     @incident.command(name="create")
     async def incident_create(self, ctx, title: str, member: Optional[discord.Member] = None):
         """Open a staff case, optionally identifying a server member."""
         if not 1 <= len(title.strip()) <= 200:
             raise commands.BadArgument("Use a case title of 1 to 200 characters.")
         key = uuid.uuid4().hex[:12]
-        async with self.config.guild(ctx.guild).incident_cases() as cases:
+        async with self._case_edit(ctx.guild.id) as cases:
             if len(cases) >= CASE_LIMIT:
                 raise commands.BadArgument(
                     "The server retains up to 25 cases. Delete an old case first."
@@ -408,7 +418,7 @@ class IncidentCommands:
         """Add a bounded staff note to an open incident."""
         if not 1 <= len(text.strip()) <= 1000:
             raise commands.BadArgument("Use a note of 1 to 1000 characters.")
-        async with self.config.guild(ctx.guild).incident_cases() as cases:
+        async with self._case_edit(ctx.guild.id) as cases:
             row = cases.get(identifier)
             if not row or row["resolution"] or len(row["notes"]) >= 10:
                 raise commands.BadArgument("Choose an open case with fewer than ten notes.")
@@ -422,8 +432,7 @@ class IncidentCommands:
     async def incident_attach(self, ctx, identifier: str, member: discord.Member, days: int = 1):
         """Attach up to ten retained log records for a member."""
         records = await self._history_query(ctx.guild, member_id=member.id, days=days, limit=10)
-        section = self.config.guild(ctx.guild).incident_cases
-        async with section() as cases:
+        async with self._case_edit(ctx.guild.id) as cases:
             row = cases.get(identifier)
             if not row or row["resolution"]:
                 raise commands.BadArgument("Choose an open incident.")
@@ -452,7 +461,7 @@ class IncidentCommands:
         """Resolve an incident with a final staff summary."""
         if not 1 <= len(resolution.strip()) <= 1000:
             raise commands.BadArgument("Use a resolution of 1 to 1000 characters.")
-        async with self.config.guild(ctx.guild).incident_cases() as cases:
+        async with self._case_edit(ctx.guild.id) as cases:
             row = cases.get(identifier)
             if not row or row["resolution"]:
                 raise commands.BadArgument("Choose an open incident.")

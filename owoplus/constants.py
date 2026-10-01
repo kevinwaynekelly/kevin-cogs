@@ -9,7 +9,13 @@ __red_end_user_data_statement__ = (
     "This cog stores per-guild preferences for webhook-based message transformation "
     "(enable flag, 1-in-N owo probability, per-user overrides, owner bypass, and haiku toggle). "
     "It also stores channel scopes, personal opt-out member IDs, custom word replacements, "
-    "syllable corrections, channel style/expiry settings, and intensity/cooldown preferences. It does not store message contents."
+    "syllable corrections, custom style dictionaries/decorations, channel style/expiry settings, and intensity/cooldown preferences. "
+    "Explicit haiku submissions, author/approver/contest-creator IDs, member votes, deadlines and winner references are stored "
+    "for up to 90 days, with up to 100 hall submissions, ten contests of 50 entries/500 voters, and a combined 1 MiB limit. "
+    "Original transformed-message text is retained only in memory for two minutes, up to 50 active Undo records. "
+    "Ordinary chat history is not persisted. Webhook copies and announcements remain in Discord until removed there. "
+    "Red data hooks export personal settings, haiku/votes/attribution and active Undo text; deletion removes personal "
+    "records and Undo text and anonymizes attribution on others' submissions."
 )
 
 DEFAULTS_GUILD = {

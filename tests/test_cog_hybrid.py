@@ -171,6 +171,42 @@ async def test_rankcard_runs_through_red_and_honors_original_show_disable(comman
     assert all("file" not in call.kwargs for call in ctx.send.await_args_list)
 
 
+async def test_new_fun_commands_use_real_prefix_and_slash_pipeline(command_runtime, monkeypatch):
+    bot, loaded, member, invoke = command_runtime
+    bot.owner_ids.add(member.id)
+    cog = bot.get_cog("OwoPlus")
+    ctx = await invoke('!customstyle create space {"hello":"greetings"}')
+    assert not ctx.command_failed
+    ctx = await invoke("!stylize space hello")
+    assert not ctx.command_failed
+    assert "greetings" in ctx.send.call_args.kwargs["embed"].description
+    ctx = await invoke_slash(
+        bot,
+        invoke,
+        monkeypatch,
+        "customstyle decorate",
+        name="space",
+        prefix="[SPACE] ",
+        suffix=" END",
+        uppercase=True,
+    )
+    assert not ctx.command_failed
+    assert (await cog.config.guild(member.guild).features())["custom_styles"]["space"]["uppercase"]
+    ctx = await invoke("!haikucontest create 1 Autumn poems")
+    assert not ctx.command_failed
+    key = next(iter((await cog.config.guild(member.guild).poetry())["contests"]))
+    ctx = await invoke_slash(
+        bot,
+        invoke,
+        monkeypatch,
+        "haikucontest submit",
+        contest_id=key,
+        text="the sun is so bright the sky is so blue and clear we go home at night",
+    )
+    assert not ctx.command_failed
+    assert len((await cog.config.guild(member.guild).poetry())["contests"][key]["entries"]) == 1
+
+
 @pytest.mark.parametrize("slash", [False, True])
 @pytest.mark.parametrize("owner", [False, True])
 async def test_formula_calibration_accepts_lowercase_slash_options_and_keeps_prefix_checks(

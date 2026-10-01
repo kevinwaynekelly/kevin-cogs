@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01: Custom styles, reversible transformations and haiku activities
+
+- Add bounded named style dictionaries/decorations and accept custom names in existing channel styles and previews, preserving protected code, links, mentions and emoji.
+- Add two-minute author-only Undo controls on separate bot cards with current permission checks, attachment-preserving text restoration, failure rollback and unload/privacy cleanup. Keep successful reposts when control delivery fails or unload starts after original deletion.
+- Add explicitly submitted, moderator-approved haiku collections and timed contests with unique votes, deterministic winners, owned maintenance, retention/byte limits and user-data hooks.
+- Validate haiku and incident storage budgets before writing. Red dictionary contexts otherwise save mutations even when their body raises a validation error.
+
 ## 2026-10-01: Moderation alerts and incident cases
 
 - Add opt-in threshold/window alerts for joins, logical deletion events and actual permission edits, plus aggregate daily moderation summaries independent of delivery retries.

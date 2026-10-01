@@ -97,6 +97,26 @@ async def test_map_restore_replaces_dictionary_and_keeps_omitted_members(hub_run
     assert not await cog.config.guild(member.guild).features.words()
 
 
+async def test_custom_styles_restore_without_poetry_or_undo_records(hub_runtime):
+    bot, hub, member, invoke = hub_runtime
+    await invoke('!customstyle create space {"hello":"greetings"}')
+    ctx = await invoke("!settings")
+    bundle = await hub._backup_bundle(ctx)
+    bundle["cogs"] = {"OwoPlus": bundle["cogs"]["OwoPlus"]}
+    assert "poetry" not in bundle["cogs"]["OwoPlus"]
+    assert bundle["cogs"]["OwoPlus"]["features"]["custom_styles"]["space"]["words"] == {
+        "hello": "greetings"
+    }
+    selected = await hub._validate_bundle(ctx, bundle)
+    await hub._apply_bundle(ctx, bundle, selected)
+    invalid = deepcopy(bundle)
+    invalid["cogs"]["OwoPlus"]["features"]["channel_styles"] = {
+        str(ctx.channel.id): {"style": "unknown", "expires": 0}
+    }
+    with pytest.raises(commands.BadArgument):
+        await hub._validate_bundle(ctx, invalid)
+
+
 @pytest.mark.parametrize(
     "raw",
     [b'{"schema":1,"schema":1}', b'{"schema":NaN}', b"[]", b"{}", b"x" * (256 * 1024 + 1), b"\xff"],

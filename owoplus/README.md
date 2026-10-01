@@ -45,7 +45,7 @@ Reposted messages suppress mentions and split long output into parts. All attach
 
 ## Slash commands
 
-The command root is `owo`; the old `owoplus` command name is removed. Installation and reload still use `owoplus`. Enable all 37 slash actions once as the bot owner:
+The command root is `owo`; installation and reload still use `owoplus`. Enable the cog's slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog owoplus
@@ -112,9 +112,9 @@ Detection considers English alphabetic words, accepts 3 to 32 words and at most 
 
 ## Stored data
 
-Red Config stores server settings, channel scope IDs, custom words and syllable corrections, intensity/cooldown preferences, and member IDs associated with probability overrides or personal opt-outs. It does not persist message contents in Config. Webhook references and syllable lookup caches are held in memory. Transformed text, copied attachments, and the author's display name/avatar are sent to Discord as webhook messages and remain there until removed.
+Red Config stores server settings, channel scope IDs, style dictionaries and decorations, custom words and syllable corrections, intensity/cooldown preferences, and member IDs associated with probability overrides or personal opt-outs. Explicit haiku submissions, author/approver/contest-creator IDs, votes, deadlines and results are stored for up to 90 days. No ordinary chat history is persisted. Undo holds original text only in memory for two minutes, up to 50 active records across servers. Webhook references and syllable lookup caches are held in memory. Transformed text, copied attachments, and the author's display name/avatar are sent to Discord as webhook messages and remain there until removed.
 
-Red's user-data export/deletion hooks return or remove probability overrides and personal opt-outs across servers. Already-posted webhook messages are managed in Discord.
+Red's user-data hooks export personal settings, submitted haiku, votes, attribution and active Undo text. Deletion removes personal settings/submissions/votes, clears active Undo text, anonymizes approval/creator attribution on other submissions and removes affected winner references. Already-posted webhook messages and announcements are managed in Discord.
 
 ## Channel styles and temporary modes
 
@@ -122,4 +122,44 @@ Red's user-data export/deletion hooks return or remove probability overrides and
 
 Pirate and robot styles use their own whole-word dictionaries. Full pirate transformations add an Ahoy/Arrr frame; full robot transformations use uppercase transmission text. Both preserve URLs, mentions, emoji, and code. Custom words apply to every style and haiku retains priority. Probabilities, scopes, opt-outs, and cooldowns still apply. `[p]stylize <owo|pirate|robot> <text>` is a member preview without reposting or deleting messages. All style controls and the member preview have slash equivalents.
 
-Channel IDs, style names, and expiry timestamps are saved in the additive `features.channel_styles` map. Expired entries are pruned when setting a new style, and deleted channels are removed. No message content or additional member records are collected.
+Channel IDs, style names, and expiry timestamps are saved in the additive `features.channel_styles` map. Expired entries are pruned when setting a new style, and deleted channels are removed.
+
+## Custom styles and author Undo
+
+These member and administrator commands also have slash versions:
+
+| Command | Access and behavior |
+| --- | --- |
+| `[p]customstyle` | Members list named styles. |
+| `[p]customstyle create space {"hello":"greetings","friend":"pilot"}` | Administrators create a whole-word dictionary. |
+| `[p]customstyle decorate space "[SPACE] " " END" True` | Administrators set prefix, suffix and uppercase mode. Quote spaces in text commands; slash options are separate fields. |
+| `[p]customstyle delete space` | Administrators remove a style and its channel overrides. |
+| `[p]stylize space <text>` | Members preview a custom or built-in style. |
+| `[p]owo style set #channel space [minutes]` | Administrators select a custom or built-in channel style. |
+| `[p]owoundo [original_message_id]` | Authors restore their latest transformed message in the current channel. |
+| `[p]owoundoset <enabled>` | Administrators toggle Undo controls for future reposts; default enabled. |
+
+Keep up to ten custom styles, each with 50 word replacements, 60-character replacements and 80-character prefix/suffix. Styles use plain word dictionaries, not executable expressions. Links, mentions, emoji and code keep their content. Global custom words override style dictionaries. `stylize` and `owo style set` now accept a style name rather than a fixed slash choice list. Built-in names are reserved.
+
+After a successful repost, a separate bot card offers **Undo transformation** for the original author. Each click repeats current Red command, server, channel and author checks. Undo edits the webhook copies back to the original text, retains attachments and removes extra transformed parts. The original Discord message ID cannot be recreated. A failed restore attempts to roll back changed text so the author can retry. A failed control card never removes a successful repost. Originals longer than 4,000 UTF-16 units have no Undo record. Controls expire after two minutes or unload and older records expire when the 50-record limit is reached.
+
+## Haiku hall and contests
+
+| Command | Access and behavior |
+| --- | --- |
+| `[p]haikuhall [entry_id]` | Members browse up to 20 recent approved submissions or view one haiku. |
+| `[p]haikuhall submit <text>` | Members explicitly submit their own detected 5-7-5 haiku. |
+| `[p]haikuhall review` | Administrators review pending text. |
+| `[p]haikuhall approve <entry_id> [approved=True]` | Administrators approve a submission, or reject and remove it with `False`. |
+| `[p]haikuhall remove <entry_id>` | Authors remove their own submissions; administrators can remove any. |
+| `[p]haikucontest [contest_id]` | Members browse contests, entries and vote counts. |
+| `[p]haikucontest create <hours> <title>` | Administrators create a 1 to 168 hour contest in the current channel. |
+| `[p]haikucontest submit <contest_id> <text>` | Members enter once per contest. |
+| `[p]haikucontest vote <contest_id> <entry_id>` | Members cast or change one vote; self-votes are rejected. |
+| `[p]haikucontest withdraw <contest_id>` | Authors withdraw an entry and its votes before the deadline. |
+| `[p]haikucontest close <contest_id>` | Administrators close early and announce the winner. |
+| `[p]haikucontest delete <contest_id>` | Administrators delete stored entries, votes and results. |
+
+All actions have slash equivalents. English meter detection uses the same approximate engine and server syllable corrections as `haiku`. Text is limited to 300 characters. Ordinary automatic haiku reposts do not enter the hall or a contest. Pending hall text is visible only to its author and administrators until approved. Keep up to 100 hall submissions, three pending per author, ten contests, 50 entries and 500 voters per contest, with a combined 1 MiB storage budget validated before saving. Records expire 90 days after creation, with hourly pruning even for inactive servers.
+
+Voting stops at the deadline. An owned minute task closes expired contests and retries unavailable winner announcements. Most votes wins; ties go to the earliest submission, then entry ID. Results persist across reloads. Successful announcements are marked to avoid routine duplicate deliveries, although a process crash between sending and saving can repeat a notice. Cogs disabled in the server do not close or announce contests until enabled again. Winning entries enter the hall only through normal submission and approval.
