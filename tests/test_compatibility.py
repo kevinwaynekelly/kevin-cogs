@@ -53,4 +53,9 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
         from audioplus.features import DEFAULTS_GUILD
 
         assert defaults.pop("GUILD") == DEFAULTS_GUILD
+    if package == "levelplus":
+        from levelplus.features import FEATURE_DEFAULTS_GUILD
+
+        for key, value in FEATURE_DEFAULTS_GUILD.items():
+            assert defaults["GUILD"].pop(key) == value
     assert defaults == BASELINE[package]["defaults"]

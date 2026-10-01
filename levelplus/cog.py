@@ -10,6 +10,7 @@ import random
 import re
 import time
 from collections import OrderedDict, defaultdict
+from contextlib import AsyncExitStack
 from fractions import Fraction
 from heapq import nlargest
 from types import SimpleNamespace
@@ -25,6 +26,19 @@ from redbot.core.config import Config
 from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
 from .constants import DEFAULTS_GUILD, WORD_RE
 from .events import guild_enabled
+from .features import (
+    FEATURE_DEFAULTS_GUILD,
+    boosted_amount,
+    day_at,
+    forget_user,
+    message_allowed,
+    period_totals,
+    record_period,
+    safe_role,
+    user_periods,
+    valid_timezone,
+)
+from .interactive import SetupView, close_views
 from .levels import cumulative_xp, level_from_xp
 from .presentation import Presentation, settings
 
@@ -45,16 +59,21 @@ class LevelPlus(redcommands.Cog):
         self.bot: Red = bot
         self._presentation = Presentation("LevelPlus", "level")
         self.config: Config = Config.get_conf(self, identifier=0x1EAF01, force_registration=True)
-        self.config.register_guild(**DEFAULTS_GUILD)
+        self.config.register_guild(**DEFAULTS_GUILD, **FEATURE_DEFAULTS_GUILD)
 
         self._settings_cache = {}
         self._settings_locks = defaultdict(asyncio.Lock)
         self._last_msg = OrderedDict()
         self._last_rxn = OrderedDict()
         self._last_voice = OrderedDict()
+        self._recent_messages = OrderedDict()
+        self._reaction_once = OrderedDict()
+        self._reward_locks = defaultdict(asyncio.Lock)
+        self._views = set()
 
-    def cog_unload(self) -> None:
+    async def cog_unload(self) -> None:
         self.voice_tick.cancel()
+        await close_views(self)
 
     # ---------- helpers ----------
     async def _g(self, guild: discord.Guild):
@@ -78,16 +97,105 @@ class LevelPlus(redcommands.Cog):
         group = self.config.guild(guild)
         async with group.xp.get_lock():
             await group.set_raw("xp", str(user_id), value=max(0, int(value)))
+        member = guild.get_member(user_id)
+        if member:
+            await self._sync_rewards(member)
 
-    async def _add_xp(self, guild, user, amount):
+    async def _add_xp(self, guild, user, amount, *, source=None, channel=None):
+        return (await self._award_batch(guild, [(user, amount, channel)], source))[0][1:]
+
+    async def _award_batch(self, guild, updates, source):
         settings = await self._settings(guild)
         group = self.config.guild(guild)
+        features = settings["xp_features"]
+        now = time.time()
+        day = day_at(now, features["timezone"])
+        results = []
         async with group.xp.get_lock():
-            old_xp = await self._get_xp(guild, user.id)
-            new_xp = old_xp + max(0, int(amount))
-            if new_xp != old_xp:
-                await group.set_raw("xp", str(user.id), value=new_xp)
-        return self._level(old_xp, settings), self._level(new_xp, settings)
+            async with AsyncExitStack() as stack:
+                cap = (
+                    await stack.enter_async_context(group.earned_today())
+                    if source and features["daily_cap"]
+                    else None
+                )
+                periods = (
+                    await stack.enter_async_context(group.period_xp())
+                    if source and features["periods"]
+                    else None
+                )
+                if cap is not None and cap["day"] != day.isoformat():
+                    cap.update(day=day.isoformat(), xp={})
+                data = await group.xp() if len(updates) > 1 else None
+                for member, amount, channel in updates:
+                    uid = str(member.id)
+                    amount = (
+                        boosted_amount(amount, member, channel, features, now)
+                        if source
+                        else max(0, int(amount))
+                    )
+                    if cap is not None:
+                        amount = min(amount, max(0, features["daily_cap"] - cap["xp"].get(uid, 0)))
+                        cap["xp"][uid] = cap["xp"].get(uid, 0) + amount
+                    old_xp = (
+                        int(data.get(uid, 0))
+                        if data is not None
+                        else await self._get_xp(guild, member.id)
+                    )
+                    new_xp = old_xp + amount
+                    if amount:
+                        if data is not None:
+                            data[uid] = new_xp
+                        else:
+                            await group.set_raw("xp", uid, value=new_xp)
+                        if periods is not None:
+                            record_period(periods, uid, amount, day, now)
+                    results.append(
+                        (member, self._level(old_xp, settings), self._level(new_xp, settings))
+                    )
+                if data is not None:
+                    await group.xp.set(data)
+        return results
+
+    async def _sync_rewards(self, member):
+        settings = await self._settings(member.guild)
+        rewards = settings["rewards"]
+        if (
+            not rewards["roles"]
+            or not member.guild.me
+            or not member.guild.me.guild_permissions.manage_roles
+        ):
+            return
+        async with self._reward_locks[(member.guild.id, member.id)]:
+            level = await self.current_level(member.guild, member.id)
+            eligible = []
+            managed = []
+            for key, threshold in rewards["roles"].items():
+                role = member.guild.get_role(int(key))
+                if role is None:
+                    continue
+                try:
+                    safe_role(member.guild, role)
+                except redcommands.BadArgument:
+                    continue
+                managed.append(role)
+                if level >= threshold:
+                    eligible.append((threshold, role))
+            desired = (
+                [role for _, role in eligible]
+                if rewards["stack"]
+                else [max(eligible, key=lambda item: (item[0], item[1].id))[1]]
+                if eligible
+                else []
+            )
+            add = [role for role in desired if role not in member.roles]
+            remove = [role for role in managed if role not in desired and role in member.roles]
+            try:
+                if add:
+                    await member.add_roles(*add, reason="Level milestone rewards")
+                if remove:
+                    await member.remove_roles(*remove, reason="Level milestone rewards")
+            except discord.HTTPException:
+                log.debug("Could not synchronize milestone roles", exc_info=True)
 
     async def current_level(self, guild, user_id):
         return self._level(await self._get_xp(guild, user_id), await self._settings(guild))
@@ -95,6 +203,7 @@ class LevelPlus(redcommands.Cog):
     async def maybe_announce_levelup(
         self, guild: discord.Guild, member: discord.Member, old: int, new: int
     ) -> None:
+        await self._sync_rewards(member)
         if new <= old:
             return
         conf = (await self._settings(guild))["levelup"]
@@ -161,12 +270,34 @@ class LevelPlus(redcommands.Cog):
             amount = words * max(1, minimum)
             if maximum:
                 amount = min(amount, maximum)
-        if amount <= 0 or not self._cooldown(
+        if amount <= 0:
+            return
+        if not message_allowed(
+            self._recent_messages,
+            message.guild.id,
+            message.author.id,
+            message.content or "",
+            settings["xp_features"],
+            time.time(),
+            remember=False,
+        ):
+            return
+        if not self._cooldown(
             self._last_msg, (message.guild.id, message.author.id), int(conf["cooldown"])
         ):
             return
+        message_allowed(
+            self._recent_messages,
+            message.guild.id,
+            message.author.id,
+            message.content or "",
+            settings["xp_features"],
+            time.time(),
+        )
         await self._remember_name(message.guild, message.author)
-        old, new = await self._add_xp(message.guild, message.author, amount)
+        old, new = await self._add_xp(
+            message.guild, message.author, amount, source="message", channel=message.channel
+        )
         await self.maybe_announce_levelup(message.guild, message.author, old, new)
 
     @commands.Cog.listener()
@@ -188,6 +319,14 @@ class LevelPlus(redcommands.Cog):
             return
         if not self._cooldown(self._last_rxn, (guild.id, payload.user_id), int(conf["cooldown"])):
             return
+        if settings["xp_features"]["reaction_once"]:
+            key = (guild.id, payload.user_id, payload.message_id)
+            now = time.monotonic()
+            if now - self._reaction_once.get(key, -86401) < 86400:
+                return
+            self._reaction_once[key] = now
+            while len(self._reaction_once) > 50000:
+                self._reaction_once.popitem(last=False)
         targets = [reactor] if awards in {"both", "reactor"} else []
         if awards in {"both", "author"}:
             message = discord.utils.get(self.bot.cached_messages, id=payload.message_id)
@@ -208,7 +347,7 @@ class LevelPlus(redcommands.Cog):
         value = random.randint(max(0, int(conf["min"])), max(0, int(conf["min"]), int(conf["max"])))
         for member in targets:
             await self._remember_name(guild, member)
-            old, new = await self._add_xp(guild, member, value)
+            old, new = await self._add_xp(guild, member, value, source="reaction", channel=channel)
             await self.maybe_announce_levelup(guild, member, old, new)
 
     @tasks.loop(seconds=20.0)
@@ -254,21 +393,10 @@ class LevelPlus(redcommands.Cog):
                                 max(0, int(conf["min"]), int(conf["max"])),
                             )
                             if amount:
-                                updates.append((member, amount))
+                                updates.append((member, amount, channel))
                 if not updates:
                     continue
-                announcements = []
-                async with self.config.guild(guild).xp() as data:
-                    for member, amount in updates:
-                        uid = str(member.id)
-                        old_xp = int(data.get(uid, 0))
-                        data[uid] = old_xp + amount
-                        old, new = (
-                            self._level(old_xp, settings),
-                            self._level(data[uid], settings),
-                        )
-                        if new > old:
-                            announcements.append((member, old, new))
+                announcements = await self._award_batch(guild, updates, "voice")
                 for member, old, new in announcements:
                     await self.maybe_announce_levelup(guild, member, old, new)
             except Exception:
@@ -299,7 +427,11 @@ class LevelPlus(redcommands.Cog):
             return
         await self._remember_name(interaction.guild, interaction.user)
         old, new = await self._add_xp(
-            interaction.guild, interaction.user, max(1, int(settings["message"]["min"]))
+            interaction.guild,
+            interaction.user,
+            max(1, int(settings["message"]["min"])),
+            source="slash",
+            channel=interaction.channel,
         )
         await self.maybe_announce_levelup(interaction.guild, interaction.user, old, new)
 
@@ -1343,7 +1475,10 @@ class LevelPlus(redcommands.Cog):
             if cached is not None and now - cached[0] < 5:
                 return cached[1]
             group = self.config.guild(guild)
-            keys = [key for key in DEFAULTS_GUILD if key not in {"xp", "names"}]
+            keys = [key for key in DEFAULTS_GUILD if key not in {"xp", "names"}] + [
+                "xp_features",
+                "rewards",
+            ]
             values = await asyncio.gather(*(group.get_attr(key)() for key in keys))
             settings = dict(zip(keys, values))
             self._settings_cache[guild.id] = (now, settings)
@@ -1395,6 +1530,273 @@ class LevelPlus(redcommands.Cog):
             return False
         return True
 
+    @level.group(name="rewards", autohelp=False)
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def rewards(self, ctx):
+        """Configure roles awarded at level milestones."""
+        data = await self.config.guild(ctx.guild).rewards()
+        lines = [
+            f"<@&{role}> · Level {threshold}"
+            for role, threshold in sorted(data["roles"].items(), key=lambda item: item[1])
+        ]
+        await self._reply(
+            ctx,
+            f"Keep all qualified rewards: {data['stack']}\n"
+            + ("\n".join(lines) or "No reward roles. Use level rewards add <role> <level>."),
+        )
+
+    @rewards.command(name="add")
+    async def rewards_add(self, ctx, role: discord.Role, threshold: int):
+        """Award a role at the specified level."""
+        if not 1 <= threshold <= 100000:
+            raise redcommands.BadArgument("Choose a level from 1 through 100000.")
+        safe_role(ctx.guild, role)
+        async with self.config.guild(ctx.guild).rewards() as data:
+            if len(data["roles"]) >= 100 and str(role.id) not in data["roles"]:
+                raise redcommands.BadArgument("You can configure up to 100 reward roles.")
+            data["roles"][str(role.id)] = threshold
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @rewards.command(name="remove")
+    async def rewards_remove(self, ctx, role: discord.Role):
+        """Stop managing a configured reward role."""
+        async with self.config.guild(ctx.guild).rewards() as data:
+            data["roles"].pop(str(role.id), None)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._reply(
+            ctx, "Reward removed. Existing assignments of this role are retained.", tone="success"
+        )
+
+    @rewards.command(name="stack")
+    async def rewards_stack(self, ctx, enabled: bool):
+        """Keep all qualified rewards or only the highest."""
+        await self.config.guild(ctx.guild).rewards.stack.set(enabled)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @rewards.command(name="sync")
+    async def rewards_sync(self, ctx, member: Optional[discord.Member] = None):
+        """Reconcile a member's milestone reward roles."""
+        await self._sync_rewards(member or ctx.author)
+        await self._reply(
+            ctx,
+            "Checked milestone roles. The bot needs Manage Roles and a higher role to assign them.",
+            tone="success",
+        )
+
+    @redcommands.hybrid_command(name="periodboard")
+    @redcommands.guild_only()
+    async def periodboard(self, ctx, period: str = "week", top: int = 10):
+        """Show weekly, monthly, or current-season earned XP."""
+        conf = await self.config.guild(ctx.guild).xp_features()
+        data = await self.config.guild(ctx.guild).period_xp()
+        totals = period_totals(data, period.lower(), day_at(time.time(), conf["timezone"]))
+        ordered = nlargest(max(1, min(50, top)), totals.items(), key=lambda item: item[1])
+        names = await self.config.guild(ctx.guild).names()
+        lines = []
+        for index, (uid, xp) in enumerate(ordered, 1):
+            member = ctx.guild.get_member(int(uid))
+            name = member.display_name if member else names.get(uid, uid)
+            lines.append(f"{index}. **{discord.utils.escape_markdown(name)}** · {xp:,} earned XP")
+        label = data["season_name"] if period == "season" else period.title()
+        await self._reply(
+            ctx,
+            "\n".join(lines) or "No earned XP recorded in this period yet.",
+            title=f"{label} leaderboard",
+        )
+
+    @level.group(name="season", autohelp=False)
+    async def season(self, ctx):
+        """Manage seasonal and calendar XP leaderboards."""
+        data = await self.config.guild(ctx.guild).period_xp()
+        conf = await self.config.guild(ctx.guild).xp_features()
+        await self._reply(
+            ctx,
+            f"Season: **{data['season_name']}**\nCalendar tracking: {conf['periods']}\nTimezone: {conf['timezone']}\nUse periodboard week, month, or season. Lifetime XP stays separate.",
+        )
+
+    @season.command(name="start")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def season_start(self, ctx, *, name: str):
+        """Archive the current season and start another."""
+        name = name.strip()
+        if not name or len(name) > 40:
+            raise redcommands.BadArgument("Use a season name of 1 to 40 characters.")
+        async with self.config.guild(ctx.guild).period_xp() as data:
+            if data["season"]:
+                data["archives"].append(
+                    {
+                        "name": data["season_name"],
+                        "ended": int(time.time()),
+                        "xp": dict(nlargest(50, data["season"].items(), key=lambda item: item[1])),
+                    }
+                )
+                data["archives"] = data["archives"][-5:]
+            data.update(season_name=name, season_start=int(time.time()), season={})
+        await self._reply(
+            ctx,
+            f"Started **{discord.utils.escape_markdown(name)}**. Lifetime and calendar XP are preserved.",
+            tone="success",
+        )
+
+    @season.command(name="history")
+    async def season_history(self, ctx):
+        """Show the five most recently archived seasons."""
+        data = await self.config.guild(ctx.guild).period_xp()
+        lines = [
+            f"**{discord.utils.escape_markdown(item['name'])}** · <t:{item['ended']}:d> · {len(item['xp'])} archived leaders"
+            for item in reversed(data["archives"])
+        ]
+        await self._reply(ctx, "\n".join(lines) or "No archived seasons.")
+
+    @season.command(name="enable")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def season_enable(self, ctx, enabled: bool):
+        """Enable or pause calendar and seasonal XP tracking."""
+        await self.config.guild(ctx.guild).xp_features.periods.set(enabled)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @season.command(name="timezone")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def season_timezone(self, ctx, zone: str):
+        """Choose an IANA timezone for calendar boundaries."""
+        await self.config.guild(ctx.guild).xp_features.timezone.set(valid_timezone(zone))
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @level.command(name="boost")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def boost(
+        self,
+        ctx,
+        factor: Optional[float] = None,
+        minutes: int = 60,
+        role: Optional[discord.Role] = None,
+        channel: Optional[discord.TextChannel] = None,
+    ):
+        """Show or schedule a temporary earned-XP boost."""
+        if factor is None:
+            conf = await self.config.guild(ctx.guild).xp_features()
+            lines = [
+                f"{item['factor']:g}× until <t:{int(item['expires'])}:f> · Role {item['role'] or 'Any'} · Channel {item['channel'] or 'Any'}"
+                for item in conf["boosts"]
+                if item["expires"] > time.time()
+            ]
+            return await self._reply(
+                ctx, "\n".join(lines) or "No active XP boosts. Factor 1 clears all boosts."
+            )
+        if not math.isfinite(factor) or not 1 <= factor <= 10 or not 1 <= minutes <= 43200:
+            raise redcommands.BadArgument(
+                "Use a factor from 1 to 10 and a duration of 1 to 43200 minutes."
+            )
+        async with self.config.guild(ctx.guild).xp_features() as data:
+            data["boosts"] = [item for item in data["boosts"] if item["expires"] > time.time()]
+            if factor == 1:
+                data["boosts"] = []
+            else:
+                if len(data["boosts"]) >= 5:
+                    raise redcommands.BadArgument(
+                        "Up to five boosts can be active. Clear them with factor 1."
+                    )
+                data["boosts"].append(
+                    {
+                        "factor": factor,
+                        "expires": time.time() + minutes * 60,
+                        "role": role.id if role else None,
+                        "channel": channel.id if channel else None,
+                    }
+                )
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @level.group(name="guard", autohelp=False)
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def guard(self, ctx):
+        """Configure XP farming limits."""
+        data = await self.config.guild(ctx.guild).xp_features()
+        await self._reply(
+            ctx,
+            f"Repeat-message window: {data['repeat_seconds']}s\nReaction once per message/24h: {data['reaction_once']}\nDaily earned XP cap: {data['daily_cap'] or 'Unlimited'}\nMinimum message words: {data['min_words']}",
+        )
+
+    @guard.command(name="repeat")
+    async def guard_repeat(self, ctx, seconds: int):
+        """Reject repeated messages within a time window."""
+        if not 0 <= seconds <= 86400:
+            raise redcommands.BadArgument("Choose 0 through 86400 seconds; 0 disables detection.")
+        await self.config.guild(ctx.guild).xp_features.repeat_seconds.set(seconds)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @guard.command(name="reactions")
+    async def guard_reactions(self, ctx, enabled: bool):
+        """Limit reactions per message for 24 hours."""
+        await self.config.guild(ctx.guild).xp_features.reaction_once.set(enabled)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @guard.command(name="dailycap")
+    async def guard_dailycap(self, ctx, xp: int):
+        """Cap earned XP per member per local day."""
+        if not 0 <= xp <= 1000000000:
+            raise redcommands.BadArgument("Choose 0 through 1000000000 XP; 0 disables the cap.")
+        await self.config.guild(ctx.guild).xp_features.daily_cap.set(xp)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @guard.command(name="minwords")
+    async def guard_minwords(self, ctx, count: int):
+        """Require a minimum word count for message XP."""
+        if not 0 <= count <= 100:
+            raise redcommands.BadArgument("Choose 0 through 100 words.")
+        await self.config.guild(ctx.guild).xp_features.min_words.set(count)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @level.command(name="setup")
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def level_setup(self, ctx):
+        """Choose leveling options in a guided panel."""
+
+        async def update(context, key, value):
+            root, field = key.split(".")
+            await self.config.guild(context.guild).set_raw(root, field, value=value)
+            self._settings_cache.pop(context.guild.id, None)
+
+        view = SetupView(
+            self,
+            ctx,
+            "level setup",
+            [
+                ("levelup.channel_id", "Level-up channel", "text"),
+                ("message.enabled", "message XP", "toggle"),
+                ("voice.enabled", "voice XP", "toggle"),
+                ("xp_features.periods", "calendar rankings", "toggle"),
+                ("xp_features.reaction_once", "reaction farming protection", "toggle"),
+            ],
+            update,
+        )
+        view.message = await self._reply(
+            ctx,
+            "Choose XP sources, the announcement channel, calendar rankings, and reaction protection. Configure rewards, boosts, and daily caps with level rewards, level boost, and level guard.",
+            title="Level setup",
+            view=view,
+        )
+
+    @commands.Cog.listener()
+    @guild_enabled
+    async def on_member_update(self, before, after):
+        if before.roles != after.roles and not after.bot:
+            await self._sync_rewards(after)
+
+    @commands.Cog.listener()
+    @guild_enabled
+    async def on_member_join(self, member):
+        if not member.bot:
+            await self._sync_rewards(member)
+
     async def red_delete_data_for_user(self, *, requester, user_id):
         uid = str(user_id)
         for guild_id in await self.config.all_guilds():
@@ -1403,7 +1805,17 @@ class LevelPlus(redcommands.Cog):
                 await group.clear_raw("xp", uid)
             async with group.names.get_lock():
                 await group.clear_raw("names", uid)
-        for cache in (self._last_msg, self._last_rxn, self._last_voice):
+            async with group.period_xp() as data:
+                forget_user(data, uid)
+            async with group.earned_today() as data:
+                data["xp"].pop(uid, None)
+        for cache in (
+            self._last_msg,
+            self._last_rxn,
+            self._last_voice,
+            self._recent_messages,
+            self._reaction_once,
+        ):
             for key in list(cache):
                 if key[1] == user_id:
                     cache.pop(key, None)
@@ -1412,10 +1824,19 @@ class LevelPlus(redcommands.Cog):
         data = {}
         for guild_id, config in (await self.config.all_guilds()).items():
             uid = str(user_id)
-            if uid in config.get("xp", {}) or uid in config.get("names", {}):
+            periods = user_periods(config["period_xp"], uid)
+            if (
+                uid in config.get("xp", {})
+                or uid in config.get("names", {})
+                or periods["days"]
+                or periods["season"]
+                or periods["archives"]
+            ):
                 data[str(guild_id)] = {
                     "xp": config.get("xp", {}).get(uid, 0),
                     "name": config.get("names", {}).get(uid),
+                    "periods": periods,
+                    "daily_earned": config["earned_today"]["xp"].get(uid, 0),
                 }
         return {"levelplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
 
@@ -1423,7 +1844,13 @@ class LevelPlus(redcommands.Cog):
     async def on_guild_remove(self, guild):
         self._settings_cache.pop(guild.id, None)
         self._settings_locks.pop(guild.id, None)
-        for cache in (self._last_msg, self._last_rxn, self._last_voice):
+        for cache in (
+            self._last_msg,
+            self._last_rxn,
+            self._last_voice,
+            self._recent_messages,
+            self._reaction_once,
+        ):
             for key in list(cache):
                 if key[0] == guild.id:
                     cache.pop(key, None)

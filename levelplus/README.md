@@ -51,7 +51,7 @@ Changing a curve recalculates displayed levels from existing XP. The multiplier 
 
 These are member commands. Administrator settings stay under `level`, with the existing checks. Direct shortcuts also honor Red permission and disabled-command rules on the original grouped command.
 
-Enable the 44 slash actions once as the bot owner:
+Enable the 59 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog levelplus
@@ -128,9 +128,39 @@ For boolean commands, omitting `true`/`false` toggles the setting.
 
 CSV import supports quoted commas and line breaks, UTF-8 with or without a byte-order mark, and attachments up to 8 MB. XP is parsed as an integer to preserve large totals. Malformed quoting rejects the import before any writes; invalid IDs or XP rows are skipped. `importlines` also accepts quoted identifiers and skips ambiguous names. Export before an import or reset if you need to retain the existing totals. New activity preserves saved aliases.
 
+## Rewards, calendar rankings, boosts, and farming controls
+
+New settings and member reports have slash counterparts. Existing lifetime XP and aliases are preserved. Added Config sections use merged defaults on upgrade. Calendar tracking starts enabled from installation/update, with no historical backfill; farming controls start disabled.
+
+| Command | Purpose |
+| --- | --- |
+| `[p]level rewards` | Show milestone roles and stacking mode. |
+| `[p]level rewards add @Role <threshold>` / `remove @Role` | Configure up to 100 reward roles at levels 1 through 100000. |
+| `[p]level rewards stack <true\|false>` | Keep every currently qualified reward, or only the highest. |
+| `[p]level rewards sync [@Member]` | Reconcile the selected member, default yourself. |
+| `[p]periodboard [week\|month\|season] [top]` | Show earned XP for this calendar week, month, or current season; default week/top 10, maximum 50. |
+| `[p]level season start <name>` | Archive the current season's top 50 and start a new season without resetting lifetime XP. |
+| `[p]level season history` | List the five retained archives. |
+| `[p]level season enable <true\|false>` | Enable/pause calendar and seasonal collection. |
+| `[p]level season timezone <IANA zone>` | Set calendar boundaries, default America/Chicago. Weeks start Monday; months start on the first. |
+| `[p]level boost [factor] [minutes] [@Role] [#channel]` | List boosts, or create a 1–10× earned-XP boost for 1–43200 minutes. Factor 1 clears all boosts. Optional role/channel restrict its scope. |
+| `[p]level guard repeat <seconds>` | Suppress repeated normalized messages within 0–86400 seconds; 0 disables. |
+| `[p]level guard reactions <true\|false>` | Allow one award per reactor/message in a rolling 24-hour window. |
+| `[p]level guard dailycap <XP>` | Cap earned XP per member/local day, 0–1000000000; 0 disables. |
+| `[p]level guard minwords <count>` | Require 0–100 words for message XP. |
+| `[p]level setup` | Open a three-minute guided panel with announcement-channel and feature pickers. |
+
+Administrator checks protect changes and role synchronization. `periodboard` and season history are member reports. Role rewards require Manage Roles and eligible unmanaged roles below the bot; server-management/moderation roles cannot be configured. Rewards refresh on earned awards, explicit XP setting, member rejoins/role changes, and manual sync, even when announcements are disabled. Curve changes and bulk imports/resets take effect at the next reconciliation. Removing a reward setting leaves existing assignments alone. Highest-only mode removes other currently managed rewards; lowering XP can remove unqualified rewards.
+
+Boosts affect earned event XP, unlike the original threshold multiplier. The highest matching boost applies, up to five active boosts, and expired boosts stop applying without a restart. Daily caps cover message/reaction/voice/slash XP together, persist across reloads, and apply after boosting. Administrative additions/imports bypass earned-XP policies and do not increase calendar/season totals. Message/reaction duplicate caches are bounded in memory and reset on reload; daily caps do not reset on reload. Short rejected messages do not consume message cooldowns.
+
+Calendar records retain 35 daily buckets and the current season. Archives retain five seasons' top 50 only. Install a timezone database or `tzdata` if the container lacks America/Chicago; collection falls back to UTC when the configured zone is unavailable. New `/periodboard`, `/level rewards ...`, `/level season ...`, `/level boost`, `/level guard ...`, and `/level setup` bring this cog to 59 slash actions. Reload and `slash sync` after updating.
+
 ## Stored data and current limits
 
 Red Config stores settings per server, XP totals keyed by user ID, and saved display names or aliases. XP survives a member leaving and rejoining. Message contents are inspected to count words but are not persisted. Message, reaction, and voice cooldown timestamps are kept in memory and reset on reload.
+
+Added records include reward role IDs/thresholds, boost scopes/expiry, farming preferences, dated earned-XP totals, current/archived season rankings, and current-day cap counters keyed by member ID. User-data hooks include and delete these new per-user records across servers. Repeated-message hashes and reactor/message IDs are held only in bounded memory, without storing message text.
 
 `exportcsv` exports users with XP rows; aliases without XP rows are not included. Individual XP removal does not delete aliases. `clear yes` clears both maps for the server. Red's user-data export hook includes the user's XP and saved aliases across servers. Its deletion hook clears both and removes their in-memory cooldowns.
 

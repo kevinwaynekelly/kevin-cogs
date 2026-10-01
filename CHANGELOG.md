@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01: Level feature expansion
+
+- Add milestone reward roles with stacking/highest-only policies, hierarchy checks, current-level reconciliation, and synchronization independent of announcement settings.
+- Track earned XP in 35 daily buckets and the current season, expose weekly/monthly/season leaderboards, and retain five top-50 season archives without resetting lifetime XP.
+- Add scoped expiring earned-XP boosts, optional repeated-message/reaction farming limits, minimum word counts, persistent shared daily caps, and guided setup with matching slash actions.
+- Preserve legacy defaults and XP through additive merged sections, maintain common XP locks across event sources and voice batches, and export/delete added member records. Validate time boundaries, caps across reloads/concurrent sources, scoped boosts, archives, rewards, and existing command compatibility.
+
 ## 2026-10-01: Audio feature expansion
 
 - Add automatically updating now-playing panels with checked Discord buttons and embed/text fallback. Cancel panel tasks/views on disconnect or unload and keep the ten-second idle deadline.

@@ -6,7 +6,7 @@ import re
 
 __red_end_user_data_statement__ = (
     "This cog stores per-guild leveling settings, per-user XP totals, and a last-known display name. "
-    "Data persists across leaves/joins to preserve user progress. Admins may export or erase specific users via commands."
+    "Data persists across leaves/joins to preserve user progress. Admins may export or erase specific users via commands. Added settings include milestone roles, boosts, farming controls, dated earned-XP totals, seasons, and daily caps; Red data hooks export/delete associated user records."
 )
 
 DEFAULTS_GUILD = {

@@ -46,7 +46,7 @@ AudioPlus can load before its local system dependencies are installed. Follow th
 [p]load audioplus
 ```
 
-Use `[p]play <song or URL>`, `[p]skip`, `[p]pause`, `[p]np`, and `[p]queue` for music controls. Enable their slash counterparts as the bot owner with `[p]slash enablecog audioplus`, then `[p]slash sync`. The [AudioPlus guide](audioplus/README.md#enable-slash-commands) lists all 20 direct and slash controls. Legacy `[p]audio ...` commands remain available.
+Use `[p]play <song or URL>`, `[p]skip`, `[p]pause`, `[p]np`, and `[p]queue` for music controls. Enable their slash counterparts as the bot owner with `[p]slash enablecog audioplus`, then `[p]slash sync`. The [AudioPlus guide](audioplus/README.md#enable-slash-commands) lists the direct and slash controls. Legacy `[p]audio ...` commands remain available.
 
 The owner can enable [daily YouTube playback checks](audioplus/README.md#daily-youtube-playback-checks) with `[p]audiocheck enable`. A silent three-second native voice probe runs at 09:00 America/Chicago by default and DMs its configuring owner on failure. Successful checks stay quiet; busy voice connections postpone the probe.
 
@@ -92,7 +92,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community and logging shortcuts retain administrator checks. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 109 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
+Community and logging shortcuts retain administrator checks. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 124 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 
