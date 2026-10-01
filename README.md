@@ -28,7 +28,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | LogPlus | `[p]log setup` or `/log setup` | Administrator event routing, exemptions, permission diffs, raw-event coverage, and delivery status/retries. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The five cogs expose 225 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
+The five cogs expose 232 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
 
 ## Discord presentation
 
@@ -108,7 +108,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 186 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
+Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 193 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 
@@ -146,7 +146,7 @@ AudioPlus now has automatic player panels with checked buttons, `seek`, queue `r
 
 Settings and persistent records use Red's Config system. CommunityPlus records member activity and sticky roles, LevelPlus retains XP and display names, and OwoPlus stores per-user probability overrides. AudioPlus preserves legacy Lavalink connection settings, including the old node password, for rollback. Its optional daily monitor stores the recipient ID, test server/channel/video, schedule, latest safe result, and pending alert. Native playback ignores legacy node settings; track metadata and queues are transient, and audio downloads and yt-dlp disk caching are disabled.
 
-LogPlus does not persist message contents in its Config, but it can post edited or deleted message text to Discord log channels. OwoPlus reposts transformed messages through webhooks and attempts to delete the originals. Each cog's guide and `info.json` describe its stored data. AudioPlus, CommunityPlus, LevelPlus, and OwoPlus implement Red's user-data export/deletion hooks. Deletion removes their associated Config records; it does not delete messages already posted to Discord.
+LogPlus posts edited or deleted message text to Discord log channels. Optional local history also stores bounded event details, including message text, with 1 to 90 day retention. History starts disabled. OwoPlus reposts transformed messages through webhooks and attempts to delete the originals. Each cog's guide and `info.json` describe its stored data. All five cogs implement Red's user-data export/deletion hooks. Deletion removes their associated Config records; it does not delete messages already posted to Discord.
 
 ## Development and support
 

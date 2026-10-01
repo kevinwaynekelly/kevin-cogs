@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-01: Opt-in retained log history
+
+- Add administrator member timelines, text/category/date searches, filtered JSON/CSV exports, and slash equivalents behind original log permissions. Capture one logical accepted event before delivery without duplicating retries.
+- Start collection disabled, bound records by age/count/bytes, prune on retention changes and hourly even for inactive servers, cancel owned maintenance on unload, and export/delete retained user records. Exclude history payloads from normal routing caches.
+
 ## 2026-10-01: Channel styles and automatic expiry
 
 - Add inherited Owo, pirate, and robot channel styles, permanent or expiring overrides, administrator slash controls, and a manual member stylize preview. Preserve code, links, mentions, emoji, opt-outs, and haiku priority.

@@ -118,7 +118,7 @@ async def test_all_cogs_register_with_core_and_serialize_slash_payloads(command_
             "LogPlus",
             "OwoPlus",
         )
-    } == {"AudioPlus": 39, "CommunityPlus": 60, "LevelPlus": 66, "LogPlus": 23, "OwoPlus": 37}
+    } == {"AudioPlus": 39, "CommunityPlus": 60, "LevelPlus": 66, "LogPlus": 30, "OwoPlus": 37}
 
     def check_options(payload, depth=0):
         # Discord.py does not validate unrenamed callback parameter names at registration.
@@ -360,6 +360,10 @@ async def test_admin_shortcuts_and_renamed_groups_keep_permissions(command_runti
         "level challenges enabled",
         "level challenges goal",
         "log clearchannel",
+        "log history retention",
+        "logsearch",
+        "timeline",
+        "logexport",
         "owo enable",
         "owo style clear",
         "seen",
@@ -373,6 +377,9 @@ async def test_slash_admin_paths_reject_ordinary_members(command_runtime, monkey
         "level challenges enabled": {"enabled": True},
         "level challenges goal": {"metric": "message", "target": 2, "reward": 5},
         "owo style clear": {"channel": member.guild.channels[0]},
+        "log history retention": {"days": 7},
+        "logsearch": {"query": "test"},
+        "timeline": {"member": member},
     }.get(path, {})
     ctx = await invoke_slash(bot, invoke, monkeypatch, path, **options)
     assert ctx.command_failed

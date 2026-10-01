@@ -7,7 +7,7 @@ import re
 import time
 from collections import OrderedDict, defaultdict, deque
 from datetime import timedelta
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 import discord
 from discord.ext import commands
@@ -16,11 +16,18 @@ from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
 
-from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
+from .command_support import (
+    attach_prefix_groups,
+    check_command,
+    invoke_shortcut,
+    prefix_group,
+    prepare_hybrid,
+)
 from .constants import _UI, DEFAULTS_GUILD, EVENT_STYLE
 from .delivery import CATEGORIES, FEATURE_DEFAULTS, EventEmbed, LogDelivery, fresh_status
 from .diffs import attribute_changes, overwrite_changes, permission_changes
 from .events import guild_enabled
+from .history import HISTORY_DEFAULTS, LogHistory, export_history
 from .interactive import SetupView, close_views
 from .presentation import Presentation, settings
 
@@ -50,7 +57,7 @@ EVENT_SWITCHES = tuple(
 # ========================= Defaults =========================
 
 
-class LogPlus(LogDelivery, redcommands.Cog):
+class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
     """Server event logging with channel routing and audit attribution."""
 
     async def cog_command_error(self, ctx, error):
@@ -64,7 +71,12 @@ class LogPlus(LogDelivery, redcommands.Cog):
         self.bot: Red = bot
         self._presentation = Presentation("LogPlus", "log")
         self.config: Config = Config.get_conf(self, identifier=0x51A7E11, force_registration=True)
-        self.config.register_guild(**DEFAULTS_GUILD, features=FEATURE_DEFAULTS)
+        self.config.register_guild(
+            **DEFAULTS_GUILD,
+            features=FEATURE_DEFAULTS,
+            history_settings=HISTORY_DEFAULTS,
+            history_records=[],
+        )
 
         self._last_event_at = OrderedDict()
         self._settings_cache = {}
@@ -77,6 +89,7 @@ class LogPlus(LogDelivery, redcommands.Cog):
         self._own_log_ids = OrderedDict()
         self._views = set()
         self._closing = False
+        self._history_task = None
         self._cmd_prefix_re = re.compile(r"^(<@!?|[/!?.~+\-$&%=>:#])")
 
     # ---------------- helpers ----------------
@@ -169,6 +182,8 @@ class LogPlus(LogDelivery, redcommands.Cog):
         if self._closing:
             return
         record = self._pending_log(embed, source_channel_id, category)
+        if (await self._settings(guild))["history_settings"]["enabled"]:
+            await self._save_history(guild, embed, record)
         try:
             if not await self._deliver_log(guild, record):
                 self._delivery_status[guild.id]["dropped"] += 1
@@ -671,6 +686,91 @@ class LogPlus(LogDelivery, redcommands.Cog):
     async def logstatus(self, ctx: redcommands.Context):
         """Show event switches, the log channel, and routing settings."""
         await invoke_shortcut(self, ctx, self.logplus)
+
+    @logplus.group(name="history", autohelp=False, fallback="status")
+    async def history(self, ctx):
+        """Configure optional local history and retention."""
+        policy = await self.config.guild(ctx.guild).history_settings()
+        records = await self._history_query(ctx.guild, days=90, limit=1000)
+        await self._reply(
+            ctx,
+            f"Collecting: {'Yes' if policy['enabled'] else 'No'}\nRetention: {policy['days']} days\nRetained events: {len(records)} / 1000\nEnable collection explicitly; existing Discord logs are not imported.",
+        )
+
+    @history.command(name="enabled")
+    async def history_enabled(self, ctx, enabled: bool):
+        """Enable or pause collection of local event history."""
+        await self._set_history_policy(ctx.guild, "enabled", enabled)
+        await self._presentation.confirm(ctx)
+
+    @history.command(name="retention")
+    async def history_retention(self, ctx, days: int):
+        """Set retention from 1 to 90 days and prune now."""
+        if not 1 <= days <= 90:
+            raise redcommands.BadArgument("Choose 1 to 90 days.")
+        await self._set_history_policy(ctx.guild, "days", days)
+        await self._presentation.confirm(ctx)
+
+    @history.command(name="clear")
+    async def history_clear(self, ctx, confirm: str):
+        """Erase retained local events using confirmation yes."""
+        if confirm != "yes":
+            raise redcommands.BadArgument("Use log history clear yes to erase local history.")
+        group = self.config.guild(ctx.guild).history_records
+        async with group.get_lock():
+            await group.set([])
+        await self._presentation.confirm(ctx)
+
+    @redcommands.hybrid_command(name="timeline")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def timeline(self, ctx, member: discord.Member, days: int = 7):
+        """Show recent retained events identifying a member."""
+        await check_command(ctx, self.logplus)
+        records = await self._history_query(ctx.guild, member_id=member.id, days=days, limit=25)
+        await self._history_report(ctx, records)
+
+    @redcommands.hybrid_command(name="logsearch")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def logsearch(self, ctx, query: str, category: str = "all", days: int = 7):
+        """Search retained event text by category and date."""
+        await check_command(ctx, self.logplus)
+        await self._history_report(
+            ctx,
+            await self._history_query(
+                ctx.guild, query=query, category=category, days=days, limit=25
+            ),
+        )
+
+    @redcommands.hybrid_command(name="logexport")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    @redcommands.bot_has_permissions(attach_files=True)
+    async def logexport(
+        self,
+        ctx,
+        format: Literal["json", "csv"] = "json",
+        member: Optional[discord.Member] = None,
+        category: str = "all",
+        days: int = 7,
+        query: str = "",
+    ):
+        """Export filtered retained events as JSON or CSV."""
+        await check_command(ctx, self.logplus)
+        records = await self._history_query(
+            ctx.guild,
+            query=query,
+            category=category,
+            days=days,
+            member_id=member.id if member else None,
+            limit=1000,
+        )
+        await self._reply(
+            ctx,
+            f"Exported {len(records)} matching events.",
+            file=discord.File(export_history(records, format), filename=f"log-history.{format}"),
+        )
 
     @redcommands.hybrid_command(name="logchannel")
     @redcommands.guild_only()
@@ -2029,8 +2129,18 @@ class LogPlus(LogDelivery, redcommands.Cog):
     async def cog_after_invoke(self, ctx):
         self._settings_cache.pop(ctx.guild.id, None)
 
+    async def cog_load(self):
+        self._closing = False
+        self._history_task = asyncio.create_task(
+            self._history_maintenance(), name="logplus-history-retention"
+        )
+
     async def cog_unload(self):
         self._closing = True
+        if self._history_task:
+            self._history_task.cancel()
+            await asyncio.gather(self._history_task, return_exceptions=True)
+            self._history_task = None
         for gid in list(self._retry_tasks):
             await self._cancel_retries(gid)
         self._retry_queues.clear()
@@ -2052,7 +2162,10 @@ class LogPlus(LogDelivery, redcommands.Cog):
             cached = self._settings_cache.get(guild.id)
             if cached is not None and now - cached[0] < 5:
                 return cached[1]
-            settings = await self.config.guild(guild).all()
+            group = self.config.guild(guild)
+            keys = [*DEFAULTS_GUILD, "features", "history_settings"]
+            values = await asyncio.gather(*(group.get_attr(key)() for key in keys))
+            settings = dict(zip(keys, values))
             self._settings_cache[guild.id] = (now, settings)
             return settings
 

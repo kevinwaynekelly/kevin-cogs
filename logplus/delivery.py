@@ -260,11 +260,15 @@ class LogDelivery:
 
     async def red_get_data_for_user(self, *, user_id):
         data = self._queued_data(user_id)
-        return (
+        result = (
             {"logplus-pending.json": io.BytesIO(json.dumps(data, indent=2).encode())}
             if data
             else {}
         )
+        history = await self._history_user_data(user_id)
+        if history:
+            result["logplus-history.json"] = io.BytesIO(json.dumps(history, indent=2).encode())
+        return result
 
     async def red_delete_data_for_user(self, *, requester, user_id):
         for gid, queue in list(self._retry_queues.items()):
@@ -277,3 +281,4 @@ class LogDelivery:
                 else:
                     self._retry_queues.pop(gid, None)
         self._audit_cache.clear()
+        await self._history_user_data(user_id, delete=True)

@@ -8,9 +8,9 @@ import discord
 
 __red_end_user_data_statement__ = (
     "This cog stores per-guild settings for logging preferences, the destination log channel, and optional "
-    "per-channel/category routing overrides and retry preferences. It does not persist message contents in Config. "
+    "per-channel/category routing overrides and retry preferences. Opt-in local history persists bounded event text, metadata, and identified member IDs for 1 to 90 days; it starts disabled. "
     "Unsent event records temporarily hold event details and message text in a bounded memory retry queue. "
-    "User-data hooks export/delete queued records identifying that user; posted logs remain managed in Discord."
+    "User-data hooks export/delete queued and retained records identifying that user; posted logs remain managed in Discord."
 )
 
 EVENT_STYLE: Dict[str, Dict[str, object]] = {
