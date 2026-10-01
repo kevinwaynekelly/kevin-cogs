@@ -122,3 +122,73 @@ async def test_unimportable_voice_library_still_blocks_playback(package, label):
             raise AssertionError('Playback was enabled without the native dependency')
         """
     )
+
+
+@pytest.mark.parametrize("binding", ["import", "voice_client", "voice_state", "gateway"])
+async def test_missing_dave_protocol_is_rejected_even_when_discord_import_flags_are_true(binding):
+    await run_isolated(
+        f"""
+        import sys
+        from types import ModuleType
+        import davey
+
+        broken = ModuleType('davey')
+        broken.__dict__.update(davey.__dict__)
+        del broken.DAVE_PROTOCOL_VERSION
+        if {binding!r} == 'import':
+            sys.modules['davey'] = broken
+        import discord
+        if {binding!r} != 'import':
+            getattr(discord, {binding!r}).davey = broken
+        assert discord.voice_client.has_dave and discord.voice_state.has_dave
+
+        from audioplus.backend import require_voice, voice_import_status
+        from audioplus.resolver import MediaError
+        assert voice_import_status() == {{
+            'PyNaCl': 'Ready', 'davey': 'Incompatible (DAVE_PROTOCOL_VERSION)'
+        }}
+        client_class, voice_class = discord.Client, discord.VoiceClient
+        try:
+            require_voice()
+        except MediaError as exc:
+            assert 'davey is incompatible' in str(exc)
+            assert 'DAVE_PROTOCOL_VERSION' in str(exc)
+            assert 'audiorepair' in str(exc) and 'restart Red' in str(exc)
+        else:
+            raise AssertionError('The broken DAVE API was accepted')
+        assert discord.Client is client_class and discord.VoiceClient is voice_class
+        assert not hasattr(broken, 'DAVE_PROTOCOL_VERSION')
+        """
+    )
+
+
+@pytest.mark.parametrize("missing", ["DaveSession.encrypt_opus", "ProposalsOperationType.revoke"])
+async def test_importable_dave_library_must_support_encryption_and_gateway_apis(missing):
+    await run_isolated(
+        f"""
+        import sys
+        from types import ModuleType, SimpleNamespace
+        import davey
+
+        broken = ModuleType('davey')
+        broken.__dict__.update(davey.__dict__)
+        root, member = {missing!r}.split('.')
+        if root == 'DaveSession':
+            attributes = {{key: value for key, value in davey.DaveSession.__dict__.items()
+                          if not key.startswith('_') and key != member}}
+            broken.DaveSession = type('IncompleteSession', (), attributes)
+        else:
+            broken.ProposalsOperationType = SimpleNamespace(append=davey.ProposalsOperationType.append)
+        sys.modules['davey'] = broken
+
+        from audioplus.backend import require_voice, voice_import_status
+        from audioplus.resolver import MediaError
+        assert voice_import_status()['davey'] == 'Incompatible (' + {missing!r} + ')'
+        try:
+            require_voice()
+        except MediaError as exc:
+            assert {missing!r} in str(exc)
+        else:
+            raise AssertionError('Playback was enabled with an incomplete DAVE API')
+        """
+    )

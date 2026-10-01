@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01: Incompatible native voice API repair
+
+- Reject importable but incomplete native voice libraries before connecting, including the reported missing `davey.DAVE_PROTOCOL_VERSION`. Validate Discord's cached library references as well as current imports without reloading Discord classes or disabling DAVE encryption.
+- Share API checks with fresh repair verification, let owner-only audiorepair reinstall incompatible packages, and report native API status separately from package versions. Keep working libraries and Downloader update requirements unchanged; require restart after an install attempt.
+- Reproduce the missing protocol constant with Discord's import flags already enabled, invalid cached bindings, missing encryption/gateway methods, and a shadowing incomplete Downloader copy. Exercise the real Red play/repair command pipeline with mocked install/network boundaries and retain real native encryption/session regression checks.
+- Validate 535 tests on Python 3.10/3.11, plus lint, formatting, syntax, metadata, and whitespace checks. Live Scarlet playback remains unverified.
+
 ## 2026-10-01: Playback check failure diagnostics
 
 - Replace generic monitor/player failures with safe exception types, structured codes/names, and bounded traceback locations. Identify server setup, dependency checks, YouTube lookup, channel selection, voice connection, native playback, and cleanup stages without exposing arbitrary exception messages or signed stream URLs.

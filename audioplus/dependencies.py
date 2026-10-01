@@ -5,25 +5,20 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 from .backend import VOICE_REQUIREMENTS, voice_import_status
 from .resolver import MediaError
 
-_PROBE = """
-import importlib, json, sys
+_PROBE = f"""
+import importlib.util, json, sys
 sys.path = json.loads(sys.argv[1])
-statuses = {}
-for package, modules in {
-    'PyNaCl': ('nacl.secret', 'nacl.utils'), 'davey': ('davey',)
-}.items():
-    try:
-        for module in modules:
-            importlib.import_module(module)
-    except (ImportError, OSError, RuntimeError) as exc:
-        statuses[package] = type(exc).__name__
-    else:
-        statuses[package] = 'Ready'
-print(json.dumps(statuses))
+spec = importlib.util.spec_from_file_location(
+    '_audio_voice_libraries', {str(Path(__file__).with_name("voice_libraries.py"))!r}
+)
+libraries = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(libraries)
+print(json.dumps(libraries.voice_library_status()))
 """
 
 
@@ -144,7 +139,7 @@ class VoiceDependencyRepair:
                 valid, failed = False, list(VOICE_REQUIREMENTS)
             if not valid or failed:
                 raise MediaError(
-                    "Packages were installed, but fresh imports still fail for "
+                    "Packages were installed, but fresh native API checks still fail for "
                     + ", ".join(failed or VOICE_REQUIREMENTS)
                     + ". Restart Red and run audiostatus. A broken Downloader copy may shadow "
                     "the bot environment; use the container setup guide if the error remains."

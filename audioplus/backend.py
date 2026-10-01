@@ -12,39 +12,46 @@ from importlib import import_module
 import discord
 
 from .resolver import MediaError
-
-VOICE_REQUIREMENTS = {"PyNaCl": "PyNaCl>=1.5.0,<1.6", "davey": "davey>=0.1.6"}
+from .voice_libraries import (
+    VOICE_REQUIREMENTS,
+    IncompatibleVoiceLibrary,
+    import_voice_library,
+    validate_voice_library,
+    voice_library_status,
+)
 
 
 def _voice_import(package):
-    module = import_module("nacl" if package == "PyNaCl" else "davey")
-    if package == "PyNaCl":
-        import_module("nacl.secret")
-        import_module("nacl.utils")
+    module = import_voice_library(package, importer=import_module)
+    # Discord can retain a different module from its startup import. Check the
+    # references actually used by its handshake, gateway, and encryption code.
+    bindings = (
+        (discord.voice_client,)
+        if package == "PyNaCl"
+        else (discord.voice_client, discord.voice_state, discord.gateway)
+    )
+    name = "nacl" if package == "PyNaCl" else "davey"
+    for binding in bindings:
+        bound = getattr(binding, name, None)
+        if bound is not None and bound is not module:
+            validate_voice_library(package, bound)
     return module
 
 
 def voice_import_status():
-    """Check imports separately from distribution metadata, without rebinding Discord."""
-    statuses = {}
-    for package in VOICE_REQUIREMENTS:
-        try:
-            _voice_import(package)
-        except (ImportError, OSError, RuntimeError) as exc:
-            missing = isinstance(exc, ModuleNotFoundError) and exc.name == (
-                "nacl" if package == "PyNaCl" else "davey"
-            )
-            statuses[package] = "Missing" if missing else f"Import failed ({type(exc).__name__})"
-        else:
-            statuses[package] = "Ready"
-    return statuses
+    """Check imported and bound native APIs without rebinding Discord."""
+    return voice_library_status(importer=_voice_import)
 
 
 def _voice_import_error(package, exc):
     # Raw native/pip errors can contain paths or configured index credentials.
+    problem = (
+        f"{package} is incompatible with Discord.py: missing or invalid native API {exc.details}. "
+        if isinstance(exc, IncompatibleVoiceLibrary)
+        else f"{package} could not be imported by Red ({type(exc).__name__}). "
+    )
     return MediaError(
-        f"{package} could not be imported by Red ({type(exc).__name__}). "
-        "Ask the bot owner to run audiorepair, then restart Red and run audiostatus. "
+        problem + "Ask the bot owner to run audiorepair, then restart Red and run audiostatus. "
         f"Manual setup: install {VOICE_REQUIREMENTS[package]} in Red's Python environment. "
         "See AudioPlus's container setup guide."
     )
@@ -58,24 +65,27 @@ def _load_voice_libraries():
     modules or replacing classes already used by the running bot.
     """
     client = discord.voice_client
-    if not getattr(client, "has_nacl", False):
+    libraries = {}
+    for package in VOICE_REQUIREMENTS:
         try:
-            nacl = _voice_import("PyNaCl")
+            libraries[package] = _voice_import(package)
         except (ImportError, OSError, RuntimeError) as exc:
-            raise _voice_import_error("PyNaCl", exc) from exc
+            raise _voice_import_error(package, exc) from exc
+    if not getattr(client, "has_nacl", False) or getattr(client, "nacl", None) is None:
+        nacl = libraries["PyNaCl"]
         client.nacl = nacl
         client.has_nacl = True
     if not getattr(client, "has_dave", False) or not getattr(
         discord.voice_state, "has_dave", False
     ):
-        try:
-            davey = _voice_import("davey")
-        except (ImportError, OSError, RuntimeError) as exc:
-            raise _voice_import_error("davey", exc) from exc
         for module in (client, discord.voice_state, discord.gateway):
-            module.davey = davey
+            module.davey = libraries["davey"]
         discord.voice_state.has_dave = True
         client.has_dave = True
+    else:
+        for module in (client, discord.voice_state, discord.gateway):
+            if getattr(module, "davey", None) is None:
+                module.davey = libraries["davey"]
 
 
 def require_voice():

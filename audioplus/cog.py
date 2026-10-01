@@ -720,7 +720,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         ]
         for name, version in state["packages"].items():
             status = state.get("voice_packages", {}).get(name)
-            lines.append(f"**{name}** · {version}" + (f" · Import: {status}" if status else ""))
+            lines.append(f"**{name}** · {version}" + (f" · Native API: {status}" if status else ""))
         lines += [
             f"**Deno** · {state['deno']}",
             f"**Node.js** · {state['node']}",
@@ -1216,7 +1216,7 @@ class AudioPlus(AudioCommands, commands.Cog):
     @commands.command(name="audiorepair")
     @checks.is_owner()
     async def audiorepair(self, ctx: commands.Context):
-        """Repair unimportable PyNaCl/davey in Red's Python environment, then restart Red.
+        """Repair missing or incompatible native voice libraries, then restart Red.
 
         Bot owner only. Installs binary wheels for failing voice packages and their
         Python dependencies. Does not install FFmpeg, Opus, or a JavaScript runtime.
@@ -1240,7 +1240,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         async def started():
             await self._reply(
                 ctx,
-                "Installing binary wheels for unimportable voice libraries into Red's Python "
+                "Installing binary wheels for failing voice libraries into Red's Python "
                 "environment. Installation may take up to three minutes, followed by verification. "
                 "Restart Red after the repair.",
                 title="Repair voice dependencies",
@@ -1264,7 +1264,8 @@ class AudioPlus(AudioCommands, commands.Cog):
         if installed:
             await self._reply(
                 ctx,
-                "PyNaCl and davey now import successfully in a fresh Python process.\n\n"
+                "PyNaCl and davey now pass the required native API checks in a fresh Python "
+                "process.\n\n"
                 f"Run `{ctx.clean_prefix}restart`, then `{ctx.clean_prefix}audiostatus` and "
                 f"`{ctx.clean_prefix}play <query>`.",
                 title="Voice libraries repaired",
@@ -1273,7 +1274,8 @@ class AudioPlus(AudioCommands, commands.Cog):
         else:
             await self._reply(
                 ctx,
-                "PyNaCl and davey already import successfully. No packages were changed. "
+                "PyNaCl and davey already pass the required native API checks. "
+                "No packages were changed. "
                 f"Run `{ctx.clean_prefix}audiostatus` to check the remaining prerequisites.",
                 title="Voice libraries ready",
                 tone="success",

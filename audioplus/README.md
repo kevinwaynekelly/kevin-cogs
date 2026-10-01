@@ -73,7 +73,7 @@ If native playback already works, leave those libraries in place and install the
 [p]slash sync
 ```
 
-Use your actual Red repository name if it differs. If this still reports PyNaCl or davey as failed **requirements**, Downloader is reading older repository metadata; check `[p]repo info kevin` for this repository and its `main` branch. If diagnostics report a missing or unimportable voice library, follow the one-time setup below. For other requirement failures, keep the matching pip `ERROR` lines from the Red container log; Downloader's short failure reply does not contain the underlying reason.
+Use your actual Red repository name if it differs. If this still reports PyNaCl or davey as failed **requirements**, Downloader is reading older repository metadata; check `[p]repo info kevin` for this repository and its `main` branch. If diagnostics report a missing, unimportable, or incompatible voice library, follow the one-time setup below. For other requirement failures, keep the matching pip `ERROR` lines from the Red container log; Downloader's short failure reply does not contain the underlying reason.
 
 ### If new prefix commands do not respond
 
@@ -113,7 +113,7 @@ apt-get install -y --no-install-recommends ffmpeg libopus0
 
 Skip this step if `[p]audiostatus` reports usable Discord voice and playback already works. PyNaCl and davey remain required; a source update simply leaves their installed copies alone.
 
-If playback says **PyNaCl could not be imported** or **davey could not be imported**, the bot owner can repair the Python libraries from Discord. For your repository named `kevin`:
+If playback says **PyNaCl could not be imported**, **davey could not be imported**, or **davey is incompatible**, the bot owner can repair the Python libraries from Discord. This also covers the traceback `AttributeError: module 'davey' has no attribute 'DAVE_PROTOCOL_VERSION'`: the loaded module is missing a native API used by Discord's voice handshake. Import success or an installed version alone does not prove that API is usable. For your repository named `kevin`:
 
 ```text
 [p]cog updatetoversion True kevin origin/main audioplus
@@ -121,27 +121,29 @@ If playback says **PyNaCl could not be imported** or **davey could not be import
 [p]audiorepair
 ```
 
-Wait for the repair result, then run `[p]restart`, `[p]audiostatus`, and `[p]play <query>`. Repair installs binary wheels for only unimportable PyNaCl/davey and their Python dependencies into the interpreter running Red, checks both libraries in a fresh process with Red's actual package search order, and requires a full restart after any install attempt. Reloading the cog does not clear that restart requirement. Importable voice libraries are left alone, and neither playback nor cog updates install them automatically.
+Wait for the repair result, then run `[p]restart`, `[p]audiostatus`, and `[p]play <query>`. Repair force-reinstalls binary wheels for only failing PyNaCl/davey and their Python dependencies into the interpreter running Red. Failing includes an importable library missing required native APIs. Both libraries must pass the same API checks in a fresh process with Red's actual package search order. A full restart is required after any install attempt; reloading the cog does not clear that requirement. Compatible voice libraries are left alone, and neither playback nor cog updates install them automatically.
 
 Repair is bot-owner-only and can also run in a DM. Disconnect voice sessions and let active lookups finish first. It runs one repair at a time, bounds installation to three minutes and verification to 15 seconds, and cancels its installer on cog unload. It cannot install FFmpeg, libopus, or JavaScript runtimes. The bot must be able to write to its Python environment and reach its configured package index. Failures report a safe category without exposing package-index credentials. A failed or cancelled installer may have changed files, so restart before trying again.
 
-Diagnostics show native **import status** separately from package versions. An installed version with `Import failed` indicates a broken import rather than a working dependency. If verification still fails after pip succeeds, an existing broken Downloader package may take precedence over the repaired bot environment. Follow the manual setup below and retain the reported import exception type; do not delete Downloader's entire shared library directory.
+Diagnostics show native **API status** separately from package versions. `Import failed` indicates a broken import; `Incompatible (DAVE_PROTOCOL_VERSION)` identifies a missing or invalid protocol constant. AudioPlus checks the native APIs used for Discord's handshake, gateway, and encryption, including Discord's cached library references, before opening voice. These checks do not verify live voice or YouTube access.
+
+If verification still fails after pip succeeds, an existing broken Downloader package may take precedence over the repaired bot environment. Restart, run `[p]audiostatus`, and retain the reported API/import failure. Do not delete Downloader's entire shared library directory. The manual reinstall below repairs the bot environment; a separate shadowing copy may still need targeted investigation.
 
 For manual installation, use the container console:
 
 [PhasecoreX's image](https://github.com/PhasecoreX/docker-red-discordbot#extending-this-image) runs Red in `/data/venv`. Run the following in that container as the user running Red, matching its `PUID`/`PGID`:
 
 ```sh
-/data/venv/bin/python -m pip install --only-binary=:all: 'PyNaCl>=1.5.0,<1.6' 'davey>=0.1.6'
+/data/venv/bin/python -m pip install --only-binary=:all: --force-reinstall --no-cache-dir 'PyNaCl>=1.5.0,<1.6' 'davey>=0.1.6'
 ```
 
 Alternatively, run it from the Docker host with `docker exec`. This example assumes a container named `red-discordbot` and UID/GID `1000:1000`; substitute your container name and configured user IDs:
 
 ```sh
-docker exec --user 1000:1000 red-discordbot /data/venv/bin/python -m pip install --only-binary=:all: 'PyNaCl>=1.5.0,<1.6' 'davey>=0.1.6'
+docker exec --user 1000:1000 red-discordbot /data/venv/bin/python -m pip install --only-binary=:all: --force-reinstall --no-cache-dir 'PyNaCl>=1.5.0,<1.6' 'davey>=0.1.6'
 ```
 
-Using the bot's interpreter installs into its own environment instead of Downloader's shared target folder. Binary wheels avoid compiling Rust/C dependencies in the running container. The command does not force an upgrade of versions already satisfying the requirements. If no compatible wheel is available for your platform, retain the pip error and use a supported Python/container architecture or build the libraries in your image's build environment.
+Using the bot's interpreter installs into its own environment instead of Downloader's shared target folder. Binary wheels avoid compiling Rust/C dependencies in the running container. These repair commands reinstall both libraries even if their recorded versions satisfy the requirements, replacing incomplete installations. Skip them if native playback already works; `[p]audiorepair` reinstalls only failing libraries. If no compatible wheel is available for your platform, retain the pip error and use a supported Python/container architecture or build the libraries in your image's build environment.
 
 Restart Red, then run `[p]audiostatus` and `[p]tone`. Do not delete Downloader's existing libraries or install packages into the host's unrelated Python environment. For other images or a non-container installation, substitute the interpreter used to launch Red. The PhasecoreX environment persists on `/data`; repeat setup if an image upgrade recreates that environment for a different Python version.
 

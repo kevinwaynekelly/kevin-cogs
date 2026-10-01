@@ -3,7 +3,7 @@
 import asyncio
 import json
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -83,7 +83,7 @@ async def test_install_errors_are_actionable_without_leaking_pip_output(
 async def test_successful_pip_is_not_enough_when_runtime_imports_fail(repair, monkeypatch, output):
     run = AsyncMock(side_effect=[(0, "Installed"), (0, output)])
     monkeypatch.setattr(repair, "_run", run)
-    with pytest.raises(MediaError, match="fresh imports still fail for PyNaCl"):
+    with pytest.raises(MediaError, match="fresh native API checks still fail for PyNaCl"):
         await repair.repair(AsyncMock())
     assert run.await_count == 2
 
@@ -98,8 +98,55 @@ async def test_real_probe_checks_libraries_including_downloader_precedence(repai
     code, output = await repair._run(
         [sys.executable, "-c", dependencies._PROBE, json.dumps([str(tmp_path), *sys.path])], 10
     )
-    assert code == 0 and json.loads(output) == {"PyNaCl": "ImportError", "davey": "Ready"}
+    assert code == 0 and json.loads(output) == {
+        "PyNaCl": "Import failed (ImportError)",
+        "davey": "Ready",
+    }
     assert "secret" not in output
+
+
+async def test_fresh_probe_rejects_an_importable_incomplete_downloader_copy(repair, tmp_path):
+    (tmp_path / "davey.py").write_text(
+        "# Import succeeds but the required native APIs are absent.\n"
+    )
+    code, output = await repair._run(
+        [sys.executable, "-c", dependencies._PROBE, json.dumps([str(tmp_path), *sys.path])], 10
+    )
+    statuses = json.loads(output)
+    assert code == 0 and statuses["PyNaCl"] == "Ready"
+    assert statuses["davey"].startswith("Incompatible (DAVE_PROTOCOL_VERSION")
+
+
+async def test_incompatible_bound_dave_library_blocks_connection_and_is_repaired(
+    red_command_runtime, monkeypatch
+):
+    import davey
+
+    bot, cog, member, invoke = red_command_runtime
+    broken = ModuleType("davey")
+    broken.__dict__.update(davey.__dict__)
+    del broken.DAVE_PROTOCOL_VERSION
+    monkeypatch.setattr(backend.discord.voice_state, "davey", broken)
+    voice_channel = make_channel(member.guild, kind=backend.discord.VoiceChannel)
+    member.voice = SimpleNamespace(channel=voice_channel)
+    connect, lookup = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(cog, "_connect_voice", connect)
+    monkeypatch.setattr(cog._resolver, "search", lookup)
+
+    play = await invoke("!play roar")
+    assert "DAVE_PROTOCOL_VERSION" in play.send.await_args.kwargs["embed"].description
+    connect.assert_not_awaited()
+    lookup.assert_not_awaited()
+    assert cog._voice_repair.changed is False
+
+    bot.owner_ids.add(member.id)
+    run = AsyncMock(side_effect=[(0, "Installed"), (0, '{"PyNaCl":"Ready","davey":"Ready"}')])
+    monkeypatch.setattr(cog._voice_repair, "_run", run)
+    repaired = await invoke("!audiorepair")
+    install = run.await_args_list[0].args[0]
+    assert "davey>=0.1.6" in install and "PyNaCl>=1.5.0,<1.6" not in install
+    assert "native API checks" in repaired.send.await_args.kwargs["embed"].description
+    assert bot._audioplus_voice_restart_required is True
 
 
 @pytest.mark.parametrize("during_spawn", [False, True])
