@@ -44,7 +44,7 @@ async def test_invalid_calibration_preserves_saved_settings(bot, guild, anchors)
     await LevelPlus.formula_calibrate.callback(cog, ctx, *anchors)
     assert await group.all() == before
     ctx.send.assert_awaited_once()
-    assert "Calibrated" not in ctx.send.await_args.args[0]
+    assert "Calibrated" not in ctx.send.await_args.kwargs["embed"].description
 
 
 @pytest.mark.parametrize("multiplier", [0.0, -1.0, float("inf"), float("nan")])
@@ -56,7 +56,7 @@ async def test_calibration_rejects_invalid_saved_multiplier(bot, guild, multipli
     ctx = make_context(guild)
     await LevelPlus.formula_calibrate.callback(cog, ctx, 1, 100, 2, 250)
     assert await group.linear() == before
-    assert "positive multiplier" in ctx.send.await_args.args[0]
+    assert "positive multiplier" in ctx.send.await_args.kwargs["embed"].description
 
 
 async def test_concurrent_xp_updates_and_saved_alias(bot, guild):
@@ -210,5 +210,6 @@ async def test_long_leaderboard_is_paginated(bot, guild):
     await LevelPlus.leaderboard.callback(cog, ctx, top=50)
     assert ctx.send.await_count > 1
     assert all(
-        len(call.args[0].encode("utf-16-le")) // 2 <= 2000 for call in ctx.send.await_args_list
+        len(call.kwargs["embed"].description.encode("utf-16-le")) // 2 <= 4096
+        for call in ctx.send.await_args_list
     )

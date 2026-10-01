@@ -20,20 +20,27 @@ from discord.ext import commands, tasks
 from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
-from redbot.core.utils.chat_formatting import box, pagify
 
 from .constants import DEFAULTS_GUILD, WORD_RE
 from .events import guild_enabled
 from .levels import cumulative_xp, level_from_xp
+from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
 
 
 class LevelPlus(redcommands.Cog):
-    """Arcane-style leveling: messages/reactions/voice/slash XP, leaderboard, CSV import, tests, calibration, and purge tools."""
+    """Member XP, levels, leaderboards, and announcements."""
+
+    async def cog_command_error(self, ctx, error):
+        await self._presentation.command_error(ctx, error)
+
+    async def _reply(self, ctx, content=None, **kwargs):
+        return await self._presentation.send(ctx, content, **kwargs)
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
+        self._presentation = Presentation("LevelPlus", "level")
         self.config: Config = Config.get_conf(self, identifier=0x1EAF01, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
 
@@ -113,10 +120,20 @@ class LevelPlus(redcommands.Cog):
             msg = template.format(user=u)
         except Exception:
             msg = f"{member.mention} has reached level **{new}**!"
+        embed = self._levelup_card(member, new, u.xp)
         try:
-            await ch.send(msg)
+            await self._presentation.send(ch, embed=embed, notification=msg, allowed_mentions=None)
         except discord.HTTPException:
             log.debug("Level-up announcement could not be sent", exc_info=True)
+
+    def _levelup_card(self, member, level, xp, *, preview=False):
+        embed = self._presentation.embed(
+            "Level up preview" if preview else "Level up", tone="success"
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(name="Level", value=f"{level:,}")
+        embed.add_field(name="Total XP", value=f"{xp:,}")
+        return embed
 
     # ---------- listeners ----------
     @commands.Cog.listener()
@@ -287,77 +304,113 @@ class LevelPlus(redcommands.Cog):
     @redcommands.group(name="level", invoke_without_command=True)
     @redcommands.guild_only()
     async def level(self, ctx: redcommands.Context):
+        """Manage XP, levels, leaderboards, and announcements.
+
+        Run this command alone to see XP settings. Use show or leaderboard for member levels,
+        and the help subcommand for the command overview.
+        """
         g = await self._g(ctx.guild)
         base, inc = await self._lin(ctx.guild)
-        lu_chan = f"<#{g['levelup']['channel_id']}>" if g["levelup"]["channel_id"] else "current"
-        lu_tpl = g["levelup"]["template"][:40]
-        lines = [
-            f"Curve={g['curve']} Mult={g['multiplier']} MaxLevel={g['max_level'] or '∞'}  Linear(base={base:.3f}, inc={inc:.3f})",
-            f"Message: enabled={g['message']['enabled']} mode={g['message']['mode']} min={g['message']['min']} max={g['message']['max']} cd={g['message']['cooldown']}s",
-            f"Reaction: enabled={g['reaction']['enabled']} awards={g['reaction']['awards']} min={g['reaction']['min']} max={g['reaction']['max']} cd={g['reaction']['cooldown']}s",
-            f"Voice: enabled={g['voice']['enabled']} min={g['voice']['min']} max={g['voice']['max']} tick={g['voice']['cooldown']}s min_members={g['voice']['min_members']} anti_afk={g['voice']['anti_afk']}",
-            f"Restrictions: no_channels={len(g['restrictions']['no_channels'])} no_roles={len(g['restrictions']['no_roles'])} thread={g['restrictions']['thread_xp']} forum={g['restrictions']['forum_xp']} TIV={g['restrictions']['text_in_voice_xp']} slash={g['restrictions']['slash_command_xp']}",
-            f"LevelUp: enabled={g['levelup']['enabled']} channel={lu_chan} template={lu_tpl}…",
-            f"Users tracked: {len(g['xp'])}",
-        ]
-        for page in pagify("\n".join(lines), page_length=900):
-            await ctx.send(box(page, lang="ini"), allowed_mentions=discord.AllowedMentions.none())
+
+        def enabled(value):
+            return "Enabled" if value else "Disabled"
+
+        e = self._presentation.embed("Status", "XP sources, level progression, and announcements.")
+        e.add_field(
+            name="Level progression",
+            value=f"**Curve** · {g['curve'].title()}\n**Multiplier** · {g['multiplier']:g}×\n"
+            f"**Maximum level** · {g['max_level'] or 'Unlimited'}\n"
+            f"**Linear base / increment** · {base:.3f} / {inc:.3f}",
+            inline=False,
+        )
+        for key, label in (
+            ("message", "Message XP"),
+            ("reaction", "Reaction XP"),
+            ("voice", "Voice XP"),
+        ):
+            source = g[key]
+            value = f"**Status** · {enabled(source['enabled'])}\n**Award** · {source['min']}–{source['max']} XP\n**Cooldown** · {source['cooldown']}s"
+            if key == "message":
+                value += f"\n**Mode** · {source['mode']}"
+            elif key == "reaction":
+                value += f"\n**Recipients** · {source['awards']}"
+            else:
+                value += f"\n**Minimum members** · {source['min_members']}\n**AFK protection** · {enabled(source['anti_afk'])}"
+            e.add_field(name=label, value=value, inline=True)
+        r = g["restrictions"]
+        e.add_field(
+            name="XP eligibility",
+            value=f"**Excluded channels / roles** · {len(r['no_channels'])} / {len(r['no_roles'])}\n"
+            f"**Threads** · {enabled(r['thread_xp'])}\n**Forums** · {enabled(r['forum_xp'])}\n"
+            f"**Text in voice** · {enabled(r['text_in_voice_xp'])}\n**Slash commands** · {enabled(r['slash_command_xp'])}",
+            inline=False,
+        )
+        lu = g["levelup"]
+        channel = f"<#{lu['channel_id']}>" if lu["channel_id"] else "Current channel"
+        e.add_field(
+            name="Level-up announcements",
+            value=f"**Status** · {enabled(lu['enabled'])}\n**Channel** · {channel}\n**Template**\n{lu['template']}",
+            inline=False,
+        )
+        e.add_field(name="Members tracked", value=f"{len(g['xp']):,}", inline=True)
+        await self._reply(ctx, embed=e)
 
     @level.command(name="help")
     async def level_help(self, ctx: redcommands.Context):
-        """Pretty, sectioned help."""
+        """Show the leveling command overview."""
         p = ctx.clean_prefix
         e = discord.Embed(title="LevelPlus - Commands", color=discord.Color.blurple())
-        e.description = f"✨ Cleaner help • examples use `{p}` as prefix."
+        e.description = f"Commands and examples use `{p}` as prefix."
         e.add_field(
-            name="🧩 Core",
+            name="Core",
             value=f"• `{p}level` • `{p}level help` • `{p}level diag`\n• `{p}level show [@user]` • `{p}level leaderboard [N]`\n• `{p}level testmsg [@user]` • `{p}level testup [@user] [levels]`",
             inline=False,
         )
         e.add_field(
-            name="📈 Formula & Scale",
+            name="Formula & Scale",
             value=f"• `{p}level formula curve <linear|exponential|constant>`\n• `{p}level formula multiplier <float>` • `{p}level formula maxlevel <0|N>`\n• `{p}level formula preset arcane` • `{p}level formula calibrate <L1> <XP1> <L2> <XP2>`\n• `{p}level formula linear base <float>` • `linear inc <float>`",
             inline=False,
         )
         e.add_field(
-            name="💬 Message XP",
+            name="Message XP",
             value=f"• `{p}level message enable [true|false]` • `mode <perword|random|none>`\n• `min <n>` `max <n>` `cooldown <sec>`",
             inline=False,
         )
         e.add_field(
-            name="➕ Reaction XP",
+            name="Reaction XP",
             value=f"• `{p}level reaction enable [true|false]` • `awards <both|author|reactor|none>`\n• `min <n>` `max <n>` `cooldown <sec>`",
             inline=False,
         )
         e.add_field(
-            name="🎧 Voice XP",
+            name="Voice XP",
             value=f"• `{p}level voice enable [true|false]` • `range <min> <max>` • `cooldown <sec>`\n• `minmembers <n>` • `antiafk [true|false]`",
             inline=False,
         )
         e.add_field(
-            name="🚫 Restrictions",
+            name="Restrictions",
             value=f"• `{p}level restrict nochannels add|remove|list|clear <#ch>`\n• `{p}level restrict noroles add|remove|list|clear <@role>`\n• `{p}level restrict toggles <threadxp|forumxp|textvoicexp|slashxp> [true|false]`",
             inline=False,
         )
         e.add_field(
-            name="🎉 Level-up Message",
+            name="Level-up Message",
             value=f"• `{p}level levelup enable [true|false]` • `channel [#ch|none]`\n• `template <text with {{user.*}}>`",
             inline=False,
         )
         e.add_field(
-            name="🗃️ XP Admin & Migration",
+            name="XP Admin & Migration",
             value=f"• `{p}level xp set @user <amt>` • `add @user <amt>` • `setid <id> <amt>`\n• `exportcsv` • `importcsv` • `importlines`\n• `remove @user` • `removeid <id>` • `purgebots` • `clear yes`",
             inline=False,
         )
         e.add_field(
-            name="🔍 Lookup & Aliases",
+            name="Lookup & Aliases",
             value=f"• `{p}level lookup <name|@|id>`\n• `{p}level name set @user <alias>` • `name setid <id> <alias>` • `name get <id>`",
             inline=False,
         )
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @level.command()
     async def diag(self, ctx: redcommands.Context):
+        """Check XP settings, intents, permissions, and reactions."""
         g = await self._g(ctx.guild)
         base, inc = await self._lin(ctx.guild)
         ch = ctx.channel
@@ -370,7 +423,7 @@ class LevelPlus(redcommands.Cog):
         probe = "skip"
         if isinstance(ch, (discord.TextChannel, discord.Thread)):
             try:
-                m = await ctx.send("LevelPlus diag probe…")
+                m = await self._reply(ctx, "LevelPlus diag probe…")
                 await m.add_reaction("✅")
                 probe = "OK"
                 await m.delete()
@@ -383,8 +436,11 @@ class LevelPlus(redcommands.Cog):
             f"probe={probe}",
             "store_rw=OK" if isinstance(g["xp"], dict) else "store_rw=FAIL",
         ]
-        for page in pagify("\n".join(lines), page_length=900):
-            await ctx.send(box(page, lang="ini"), allowed_mentions=discord.AllowedMentions.none())
+        await self._reply(
+            ctx,
+            settings(("\n".join(lines)), lang="ini"),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     # ---- test/view
     @level.command(name="testmsg")
@@ -392,10 +448,11 @@ class LevelPlus(redcommands.Cog):
     async def level_testmsg(
         self, ctx: redcommands.Context, member: Optional[discord.Member] = None
     ):
+        """Send a sample level-up notice without changing XP."""
         m = member or ctx.author
         conf = await self.config.guild(ctx.guild).levelup()
         if not conf["enabled"]:
-            return await ctx.send("Level-up messages are disabled.")
+            return await self._reply(ctx, "Level-up messages are disabled.", tone="warning")
         ch: Optional[discord.TextChannel] = None
         cid = conf.get("channel_id")
         if cid:
@@ -425,8 +482,13 @@ class LevelPlus(redcommands.Cog):
             )
         except Exception:
             msg = f"{m.mention} has reached level **{next_level}**!"
-        await ch.send(f"[TEST] {msg}")
-        await ctx.tick()
+        await self._presentation.send(
+            ch,
+            embed=self._levelup_card(m, next_level, u.xp, preview=True),
+            notification=f"[TEST] {msg}",
+            allowed_mentions=None,
+        )
+        await self._presentation.confirm(ctx)
 
     @level.command(name="testup")
     @redcommands.admin_or_permissions(manage_guild=True)
@@ -436,6 +498,11 @@ class LevelPlus(redcommands.Cog):
         member: Optional[discord.Member] = None,
         levels: int = 1,
     ):
+        """Award real XP to advance a member's level.
+
+        Changes real XP and may send an announcement. Defaults to one level. Use testmsg for a
+        notice without changing XP.
+        """
         member = member or ctx.author
         settings = await self._settings(ctx.guild)
         xp = await self._get_xp(ctx.guild, member.id)
@@ -454,19 +521,45 @@ class LevelPlus(redcommands.Cog):
         amount = max(0, threshold - xp)
         old, new = await self._add_xp(ctx.guild, member, amount)
         await self.maybe_announce_levelup(ctx.guild, member, old, new)
-        await ctx.send(f"Gave {member.mention} **{amount}** XP (L{old} to L{new}).")
+        await self._reply(
+            ctx, f"Gave {member.mention} **{amount}** XP (L{old} to L{new}).", tone="success"
+        )
 
     @level.command()
     async def show(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Show a member's level, XP, and progress."""
         m = member or ctx.author
         xp = await self._get_xp(ctx.guild, m.id)
         g = await self._g(ctx.guild)
         base, inc = await self._lin(ctx.guild)
         lvl = level_from_xp(xp, g["curve"], float(g["multiplier"]), int(g["max_level"]), base, inc)
-        await ctx.send(f"{m.mention} - XP: **{xp}**, Level: **{lvl}**")
+        e = self._presentation.embed("Member level", m.mention)
+        e.set_thumbnail(url=m.display_avatar.url)
+        e.add_field(name="Level", value=f"{lvl:,}")
+        e.add_field(name="Total XP", value=f"{xp:,}")
+        if g["max_level"] and lvl >= g["max_level"]:
+            progress = "Maximum level reached."
+        else:
+            lower = cumulative_xp(lvl, g["curve"], float(g["multiplier"]), base, inc)
+            upper = cumulative_xp(lvl + 1, g["curve"], float(g["multiplier"]), base, inc)
+            if upper > lower:
+                fraction = max(0.0, min(1.0, (xp - lower) / (upper - lower)))
+                filled = int(fraction * 10)
+                bar = "▰" * filled + "▱" * (10 - filled)
+                progress = (
+                    f"{bar} **{fraction:.0%}**\n{max(0, upper - xp):,} XP to level {lvl + 1:,}"
+                )
+            else:
+                progress = "No XP threshold configured."
+        e.add_field(name="Next level", value=progress, inline=False)
+        await self._reply(ctx, embed=e)
 
     @level.command()
     async def leaderboard(self, ctx: redcommands.Context, top: int = 10):
+        """Show the members with the highest XP totals.
+
+        Defaults to 10 members. The result count is clamped to 1 through 50.
+        """
         g = await self._g(ctx.guild)
         base, inc = await self._lin(ctx.guild)
         names = g.get("names", {})
@@ -476,7 +569,7 @@ class LevelPlus(redcommands.Cog):
             key=lambda t: t[1],
         )
         if not items:
-            return await ctx.send("No XP yet.")
+            return await self._reply(ctx, "No XP yet.", tone="warning")
         lines = []
         for i, (uid, xp) in enumerate(items, start=1):
             m = ctx.guild.get_member(uid)
@@ -485,275 +578,372 @@ class LevelPlus(redcommands.Cog):
             )
             name = (m.display_name if m else names.get(str(uid))) or str(uid)
             lines.append(f"{i:>2}. {name} - L{lvl} ({xp} xp)")
-        for page in pagify("\n".join(lines), page_length=900):
-            await ctx.send(box(page, lang="ini"), allowed_mentions=discord.AllowedMentions.none())
+        await self._reply(
+            ctx,
+            settings(("\n".join(lines)), lang="ini"),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     # ---- formula
-    @level.group(name="formula")
+    @level.group(name="formula", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def formula(self, ctx: redcommands.Context): ...
+    async def formula(self, ctx: redcommands.Context):
+        """Configure level curves and XP thresholds."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @formula.command(name="curve")
     async def formula_curve(self, ctx: redcommands.Context, curve: str):
+        """Choose a linear, exponential, or constant level curve."""
         curve = curve.lower()
         if curve not in {"linear", "exponential", "constant"}:
-            return await ctx.send("Curve must be linear|exponential|constant.")
+            return await self._reply(
+                ctx, "Curve must be linear|exponential|constant.", tone="warning"
+            )
         await self.config.guild(ctx.guild).curve.set(curve)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @formula.command(name="multiplier")
     async def formula_mult(self, ctx: redcommands.Context, mult: float):
+        """Set the XP threshold multiplier."""
         if not math.isfinite(mult):
-            return await ctx.send("Use a finite numeric value.")
+            return await self._reply(ctx, "Use a finite numeric value.", tone="warning")
         await self.config.guild(ctx.guild).multiplier.set(float(max(0.1, min(10.0, mult))))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @formula.command(name="maxlevel")
     async def formula_maxlvl(self, ctx: redcommands.Context, level: int):
+        """Set the maximum level, or use zero for no cap."""
         await self.config.guild(ctx.guild).max_level.set(int(max(0, level)))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
-    @formula.group(name="linear")
-    async def formula_linear(self, ctx: redcommands.Context): ...
+    @formula.group(name="linear", autohelp=False)
+    async def formula_linear(self, ctx: redcommands.Context):
+        """Configure the base and increment of the linear curve."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @formula_linear.command(name="base")
     async def formula_linear_base(self, ctx: redcommands.Context, value: float):
+        """Set the nonnegative linear curve base."""
         if not math.isfinite(value):
-            return await ctx.send("Use a finite numeric value.")
+            return await self._reply(ctx, "Use a finite numeric value.", tone="warning")
         await self.config.guild(ctx.guild).linear.base.set(float(max(0.0, value)))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @formula_linear.command(name="inc")
     async def formula_linear_inc(self, ctx: redcommands.Context, value: float):
+        """Set the nonnegative linear curve increment."""
         if not math.isfinite(value):
-            return await ctx.send("Use a finite numeric value.")
+            return await self._reply(ctx, "Use a finite numeric value.", tone="warning")
         await self.config.guild(ctx.guild).linear.inc.set(float(max(0.0, value)))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @formula.command(name="preset")
     async def formula_preset(self, ctx: redcommands.Context, which: str):
+        """Apply the Arcane-like linear curve preset."""
         which = which.lower()
         if which != "arcane":
-            return await ctx.send("Only `arcane` preset is available.")
+            return await self._reply(ctx, "Only `arcane` preset is available.", tone="warning")
         await self.config.guild(ctx.guild).linear.set({"base": 83.2, "inc": 100.433})
         await self.config.guild(ctx.guild).curve.set("linear")
-        await ctx.send("Set curve to **linear** with Arcane-like preset (base=83.2, inc=100.433).")
+        await self._reply(
+            ctx,
+            "Set curve to **linear** with Arcane-like preset (base=83.2, inc=100.433).",
+            tone="success",
+        )
 
     @formula.command(name="calibrate")
     async def formula_calibrate(
         self, ctx: redcommands.Context, L1: int, XP1: int, L2: int, XP2: int
     ):
+        """Fit a linear curve to two level and total-XP points.
+
+        Provide two different positive levels and their nonnegative cumulative XP thresholds.
+        Keeps the current multiplier and rejects invalid or unrepresentable fits without
+        changing saved settings.
+        """
         if L1 <= 0 or L2 <= 0 or L1 == L2:
-            return await ctx.send("Levels must be positive and different.")
+            return await self._reply(ctx, "Levels must be positive and different.", tone="warning")
         if XP1 < 0 or XP2 < 0:
-            return await ctx.send("XP thresholds must be nonnegative.")
+            return await self._reply(ctx, "XP thresholds must be nonnegative.", tone="warning")
         group = self.config.guild(ctx.guild)
         multiplier = float(await group.multiplier())
         if not math.isfinite(multiplier) or multiplier <= 0:
-            return await ctx.send("Set a finite positive multiplier before calibrating.")
+            return await self._reply(
+                ctx, "Set a finite positive multiplier before calibrating.", tone="warning"
+            )
         factor = Fraction(str(multiplier))
         step = 2 * (Fraction(XP2, L2) - Fraction(XP1, L1)) / (L2 - L1) / factor
         start = Fraction(XP1, L1) / factor - (L1 - 1) * step / 2
         if step < 0 or start < 0:
-            return await ctx.send("Calibration failed (negative base/inc). Check inputs.")
+            return await self._reply(
+                ctx, "Calibration failed (negative base/inc). Check inputs.", tone="error"
+            )
         try:
             b, d = float(start), float(step)
         except OverflowError:
-            return await ctx.send("Calibration failed (coefficients are too large). Check inputs.")
+            return await self._reply(
+                ctx, "Calibration failed (coefficients are too large). Check inputs.", tone="error"
+            )
         if not all(math.isfinite(value) for value in (b, d)) or any(
             cumulative_xp(level, "linear", multiplier, b, d) != xp
             for level, xp in ((L1, XP1), (L2, XP2))
         ):
-            return await ctx.send(
-                "Calibration failed (coefficients cannot reproduce those XP thresholds). Check inputs."
+            return await self._reply(
+                ctx,
+                "Calibration failed (coefficients cannot reproduce those XP thresholds). Check inputs.",
+                tone="error",
             )
         await group.linear.set({"base": b, "inc": d})
         await group.curve.set("linear")
-        await ctx.send(f"Calibrated linear curve: base=**{b:.3f}**, inc=**{d:.3f}**")
+        await self._reply(
+            ctx, f"Calibrated linear curve: base=**{b:.3f}**, inc=**{d:.3f}**", tone="success"
+        )
 
     # ---- admin: message xp
-    @level.group(name="message")
+    @level.group(name="message", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def message_grp(self, ctx: redcommands.Context): ...
+    async def message_grp(self, ctx: redcommands.Context):
+        """Configure XP awards from messages."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @message_grp.command(name="mode")
     async def message_mode(self, ctx: redcommands.Context, mode: str):
+        """Choose word-based, random, or no message XP."""
         mode = mode.lower()
         if mode not in {"none", "random", "perword"}:
-            return await ctx.send("Mode: none|random|perword")
+            return await self._reply(ctx, "Mode: none|random|perword", tone="warning")
         await self.config.guild(ctx.guild).message.mode.set(mode)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @message_grp.command(name="min")
     async def message_min(self, ctx: redcommands.Context, value: int):
+        """Set minimum message XP or the XP-per-word amount."""
         await self.config.guild(ctx.guild).message.min.set(int(max(0, value)))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @message_grp.command(name="max")
     async def message_max(self, ctx: redcommands.Context, value: int):
+        """Set the random upper bound or per-message XP cap."""
         await self.config.guild(ctx.guild).message.max.set(int(max(0, value)))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @message_grp.command(name="cooldown")
     async def message_cd(self, ctx: redcommands.Context, seconds: int):
+        """Set the message XP cooldown in seconds."""
         await self.config.guild(ctx.guild).message.cooldown.set(int(max(0, min(3600, seconds))))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @message_grp.command(name="enable")
     async def message_enable(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+        """Enable, disable, or toggle message XP.
+
+        Omit true or false to toggle the current setting.
+        """
         if enabled is None:
             enabled = not (await self.config.guild(ctx.guild).message.enabled())
         await self.config.guild(ctx.guild).message.enabled.set(bool(enabled))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # ---- admin: reaction xp
-    @level.group(name="reaction")
+    @level.group(name="reaction", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def rx_grp(self, ctx: redcommands.Context): ...
+    async def rx_grp(self, ctx: redcommands.Context):
+        """Configure XP awards from reactions."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @rx_grp.command(name="awards")
     async def rx_awards(self, ctx: redcommands.Context, awards: str):
+        """Choose whether reactions reward authors or reactors."""
         awards = awards.lower()
         if awards not in {"none", "both", "author", "reactor"}:
-            return await ctx.send("Awards: none|both|author|reactor")
+            return await self._reply(ctx, "Awards: none|both|author|reactor", tone="warning")
         await self.config.guild(ctx.guild).reaction.awards.set(awards)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @rx_grp.command(name="min")
     async def rx_min(self, ctx: redcommands.Context, value: int):
+        """Set the minimum random reaction XP award."""
         await self.config.guild(ctx.guild).reaction.min.set(int(max(0, value)))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @rx_grp.command(name="max")
     async def rx_max(self, ctx: redcommands.Context, value: int):
+        """Set the maximum random reaction XP award."""
         await self.config.guild(ctx.guild).reaction.max.set(int(max(0, value)))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @rx_grp.command(name="cooldown")
     async def rx_cd(self, ctx: redcommands.Context, seconds: int):
+        """Set the reaction XP cooldown in seconds."""
         await self.config.guild(ctx.guild).reaction.cooldown.set(int(max(0, min(3600, seconds))))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @rx_grp.command(name="enable")
     async def rx_enable(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+        """Enable, disable, or toggle reaction XP.
+
+        Omit true or false to toggle the current setting.
+        """
         if enabled is None:
             enabled = not (await self.config.guild(ctx.guild).reaction.enabled())
         await self.config.guild(ctx.guild).reaction.enabled.set(bool(enabled))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # ---- admin: voice xp
-    @level.group(name="voice")
+    @level.group(name="voice", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def voice_grp(self, ctx: redcommands.Context): ...
+    async def voice_grp(self, ctx: redcommands.Context):
+        """Configure XP awards from voice participation."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @voice_grp.command(name="enable")
     async def voice_enable(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+        """Enable, disable, or toggle voice XP.
+
+        Omit true or false to toggle the current setting.
+        """
         if enabled is None:
             enabled = not (await self.config.guild(ctx.guild).voice.enabled())
         await self.config.guild(ctx.guild).voice.enabled.set(bool(enabled))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @voice_grp.command(name="range")
     async def voice_range(self, ctx: redcommands.Context, min_points: int, max_points: int):
+        """Set the minimum and maximum random voice XP award."""
         max_points = max(max_points, min_points)
         await self.config.guild(ctx.guild).voice.min.set(int(max(0, min_points)))
         await self.config.guild(ctx.guild).voice.max.set(int(max(0, max_points)))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @voice_grp.command(name="cooldown")
     async def voice_cd(self, ctx: redcommands.Context, seconds: int):
+        """Set the voice XP award interval in seconds."""
         await self.config.guild(ctx.guild).voice.cooldown.set(int(max(15, min(3600, seconds))))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @voice_grp.command(name="minmembers")
     async def voice_minmembers(self, ctx: redcommands.Context, count: int):
+        """Set the minimum human members needed for voice XP."""
         await self.config.guild(ctx.guild).voice.min_members.set(int(max(1, min(99, count))))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @voice_grp.command(name="antiafk")
     async def voice_antiafk(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+        """Control exclusion of AFK, muted, or deafened members.
+
+        Omit true or false to toggle the current setting.
+        """
         if enabled is None:
             enabled = not (await self.config.guild(ctx.guild).voice.anti_afk())
         await self.config.guild(ctx.guild).voice.anti_afk.set(bool(enabled))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # ---- restrictions
-    @level.group(name="restrict")
+    @level.group(name="restrict", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def restrict(self, ctx: redcommands.Context): ...
+    async def restrict(self, ctx: redcommands.Context):
+        """Manage channel, role, and feature XP exclusions."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
-    @restrict.group(name="nochannels")
-    async def res_noch(self, ctx: redcommands.Context): ...
+    @restrict.group(name="nochannels", autohelp=False)
+    async def res_noch(self, ctx: redcommands.Context):
+        """Manage channels excluded from XP awards."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @res_noch.command(name="add")
     async def res_noch_add(self, ctx: redcommands.Context, channel: discord.TextChannel):
+        """Exclude a channel from XP awards."""
         data = await self.config.guild(ctx.guild).restrictions.no_channels()
         if channel.id in data:
-            return await ctx.send("Already set.")
+            return await self._reply(ctx, "Already set.", tone="warning")
         data.append(channel.id)
         await self.config.guild(ctx.guild).restrictions.no_channels.set(data)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @res_noch.command(name="remove")
     async def res_noch_remove(self, ctx: redcommands.Context, channel: discord.TextChannel):
+        """Remove a channel from the XP exclusion list."""
         data = await self.config.guild(ctx.guild).restrictions.no_channels()
         if channel.id not in data:
-            return await ctx.send("Not present.")
+            return await self._reply(ctx, "Not present.", tone="warning")
         data = [c for c in data if c != channel.id]
         await self.config.guild(ctx.guild).restrictions.no_channels.set(data)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @res_noch.command(name="list")
     async def res_noch_list(self, ctx: redcommands.Context):
+        """List channels excluded from XP awards."""
         data = await self.config.guild(ctx.guild).restrictions.no_channels()
-        await ctx.send(
-            "No-XP channels: " + (", ".join(f"<#{c}>" for c in data) if data else "none")
+        await self._reply(
+            ctx, "No-XP channels: " + (", ".join(f"<#{c}>" for c in data) if data else "none")
         )
 
     @res_noch.command(name="clear")
     async def res_noch_clear(self, ctx: redcommands.Context):
+        """Clear all channel XP exclusions."""
         await self.config.guild(ctx.guild).restrictions.no_channels.set([])
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
-    @restrict.group(name="noroles")
-    async def res_noroles(self, ctx: redcommands.Context): ...
+    @restrict.group(name="noroles", autohelp=False)
+    async def res_noroles(self, ctx: redcommands.Context):
+        """Manage roles whose members cannot earn XP."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @res_noroles.command(name="add")
     async def res_noroles_add(self, ctx: redcommands.Context, role: discord.Role):
+        """Exclude members with a role from XP awards."""
         data = await self.config.guild(ctx.guild).restrictions.no_roles()
         if role.id in data:
-            return await ctx.send("Already set.")
+            return await self._reply(ctx, "Already set.", tone="warning")
         data.append(role.id)
         await self.config.guild(ctx.guild).restrictions.no_roles.set(data)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @res_noroles.command(name="remove")
     async def res_noroles_remove(self, ctx: redcommands.Context, role: discord.Role):
+        """Remove a role from the XP exclusion list."""
         data = await self.config.guild(ctx.guild).restrictions.no_roles()
         if role.id not in data:
-            return await ctx.send("Not present.")
+            return await self._reply(ctx, "Not present.", tone="warning")
         data = [r for r in data if r != role.id]
         await self.config.guild(ctx.guild).restrictions.no_roles.set(data)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @res_noroles.command(name="list")
     async def res_noroles_list(self, ctx: redcommands.Context):
+        """List roles excluded from XP awards."""
         data = await self.config.guild(ctx.guild).restrictions.no_roles()
         roles = [ctx.guild.get_role(r).mention for r in data if ctx.guild.get_role(r)] or ["none"]
-        await ctx.send("No-XP roles: " + ", ".join(roles))
+        await self._reply(ctx, "No-XP roles: " + ", ".join(roles))
 
     @res_noroles.command(name="clear")
     async def res_noroles_clear(self, ctx: redcommands.Context):
+        """Clear all role XP exclusions."""
         await self.config.guild(ctx.guild).restrictions.no_roles.set([])
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @restrict.command(name="toggles")
     async def restrict_toggles(
         self, ctx: redcommands.Context, feature: str, enabled: Optional[bool] = None
     ):
+        """Control XP in threads, forums, voice text, or slash.
+
+        Feature names: threadxp, forumxp, textvoicexp, and slashxp. Omit true or false to toggle
+        the feature.
+        """
         feature = feature.lower()
         if feature not in {"threadxp", "forumxp", "textvoicexp", "slashxp"}:
-            return await ctx.send("feature: threadxp|forumxp|textvoicexp|slashxp")
+            return await self._reply(
+                ctx, "feature: threadxp|forumxp|textvoicexp|slashxp", tone="warning"
+            )
         key = {
             "threadxp": "thread_xp",
             "forumxp": "forum_xp",
@@ -763,91 +953,130 @@ class LevelPlus(redcommands.Cog):
         if enabled is None:
             enabled = not (await getattr(self.config.guild(ctx.guild).restrictions, key)())
         await getattr(self.config.guild(ctx.guild).restrictions, key).set(bool(enabled))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # ---- levelup config
-    @level.group(name="levelup")
+    @level.group(name="levelup", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def levelup_grp(self, ctx: redcommands.Context): ...
+    async def levelup_grp(self, ctx: redcommands.Context):
+        """Configure level-up announcements."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @levelup_grp.command(name="enable")
     async def levelup_enable(self, ctx: redcommands.Context, enabled: Optional[bool] = None):
+        """Enable, disable, or toggle level-up announcements.
+
+        Omit true or false to toggle the current setting.
+        """
         if enabled is None:
             enabled = not (await self.config.guild(ctx.guild).levelup.enabled())
         await self.config.guild(ctx.guild).levelup.enabled.set(bool(enabled))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @levelup_grp.command(name="channel")
     async def levelup_channel(
         self, ctx: redcommands.Context, channel: Optional[discord.TextChannel]
     ):
+        """Set or clear the level-up announcement channel.
+
+        Omit the channel to clear the saved target. Automatic announcements then use the
+        server's system channel.
+        """
         await self.config.guild(ctx.guild).levelup.channel_id.set(channel.id if channel else None)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @levelup_grp.command(name="template")
     async def levelup_template(self, ctx: redcommands.Context, *, text: str):
+        """Set the level-up message template.
+
+        Available placeholders: {user.mention}, {user.name}, {user.level}, and {user.xp}. The
+        template is limited to 500 characters.
+        """
         await self.config.guild(ctx.guild).levelup.template.set(text[:500])
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # ---- XP admin & migration
-    @level.group(name="xp")
+    @level.group(name="xp", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def xpgrp(self, ctx: redcommands.Context): ...
+    async def xpgrp(self, ctx: redcommands.Context):
+        """Manage member XP totals and CSV imports and exports."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @xpgrp.command(name="set")
     async def xp_set(self, ctx: redcommands.Context, member: discord.Member, amount: int):
+        """Set a member's total XP."""
         await self._remember_name(ctx.guild, member)
         await self._set_xp(ctx.guild, member.id, amount)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @xpgrp.command(name="setid")
     async def xp_setid(self, ctx: redcommands.Context, user_id: int, amount: int):
+        """Set total XP by user ID."""
         await self._set_xp(ctx.guild, user_id, amount)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @xpgrp.command(name="add")
     async def xp_add(self, ctx: redcommands.Context, member: discord.Member, amount: int):
+        """Add XP and announce any resulting level increase."""
         await self._remember_name(ctx.guild, member)
         old, new = await self._add_xp(ctx.guild, member, amount)
         await self.maybe_announce_levelup(ctx.guild, member, old, new)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @xpgrp.command(name="remove")
     async def xp_remove(self, ctx: redcommands.Context, member: discord.Member):
+        """Remove a member's XP row while keeping their alias.
+
+        Removes only the XP row. The saved name or alias remains.
+        """
         async with self.config.guild(ctx.guild).xp() as data:
             data.pop(str(member.id), None)
-        await ctx.send(f"Removed XP row for {member.mention}.")
+        await self._reply(ctx, f"Removed XP row for {member.mention}.", tone="success")
 
     @xpgrp.command(name="removeid")
     async def xp_removeid(self, ctx: redcommands.Context, user_id: int):
+        """Remove an XP row by user ID while keeping its alias.
+
+        Removes only the XP row. The saved name or alias remains.
+        """
         async with self.config.guild(ctx.guild).xp() as data:
             data.pop(str(user_id), None)
-        await ctx.send(f"Removed XP row for `{user_id}`.")
+        await self._reply(ctx, f"Removed XP row for `{user_id}`.", tone="success")
 
     @xpgrp.command(name="purgebots")
     async def xp_purgebots(self, ctx: redcommands.Context):
+        """Remove XP rows for bots currently in the server."""
         async with self.config.guild(ctx.guild).xp() as data:
             before = len(data)
             bot_ids = {str(m.id) for m in ctx.guild.members if m.bot}
             for bid in bot_ids:
                 data.pop(bid, None)
-        await ctx.send(f"Purged **{before - len(data)}** bot row(s).")
+        await self._reply(ctx, f"Purged **{before - len(data)}** bot row(s).", tone="success")
 
     @xpgrp.command(name="clear")
     async def xp_clear(self, ctx: redcommands.Context, confirm: Optional[str] = None):
+        """Clear this server's XP and aliases with confirmation.
+
+        Requires the confirmation word yes. Removes both XP and saved aliases for this server.
+        """
         if confirm != "yes":
-            return await ctx.send(
-                "This will WIPE XP & aliases for this guild. Confirm with `level xp clear yes`."
+            return await self._reply(
+                ctx,
+                "This will WIPE XP & aliases for this guild. Confirm with `level xp clear yes`.",
+                tone="warning",
             )
         group = self.config.guild(ctx.guild)
         async with group.xp() as data:
             data.clear()
         async with group.names() as names:
             names.clear()
-        await ctx.send("Cleared XP and aliases.")
+        await self._reply(ctx, "Cleared XP and aliases.", tone="success")
 
     @xpgrp.command(name="exportcsv")
     async def xp_export(self, ctx: redcommands.Context):
+        """Export user IDs, XP totals, and aliases as CSV."""
         g = await self._g(ctx.guild)
         buff = io.StringIO()
         w = csv.writer(buff)
@@ -856,23 +1085,31 @@ class LevelPlus(redcommands.Cog):
             alias = g.get("names", {}).get(uid, "")
             w.writerow([uid, xp, alias])
         buff.seek(0)
-        await ctx.send(
+        await self._reply(
+            ctx,
             file=discord.File(
                 fp=io.BytesIO(buff.getvalue().encode("utf-8")),
                 filename=f"{ctx.guild.id}_xp_export.csv",
-            )
+            ),
         )
 
     @xpgrp.command(name="importcsv")
     async def xp_import_csv(self, ctx: redcommands.Context, *, raw: str = ""):
+        """Import XP from a UTF-8 CSV attachment or pasted text.
+
+        Accepts the first UTF-8 attachment or pasted CSV with user_id,xp,alias columns. Matching
+        user IDs are overwritten. Supports quoted fields and attachments up to 8 MB.
+        """
         if ctx.message.attachments:
             attachment = ctx.message.attachments[0]
             if attachment.size > 8_000_000:
-                return await ctx.send("CSV exceeds the 8 MB import limit.")
+                return await self._reply(ctx, "CSV exceeds the 8 MB import limit.", tone="error")
             try:
                 raw = (await attachment.read()).decode("utf-8-sig")
             except (discord.HTTPException, UnicodeDecodeError):
-                return await ctx.send("Could not read a UTF-8 CSV attachment.")
+                return await self._reply(
+                    ctx, "Could not read a UTF-8 CSV attachment.", tone="error"
+                )
         parsed = []
         try:
             for row in csv.reader(io.StringIO(raw), strict=True):
@@ -887,9 +1124,11 @@ class LevelPlus(redcommands.Cog):
                     continue
                 parsed.append((match.group(1), xp, row[2][:100] if len(row) > 2 else None))
         except csv.Error:
-            return await ctx.send("Invalid CSV quoting. No rows were imported.")
+            return await self._reply(
+                ctx, "Invalid CSV quoting. No rows were imported.", tone="error"
+            )
         if not parsed:
-            return await ctx.send("No rows parsed.")
+            return await self._reply(ctx, "No rows parsed.", tone="warning")
         group = self.config.guild(ctx.guild)
         async with group.xp() as xpmap:
             for uid, xp, _ in parsed:
@@ -898,11 +1137,15 @@ class LevelPlus(redcommands.Cog):
             for uid, _, alias in parsed:
                 if alias is not None:
                     names[uid] = alias
-        await ctx.send(f"Imported **{len(parsed)}** user(s).")
+        await self._reply(ctx, f"Imported **{len(parsed)}** user(s).", tone="success")
 
     @xpgrp.command(name="importlines")
     async def xp_import_lines(self, ctx: redcommands.Context, *, lines: str):
-        """Import identifier,integer XP rows, rejecting ambiguous names."""
+        """Import identifier and integer XP rows from text.
+
+        Use identifier,xp rows with a user ID, mention, or resolvable name. Matching users are
+        overwritten; ambiguous names are skipped. XP values must be integers.
+        """
         guild_names, global_names = {}, {}
 
         def index_user(index, user, names):
@@ -960,7 +1203,9 @@ class LevelPlus(redcommands.Cog):
                 alias = member.display_name if member else identifier
                 parsed.append((str(uid), xp, alias[:100]))
         except csv.Error:
-            return await ctx.send("Invalid CSV quoting. No rows were imported.")
+            return await self._reply(
+                ctx, "Invalid CSV quoting. No rows were imported.", tone="error"
+            )
         if parsed:
             group = self.config.guild(ctx.guild)
             async with group.xp() as xpmap:
@@ -969,13 +1214,17 @@ class LevelPlus(redcommands.Cog):
             async with group.names() as names:
                 for uid, _, alias in parsed:
                     names[uid] = alias
-        await ctx.send(f"Imported **{len(parsed)}** row(s), skipped **{skipped}**.")
+        await self._reply(
+            ctx, f"Imported **{len(parsed)}** row(s), skipped **{skipped}**.", tone="success"
+        )
 
     # ---- lookup & aliases
     @level.command(name="lookup")
     async def level_lookup(self, ctx: redcommands.Context, *, query: str):
-        """
-        Lookup IDs by **@mention**, **raw ID**, or name fragment.
+        """Find user IDs by mention, ID, or name fragment.
+
+        Searches current server members and cached users. Accepts a mention, raw numeric ID, or
+        case-insensitive name fragment.
         """
         q = query.strip()
         m = re.search(r"(\d{15,25})", q)
@@ -985,7 +1234,7 @@ class LevelPlus(redcommands.Cog):
             name = (mbr.display_name if mbr else None) or (
                 await self.config.guild(ctx.guild).names()
             ).get(str(uid), "unknown")
-            return await ctx.send(box(f"1. {name} - `{uid}`", lang="ini"))
+            return await self._reply(ctx, settings(f"1. {name} - `{uid}`", lang="ini"))
 
         ql = q.lower()
         results: List[Tuple[int, str]] = []
@@ -1003,32 +1252,41 @@ class LevelPlus(redcommands.Cog):
                 if any(n and ql in n.lower() for n in names):
                     results.append((u.id, getattr(u, "global_name", None) or u.name))
         if not results:
-            return await ctx.send("No matches.")
+            return await self._reply(ctx, "No matches.", tone="warning")
         lines = [f"{i:>2}. {name} - `{uid}`" for i, (uid, name) in enumerate(results[:20], start=1)]
-        for page in pagify("\n".join(lines), page_length=900):
-            await ctx.send(box(page, lang="ini"), allowed_mentions=discord.AllowedMentions.none())
+        await self._reply(
+            ctx,
+            settings(("\n".join(lines)), lang="ini"),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
-    @level.group(name="name")
+    @level.group(name="name", autohelp=False)
     @redcommands.admin_or_permissions(manage_guild=True)
-    async def namegrp(self, ctx: redcommands.Context): ...
+    async def namegrp(self, ctx: redcommands.Context):
+        """Manage saved member names and leaderboard aliases."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @namegrp.command(name="set")
     async def name_set(self, ctx: redcommands.Context, member: discord.Member, *, alias: str):
+        """Save a member's leaderboard alias."""
         async with self.config.guild(ctx.guild).names() as names:
             names[str(member.id)] = alias[:100]
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @namegrp.command(name="setid")
     async def name_setid(self, ctx: redcommands.Context, user_id: int, *, alias: str):
+        """Save a leaderboard alias by user ID."""
         async with self.config.guild(ctx.guild).names() as names:
             names[str(user_id)] = alias[:100]
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @namegrp.command(name="get")
     async def name_get(self, ctx: redcommands.Context, user_id: int):
+        """Show the saved name or alias for a user ID."""
         names = await self.config.guild(ctx.guild).names()
         alias = names.get(str(user_id), "none")
-        await ctx.send(f"`{user_id}` → {alias}")
+        await self._reply(ctx, f"`{user_id}` → {alias}")
 
     async def cog_load(self):
         self.voice_tick.start()

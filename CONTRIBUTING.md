@@ -14,6 +14,8 @@ Each cog is independently installable through Red Downloader:
 
 LevelPlus isolates threshold calculations in `levels.py`. OwoPlus isolates syllable counting and haiku detection in `haiku.py`. Keep cog modules self-contained; Downloader can install one cog without the others.
 
+Each cog vendors the same `presentation.py` helper. Edit the AudioPlus copy and sync it to the other four; tests enforce identical copies. Use the presentation helper for bot-owned messages and retain webhook/user content semantics. See [the visual design](docs/PRESENTATION.md), including the command to regenerate its sample preview.
+
 Config identifiers, cog class names, and defaults preserve existing saved settings. Use a migration for changes to their schema. Protect read/modify/write operations with the same Config lock used by related writers. CommunityPlus activity updates use the member's whole-record lock; LevelPlus XP and aliases use their respective field locks.
 
 ## Local checks

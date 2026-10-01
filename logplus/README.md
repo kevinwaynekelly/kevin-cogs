@@ -4,6 +4,9 @@ Discord event logs for messages, reactions, server changes, members, voice activ
 
 [Repository setup and installation](../README.md)
 
+
+Commands and event notices use the [shared visual theme](../docs/PRESENTATION.md). Event timestamps, attribution, IDs, and the compact-header setting are retained. Long log fields are paginated, and output falls back to text when embeds are unavailable.
+
 ## Setup
 
 `[p]` means your bot's command prefix. After installing the cog:

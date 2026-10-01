@@ -18,12 +18,10 @@ from discord.ext import commands
 from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
-from redbot.core.utils.chat_formatting import box, pagify
 
 from .constants import (
     CODE_SPLIT,
     DEFAULTS_GUILD,
-    EMO,
     HAIKU_SUFFIX,
     KEY_MAP,
     KEY_RX,
@@ -39,6 +37,7 @@ from .haiku import (
     _normalize_for_haiku,
     _reflow_text_as_haiku,
 )
+from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
 
@@ -52,15 +51,18 @@ def _embed(
     return discord.Embed(title=title, description=desc, color=color)
 
 
-def _bool_emoji(v: bool) -> str:
-    return "🟢" if v else "🔴"
-
-
 class OwoPlus(redcommands.Cog):
-    """Webhook-only cute/owo replacer with auto-intensity 1..5, keys-only fallback, and optional haiku formatting."""
+    """Webhook message transformations and automatic haiku formatting."""
+
+    async def cog_command_error(self, ctx, error):
+        await self._presentation.command_error(ctx, error)
+
+    async def _reply(self, ctx, content=None, **kwargs):
+        return await self._presentation.send(ctx, content, **kwargs)
 
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
+        self._presentation = Presentation("OwoPlus", "owoplus")
         self.config: Config = Config.get_conf(self, identifier=0x5E0F1A, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self._wh_cache = OrderedDict()
@@ -557,27 +559,28 @@ class OwoPlus(redcommands.Cog):
     # ---------- pretty status ----------
     async def _status_embed(self, g: discord.Guild) -> discord.Embed:
         cfg = await self.config.guild(g).all()
-        e = _embed(
-            f"OwoPlus - Status {_bool_emoji(cfg['enabled'])}",
-            desc="Keys → *meow/bwo/duwde/bwud*. RNG hit ⇒ full OWO; else keys-only. Haiku override outputs three italic lines and ends with 🌸.",
+        e = self._presentation.embed(
+            "Status", "Message transformations and automatic haiku formatting."
         )
         e.add_field(
-            name=f"{EMO['core']} Core",
-            value=box(
-                f"enabled = {cfg['enabled']}\n"
-                f"one_in  = 1/{cfg['one_in']}\n"
-                f"owner_bypass= {cfg['owner_bypass']}\n"
-                f"haiku_enabled= {cfg['haiku_enabled']}",
-                lang="ini",
-            ),
+            name="Message transformations",
+            value=f"**Status** · {'Enabled' if cfg['enabled'] else 'Disabled'}\n"
+            f"**Full transformation chance** · 1 in {cfg['one_in']:,}\n"
+            f"**Bot owner bypass** · {'Enabled' if cfg['owner_bypass'] else 'Disabled'}",
             inline=False,
         )
         e.add_field(
-            name=f"{EMO['prob']} Overrides",
-            value=(f"user_overrides={len(cfg['user_probs'])}"),
+            name="Haiku",
+            value=f"**Automatic formatting** · {'Enabled' if cfg['haiku_enabled'] else 'Disabled'}\n"
+            "Detected haiku becomes three italic lines ending with 🌸.",
             inline=False,
         )
-        e.set_footer(text="Use `[p]owoplus help` for commands.")
+        e.add_field(
+            name="Member overrides",
+            value=f"{len(cfg['user_probs']):,} custom probabilities",
+            inline=True,
+        )
+        e.add_field(name="Key substitutions", value="meow · bwo · duwde · bwud", inline=True)
         return e
 
     # ---------- commands ----------
@@ -585,15 +588,21 @@ class OwoPlus(redcommands.Cog):
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def owoplus(self, ctx: redcommands.Context) -> None:
+        """Configure message transformations and haiku formatting.
+
+        Run this command alone to see settings. Transformations start disabled and must be
+        enabled for this server.
+        """
         e = await self._status_embed(ctx.guild)
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @owoplus.command(name="help")
     async def owoplus_help(self, ctx: redcommands.Context) -> None:
+        """Show the transformation and haiku command overview."""
         p = ctx.clean_prefix
-        e = _embed("OwoPlus - Commands", desc=f"{EMO['spark']} Examples use `{p}` as prefix.")
+        e = _embed("OwoPlus - Commands", desc=f"Commands and examples use `{p}` as prefix.")
         e.add_field(
-            name=f"{EMO['core']} Core",
+            name="Core",
             value=(
                 f"• `{p}owoplus` • `{p}owoplus help` • `{p}owoplus diag`\n"
                 f"• `{p}owoplus enable` • `{p}owoplus disable`\n"
@@ -602,7 +611,7 @@ class OwoPlus(redcommands.Cog):
             inline=False,
         )
         e.add_field(
-            name=f"{EMO['prob']} Probability",
+            name="Probability",
             value=(
                 f"• `{p}owoplus onein <N>` (default 1000)\n"
                 f"• `{p}owoplus prob add @user <N>` • `remove @user` • `list`"
@@ -623,43 +632,52 @@ class OwoPlus(redcommands.Cog):
             value="Haiku detected ⇒ three italic lines with a blossom; otherwise RNG full vs keys-only.",
             inline=False,
         )
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @owoplus.command(name="ownerbypass")
     async def owoplus_ownerbypass(
         self, ctx: redcommands.Context, state: Optional[str] = None
     ) -> None:
+        """Show or set the bot owner's transformation bypass."""
         if state is None:
             cur = await self.config.guild(ctx.guild).owner_bypass()
-            return await ctx.send(embed=_embed(f"Owner bypass is **{'on' if cur else 'off'}**"))
+            return await self._reply(
+                ctx, f"Bot owner bypass is **{'enabled' if cur else 'disabled'}**."
+            )
         if state.lower() not in {"on", "true", "yes", "1", "off", "false", "no", "0"}:
-            return await ctx.send("Use on or off.")
+            return await self._reply(ctx, "Use on or off.", tone="warning")
         val = state.lower() in {"on", "true", "yes", "1"}
         await self.config.guild(ctx.guild).owner_bypass.set(val)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # ------- poem group (haiku tools) -------
     @owoplus.group(name="poem", invoke_without_command=True)
     async def owoplus_poem(self, ctx: redcommands.Context) -> None:
+        """Show and configure automatic haiku formatting."""
         cur = await self.config.guild(ctx.guild).haiku_enabled()
-        await ctx.send(
-            embed=_embed(
-                f"Haiku formatting is **{'on' if cur else 'off'}**. Use `poem on|off` or `poem diag <text>`"
-            )
+        await self._reply(
+            ctx,
+            f"Automatic haiku formatting is **{'enabled' if cur else 'disabled'}**.\n"
+            f"`{ctx.clean_prefix}owoplus poem on` · `{ctx.clean_prefix}owoplus poem off`\n"
+            f"`{ctx.clean_prefix}owoplus poem diag <text>`",
+            title="Haiku",
         )
 
     @owoplus_poem.command(name="on")
     async def owoplus_poem_on(self, ctx: redcommands.Context) -> None:
+        """Enable automatic haiku formatting."""
         await self.config.guild(ctx.guild).haiku_enabled.set(True)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @owoplus_poem.command(name="off")
     async def owoplus_poem_off(self, ctx: redcommands.Context) -> None:
+        """Disable automatic haiku formatting."""
         await self.config.guild(ctx.guild).haiku_enabled.set(False)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @owoplus_poem.command(name="diag")
     async def owoplus_poem_diag(self, ctx: redcommands.Context, *, text: str) -> None:
+        """Inspect syllable counts and possible haiku breaks."""
         norm = self._normalize_for_haiku(text)
         words = [w for w in re.findall(r"[A-Za-z']+", norm)]
         syl = [self._count_syllables(w) for w in words]
@@ -691,76 +709,90 @@ class OwoPlus(redcommands.Cog):
             out = self._format_haiku_lines(out)
             out = self._add_haiku_suffix(out)
             out = self._format_haiku_lines(out)
-        e = _embed("OwoPlus - Haiku Diag", desc=box("\n".join(lines), lang="ini"))
-        e.add_field(name="Haiku Render", value=box(out, lang="ini"), inline=False)
-        await ctx.send(embed=e)
+        e = _embed("OwoPlus - Haiku Diag", desc=settings("\n".join(lines)))
+        e.add_field(
+            name="Haiku Render", value=discord.utils.escape_markdown(out) or "(empty)", inline=False
+        )
+        await self._reply(ctx, embed=e)
 
     # ---------------------------------------
 
     @owoplus.command(name="enable")
     async def owoplus_enable(self, ctx: redcommands.Context) -> None:
+        """Enable automatic message transformations."""
         await self.config.guild(ctx.guild).enabled.set(True)
-        await ctx.send(
-            embed=_embed(
-                f"{EMO['ok']} OwoPlus enabled (guild-wide).",
-                color=discord.Color.green(),
-            )
-        )
+        await self._reply(ctx, "Message transformations enabled for this server.", tone="success")
 
     @owoplus.command(name="disable")
     async def owoplus_disable(self, ctx: redcommands.Context) -> None:
+        """Disable automatic message transformations."""
         await self.config.guild(ctx.guild).enabled.set(False)
-        await ctx.send(
-            embed=_embed(
-                f"{EMO['ok']} OwoPlus disabled (guild-wide).",
-                color=discord.Color.green(),
-            )
-        )
+        await self._reply(ctx, "Message transformations disabled for this server.", tone="success")
 
     @owoplus.command(name="onein")
     async def owoplus_onein(self, ctx: redcommands.Context, n: int) -> None:
+        """Set the full transformation chance to one in N.
+
+        N must be from 1 to 1,000,000. One means every eligible message gets a full
+        transformation.
+        """
         if n < 1 or n > 1_000_000:
-            return await ctx.send(
-                embed=_embed(
-                    "Use 1..1,000,000 (probability = 1/N).",
-                    color=discord.Color.orange(),
-                )
+            return await self._reply(
+                ctx,
+                "Enter a number from 1 to 1,000,000. The full transformation chance is 1 in that number.",
+                tone="warning",
             )
         await self.config.guild(ctx.guild).one_in.set(int(n))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
-    @owoplus.group(name="prob")
+    @owoplus.group(name="prob", autohelp=False)
     async def owoplus_prob(self, ctx: redcommands.Context) -> None:
-        pass
+        """Manage transformation probabilities for members."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
 
     @owoplus_prob.command(name="add")
     async def owoplus_prob_add(self, ctx: redcommands.Context, member: discord.Member, n: int):
+        """Set a member's full transformation chance to one in N.
+
+        N must be from 1 to 1,000,000. Overrides the server probability for this member.
+        """
         if not 1 <= n <= 1_000_000:
             raise redcommands.BadArgument("Probability denominator must be from 1 to 1,000,000.")
         async with self.config.guild(ctx.guild).user_probs() as probabilities:
             probabilities[str(member.id)] = n
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @owoplus_prob.command(name="remove")
     async def owoplus_prob_remove(self, ctx: redcommands.Context, member: discord.Member):
+        """Remove a member's custom transformation probability."""
         async with self.config.guild(ctx.guild).user_probs() as probabilities:
             removed = probabilities.pop(str(member.id), None)
-        await ctx.send("Removed." if removed is not None else "No override was set.")
+        await self._reply(
+            ctx,
+            "Override removed." if removed is not None else "No override was set.",
+            tone="success" if removed is not None else "info",
+        )
 
     @owoplus_prob.command(name="list")
     async def owoplus_prob_list(self, ctx: redcommands.Context) -> None:
+        """List custom member transformation probabilities."""
         data = await self.config.guild(ctx.guild).user_probs()
         if not data:
-            return await ctx.send(embed=_embed("No overrides.", color=discord.Color.orange()))
+            return await self._reply(ctx, "No member probability overrides configured.")
         out = []
         for uid, n in data.items():
             m = ctx.guild.get_member(int(uid))
             out.append(f"- {(m.mention if m else uid)}: 1/{n}")
-        for page in pagify("\n".join(out), page_length=1800):
-            await ctx.send(embed=_embed("Probability Overrides", desc=box(page, lang="ini")))
+        await self._reply(ctx, embed=_embed("Probability Overrides", desc=("\n".join(out))))
 
     @owoplus.command(name="preview")
     async def owoplus_preview(self, ctx: redcommands.Context, *, text: str) -> None:
+        """Preview a transformation without replacing a message.
+
+        Uses the server probability and does not post a webhook replacement or delete the
+        original message.
+        """
         conf = await self.config.guild(ctx.guild).all()
         n = conf["one_in"]
         forced = self._has_key_trigger(text)
@@ -772,13 +804,26 @@ class OwoPlus(redcommands.Cog):
         )
         e = _embed(
             "OwoPlus - Preview",
-            desc=f"mode={mode} (n=1/{n}{', key seen' if forced else ''}) • haiku={'on' if conf.get('haiku_enabled', True) else 'off'}",
+            desc="A preview of this message's transformation.",
         )
-        e.add_field(name="OUTPUT", value=box(out, lang="ini"), inline=False)
-        await ctx.send(embed=e)
+        e.add_field(
+            name="Mode",
+            value={"full": "Full transformation", "keys": "Key substitutions", "none": "Unchanged"}[
+                mode
+            ],
+        )
+        e.add_field(name="Full transformation chance", value=f"1 in {n:,}")
+        e.add_field(
+            name="Haiku", value="Enabled" if conf.get("haiku_enabled", True) else "Disabled"
+        )
+        e.add_field(
+            name="Output", value=discord.utils.escape_markdown(out) or "(empty)", inline=False
+        )
+        await self._reply(ctx, embed=e)
 
     @owoplus.command(name="diag")
     async def owoplus_diag(self, ctx: redcommands.Context) -> None:
+        """Check transformation settings and channel permissions."""
         g = await self.config.guild(ctx.guild).all()
         perms = (
             ctx.channel.permissions_for(ctx.guild.me)
@@ -792,10 +837,16 @@ class OwoPlus(redcommands.Cog):
                 f"overrides={len(g['user_probs'])}",
             ]
         )
-        await ctx.send(embed=_embed("OwoPlus - Diag", desc=box(payload, lang="ini")))
+        await self._reply(ctx, embed=_embed("OwoPlus - Diag", desc=settings(payload)))
 
     @owoplus.command(name="test")
     async def owoplus_test(self, ctx):
+        """Repost your recent message through the webhook.
+
+        Performs a real repost and attempts to delete the original, even if automatic
+        transformations are disabled or owner bypass is enabled. The original is retained if
+        replacement fails. Use preview for a read-only sample.
+        """
         prefixes = await self.bot.get_valid_prefixes(ctx.guild)
         last = None
         async for message in ctx.channel.history(limit=50, before=ctx.message.created_at):
@@ -808,8 +859,8 @@ class OwoPlus(redcommands.Cog):
                 last = message
                 break
         if last is None:
-            return await ctx.send(
-                embed=_embed("OwoPlus test", desc="No eligible recent message found.")
+            return await self._reply(
+                ctx, embed=_embed("OwoPlus test", desc="No eligible recent message found.")
             )
         conf = await self._settings(ctx.guild)
         mode = self._choose_mode(last.author, last.content, conf)
@@ -817,13 +868,15 @@ class OwoPlus(redcommands.Cog):
             last.content, mode, bool(conf.get("haiku_enabled", True))
         )
         success = await self._repost(last, content)
-        await ctx.send(
+        await self._reply(
+            ctx,
             embed=_embed(
                 "OwoPlus test",
                 desc="Reposted successfully."
                 if success
                 else "Original retained. Check permissions, rich content, and attachment limits.",
-            )
+            ),
+            tone="success" if success else "warning",
         )
 
     # ---------- listener ----------

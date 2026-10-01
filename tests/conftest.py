@@ -94,6 +94,7 @@ def make_context(guild, channel=None, author=None):
         guild=guild,
         channel=channel,
         author=author,
+        clean_prefix="!",
         message=SimpleNamespace(attachments=[]),
         send=AsyncMock(),
         tick=AsyncMock(),
