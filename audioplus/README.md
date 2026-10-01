@@ -217,6 +217,34 @@ All playback and voice commands are server commands. The bot needs Connect and S
 
 Use `[p]audio` for the themed overview or `[p]help AudioPlus` for Red's full command help. Legacy `[p]audio ...` commands retain their names and aliases, including `[p]audio leave` and `[p]audio pingnode`. The four legacy node commands are described in the upgrade table above. Music disconnection uses `[p]disconnect`; Red's core `[p]leave` command retains its server-leaving behavior.
 
+## Daily YouTube playback checks
+
+The bot owner can enable a daily check that privately reports failures:
+
+```text
+[p]audiocheck enable
+[p]audiocheck now
+```
+
+Enable it in the server to test. The bot sends a setup DM to your account before enabling, so allow direct messages from the bot. The default schedule is **09:00 America/Chicago**, following Central daylight saving time. The first scheduled check is the next occurrence of that time; `now` tests immediately and counts as today's check. Successful scheduled checks send no messages.
+
+The probe uses the same yt-dlp lookup, stream resolution, FFmpeg decoder, native player, and Discord audio thread as `play`. It sends three seconds of decoded audio **at zero volume** through a temporary voice connection, then closes the decoder and disconnects. It chooses the busiest available ordinary voice channel unless you supply a dedicated channel with `audiocheck enable <voice channel>`. Channel permissions and capacity still apply. No songs are added to the normal queue and its volume/repeat settings are untouched.
+
+If any voice connection or retained music queue is present, the probe waits and retries in 15 minutes, including connections owned by other cogs. Disabling AudioPlus in the test server also postpones the check. This avoids interrupting listening sessions; a bot that is continuously in voice can keep postponing its daily probe.
+
+| Owner-only text command | Purpose |
+| --- | --- |
+| `[p]audiocheck` | Show schedule, recipient, test video, latest result, and failed DM delivery. |
+| `[p]audiocheck enable [voice channel]` | Monitor this server and send failure DMs to the owner who invokes it. Omit the channel for automatic selection. |
+| `[p]audiocheck disable` | Stop daily checks, cancel an active probe, and clear pending alerts. |
+| `[p]audiocheck now` | Run the configured test immediately. Failures also DM the configured recipient when monitoring is enabled. |
+| `[p]audiocheck time 21:00 America/Chicago` | Change the 24-hour local time and IANA timezone. |
+| `[p]audiocheck video <YouTube video URL>` | Change the public test video. Choose one with at least three seconds of audio. |
+
+There is one monitor per bot. Enabling it in another server replaces the test server and recipient. The default video is Blender's *Big Buck Bunny*. A failure can mean extraction, dependencies, voice permissions/connection, decoder problems, or a removed/restricted test video; the DM identifies the available cause and includes the public video link. It does not establish that all YouTube videos are broken. A successful check confirms decoding and an active sending voice client, but cannot prove another Discord user received or heard the audio.
+
+The scheduler runs inside the cog while Red is online, checks due work once per minute, and persists its daily cursor across restarts/reloads. After downtime, it runs one overdue check when the current day's check time has passed. Failed DM delivery is retained and retried every 15 minutes; successful delivery clears the pending alert. Probes time out after 150 seconds and clean up their owned resources. Changing settings or disabling/unloading the cog cancels an active probe. The schedule uses Python's timezone database; install `tzdata` in the bot environment if your container lacks `America/Chicago`.
+
 ## Troubleshooting
 
 1. Run `[p]audiostatus`. Install missing packages/binaries in the Red environment using the setup above. AudioPlus also supports existing Downloader voice libraries; restart Red after changing a voice library. If a native library cannot import, diagnostics identify PyNaCl or davey separately. These checks verify dependencies, not live provider access or voice delivery.
@@ -237,9 +265,11 @@ For bug reports, include Red/Discord.py versions, `[p]audiostatus`, `[p]playerst
 
 ## Stored data and lifecycle
 
-Only legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The cog does not persist listening histories, playlists, user profiles, audio files, or yt-dlp disk caches. Track metadata, command contexts, errors, queues, volume, and repeat settings stay in memory. The data hooks therefore have no per-user Config records to export or delete.
+Legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The daily monitor adds an optional `watchdog` section, disabled by default, without changing those legacy values. Red initializes the added defaults on existing installations. It stores the recipient's Discord ID, test server/channel IDs, public test video URL, schedule/timezone, daily cursor, latest safe result, and pending failure alert/delivery state. User-data hooks export that recipient's monitor record or remove it and disable checking. Deletion does not remove already delivered Discord DMs.
 
-Unload closes only AudioPlus's players and cancels owned lookups/decoders and idle timers. Other cogs' voice connections are left alone. Removing a guild also closes its player. Each cog remains independently installable through Downloader.
+The cog does not persist listening histories, playlists, user profiles, audio files, signed playback URLs, or yt-dlp disk caches. Normal track metadata, command contexts, errors, queues, volume, and repeat settings stay in memory.
+
+Unload closes only AudioPlus's players and cancels the daily scheduler/probe, owned lookups/decoders, and idle timers. Other cogs' voice connections are left alone. Removing a guild also closes its player. Each cog remains independently installable through Downloader.
 
 ## Development and references
 

@@ -45,4 +45,9 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
     cls = getattr(importlib.import_module(package), BASELINE[package]["class"])
     cog = cls(bot)
     assert int(cog.config.unique_identifier.split(":")[0]) == BASELINE[package]["identifier"]
-    assert cog.config.defaults == BASELINE[package]["defaults"]
+    defaults = cog.config.defaults
+    if package == "audioplus":
+        # The opt-in watchdog adds one Config section. All legacy defaults stay exact.
+        assert "watchdog" in defaults["GLOBAL"]
+        defaults["GLOBAL"].pop("watchdog")
+    assert defaults == BASELINE[package]["defaults"]

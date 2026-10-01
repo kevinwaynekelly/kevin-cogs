@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import logging
 from collections import defaultdict
+from datetime import time
 from typing import Optional
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import discord
 from redbot.core import Config, app_commands, checks, commands
@@ -14,6 +18,14 @@ from .backend import diagnostics, require_voice
 from .player import GuildPlayer
 from .presentation import Presentation
 from .resolver import MediaError, MediaResolver, normalize_query
+from .watchdog import (
+    DEFAULT_WATCHDOG,
+    PROBE_FRAMES,
+    CheckResult,
+    PlaybackWatchdog,
+    schedule_time,
+    youtube_video,
+)
 
 log = logging.getLogger(__name__)
 GUILD_ONLY = commands.guild_only()
@@ -36,13 +48,16 @@ class AudioPlus(commands.Cog):
         self.bot = bot
         self._presentation = Presentation("AudioPlus", "audio")
         self.config = Config.get_conf(self, identifier=0xA10DEFAB, force_registration=True)
-        self.config.register_global(**self.default_global)
+        self.config.register_global(**self.default_global, watchdog=DEFAULT_WATCHDOG)
         self._resolver = MediaResolver()
         self._players = {}
         self._player_locks = defaultdict(asyncio.Lock)
         self._lookups = set()
         self._connections = set()
         self._closing = False
+        self._watchdog = PlaybackWatchdog(
+            self.config, self._check_ready, self._probe_playback, self._notify_check_failure
+        )
 
     async def cog_command_error(self, ctx, error):
         await self._presentation.command_error(ctx, error)
@@ -60,9 +75,11 @@ class AudioPlus(commands.Cog):
     async def cog_load(self):
         # Setup/help remain available when the container needs dependencies.
         self._closing = False
+        self._watchdog.start()
 
     async def cog_unload(self):
         self._closing = True
+        await self._watchdog.close()
         pending = tuple(self._lookups | self._connections)
         for task in pending:
             task.cancel()
@@ -72,6 +89,229 @@ class AudioPlus(commands.Cog):
         await asyncio.gather(*(player.close() for player in players), return_exceptions=True)
         await self._resolver.close()
         self._player_locks.clear()
+
+    async def _check_ready(self):
+        ready = getattr(self.bot, "wait_until_red_ready", None) or self.bot.wait_until_ready
+        await ready()
+
+    def _check_voice_busy(self, guild):
+        player = self._players.get(guild.id)
+        return bool(guild.voice_client or (player and (player.queue or player._restart)))
+
+    async def _probe_playback(self, settings):
+        guild = self.bot.get_guild(settings["guild_id"])
+        if guild is None:
+            raise MediaError("The configured test server is unavailable to the bot.")
+        if await self.bot.cog_disabled_in_guild(self, guild):
+            return CheckResult("deferred", "AudioPlus is disabled in the test server.")
+        async with self._player_locks[guild.id]:
+            if self._check_voice_busy(guild):
+                return CheckResult(
+                    "deferred", "Voice is already in use. I will retry in 15 minutes."
+                )
+        require_voice()
+        tracks = await self._load_tracks(settings["video_url"])
+        if not tracks:
+            raise MediaError("YouTube returned no playable test video.")
+        async with self._player_locks[guild.id]:
+            if self._check_voice_busy(guild):
+                return CheckResult("deferred", "Voice became busy. I will retry in 15 minutes.")
+            channel = (
+                guild.get_channel(settings["channel_id"])
+                if settings["channel_id"]
+                else self._busiest_voice_channel(guild)
+            )
+            if not isinstance(channel, discord.VoiceChannel):
+                raise MediaError("The configured ordinary voice channel is unavailable.")
+            permissions = channel.permissions_for(guild.me)
+            if not all(getattr(permissions, name) for name in ("view_channel", "connect", "speak")):
+                raise MediaError(
+                    "The test channel needs View Channel, Connect, and Speak permissions."
+                )
+            if (
+                channel.user_limit
+                and len(channel.members) >= channel.user_limit
+                and not permissions.move_members
+            ):
+                raise MediaError("The configured test voice channel is full.")
+            player = None
+            voice = None
+            try:
+                voice = await self._connect_voice(channel)
+                flags = getattr(guild.me, "voice", None)
+                if flags and (flags.mute or flags.self_mute):
+                    raise MediaError("Discord is muting the bot in the test voice channel.")
+
+                async def report_error(player, track, cause):
+                    pass  # The watchdog sends the private report after the probe closes.
+
+                player = GuildPlayer(voice, self._resolver, report_error)
+                player.volume = 0
+                await player.enqueue(tracks[:1])
+                while True:
+                    if player.last_error:
+                        raise MediaError(player.last_error)
+                    if not voice.is_connected():
+                        raise MediaError("Discord voice disconnected during the test.")
+                    if player.source and player.source.frames >= PROBE_FRAMES and player.playing:
+                        return CheckResult(
+                            "ok",
+                            "YouTube audio decoded and played silently in Discord for three seconds.",
+                        )
+                    if player._runner.done():
+                        raise MediaError(
+                            "The test video ended before three seconds of audio played."
+                        )
+                    await asyncio.sleep(0.05)
+            except (discord.HTTPException, discord.ClientException, RuntimeError) as exc:
+                raise MediaError(
+                    "Discord voice could not connect or play. Check audiostatus, voice permissions, and UDP network access."
+                ) from exc
+            finally:
+                if player:
+                    await player.close()
+                elif voice:
+                    await voice.disconnect(force=True)
+
+    async def _notify_check_failure(self, settings, result):
+        user = self.bot.get_user(settings["recipient_id"])
+        if user is None:
+            user = await self.bot.fetch_user(settings["recipient_id"])
+        guild = self.bot.get_guild(settings["guild_id"])
+        name = discord.utils.escape_markdown(guild.name if guild else str(settings["guild_id"]))
+        embed = self._presentation.embed(
+            "Daily playback check failed",
+            f"**Server** · {name}\n**Checked** · <t:{int(result['at'])}:f>\n\n{result['detail']}\n\n**Test video** · {settings['video_url']}\n\nRun `audiostatus` for dependencies or `audiocheck now` to retry. A failure can also mean the test video was removed or restricted.",
+            tone="error",
+        )
+        await user.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+    @commands.group(name="audiocheck", invoke_without_command=True)
+    @GUILD_ONLY
+    @checks.is_owner()
+    async def audiocheck(self, ctx: commands.Context):
+        """Check YouTube daily and DM failures.
+
+        Bot owner only. Enable in the server to test and receive failure DMs yourself.
+        Uses a silent three-second native voice test when the voice connection is free.
+        """
+        state = await self.config.watchdog()
+        last = state["last_result"]
+        lines = [
+            "**Daily check** · " + ("Enabled" if state["enabled"] else "Disabled"),
+            f"**Schedule** · {state['hour']:02}:{state['minute']:02} {state['timezone']}",
+            f"**Server** · {state['guild_id'] or 'Not configured'}",
+            f"**Channel** · {('<#' + str(state['channel_id']) + '>') if state['channel_id'] else 'Automatic, busiest available voice channel'}",
+            f"**Failure DMs** · {('<@' + str(state['recipient_id']) + '>') if state['recipient_id'] else 'Not configured'}",
+            f"**Test video** · {state['video_url']}",
+        ]
+        if last:
+            lines.append(
+                f"\n**Last check** · {last['status']} · <t:{int(last['at'])}:f>\n{last['detail']}"
+            )
+        if state["last_alert_error"]:
+            lines.append("\n" + state["last_alert_error"])
+        lines.append(
+            f"\n`{ctx.clean_prefix}audiocheck enable [voice channel]`\n`{ctx.clean_prefix}audiocheck now` · `{ctx.clean_prefix}audiocheck disable`\n`{ctx.clean_prefix}audiocheck time 09:00 America/Chicago`\n`{ctx.clean_prefix}audiocheck video <YouTube URL>`"
+        )
+        await self._reply(ctx, "\n".join(lines), title="Daily playback checks")
+
+    @audiocheck.command(name="enable")
+    async def audiocheck_enable(
+        self, ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None
+    ):
+        """Enable daily checks in this server and DM failures to you.
+
+        Optionally choose a dedicated ordinary voice channel. Otherwise use the busiest
+        available channel. Sends a setup DM before enabling to verify private delivery.
+        """
+        state = await self.config.watchdog()
+        now = self._watchdog.clock()
+        schedule_time(f"{state['hour']:02}:{state['minute']:02}", state["timezone"])
+        local = now.astimezone(ZoneInfo(state["timezone"]))
+        try:
+            await ctx.author.send(
+                embed=self._presentation.embed(
+                    "Daily playback checks enabled",
+                    f"I will test YouTube playback daily at **{state['hour']:02}:{state['minute']:02} {state['timezone']}** in **{discord.utils.escape_markdown(ctx.guild.name)}**. You will receive a DM if the check fails. Successful checks stay quiet. Run `{ctx.clean_prefix}audiocheck now` in your server for an immediate test.",
+                    tone="success",
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException as exc:
+            raise commands.CommandError(
+                "I could not DM you. Allow direct messages from this bot, then run audiocheck enable again."
+            ) from exc
+        await self._watchdog.configure(
+            enabled=True,
+            recipient_id=ctx.author.id,
+            guild_id=ctx.guild.id,
+            channel_id=channel.id if channel else None,
+            retry_at=0,
+            last_result={},
+            last_check_day=local.date().isoformat()
+            if local.time() >= time(state["hour"], state["minute"])
+            else None,
+        )
+        await self._reply(
+            ctx,
+            f"Daily checks enabled at **{state['hour']:02}:{state['minute']:02} {state['timezone']}**. Failure alerts will be DMed to you. Use `{ctx.clean_prefix}audiocheck now` to test immediately.",
+            title="Daily playback checks",
+            tone="success",
+        )
+
+    @audiocheck.command(name="disable")
+    async def audiocheck_disable(self, ctx: commands.Context):
+        """Disable daily checks, cancel an active probe, and clear pending alerts."""
+        await self._watchdog.configure(enabled=False, retry_at=0)
+        await self._reply(
+            ctx, "Daily playback checks disabled.", title="Daily playback checks", tone="success"
+        )
+
+    @audiocheck.command(name="now")
+    async def audiocheck_now(self, ctx: commands.Context):
+        """Run the configured silent playback check now and report its result."""
+        state = await self.config.watchdog()
+        if state["guild_id"] != ctx.guild.id:
+            raise commands.UserInputError("Run audiocheck enable in this server first.")
+        await self._reply(
+            ctx,
+            "Checking YouTube playback. This can take up to 150 seconds.",
+            title="Playback check",
+        )
+        result = await self._watchdog.check()
+        await self._reply(
+            ctx,
+            result.detail,
+            title="Playback check",
+            tone={"ok": "success", "failed": "error", "deferred": "warning"}[result.status],
+        )
+
+    @audiocheck.command(name="time")
+    async def audiocheck_time(
+        self, ctx: commands.Context, value: str, zone: str = "America/Chicago"
+    ):
+        """Set the daily 24-hour check time and IANA timezone."""
+        hour, minute = schedule_time(value, zone)
+        await self._watchdog.configure(hour=hour, minute=minute, timezone=zone, retry_at=0)
+        await self._reply(
+            ctx,
+            f"Daily check time set to **{value} {zone}**.",
+            title="Daily playback checks",
+            tone="success",
+        )
+
+    @audiocheck.command(name="video")
+    async def audiocheck_video(self, ctx: commands.Context, *, url: str):
+        """Choose a public YouTube video at least three seconds long for the check."""
+        try:
+            video = youtube_video(url)
+        except MediaError as exc:
+            raise commands.BadArgument(str(exc)) from exc
+        await self._watchdog.configure(video_url=video, retry_at=0)
+        await self._reply(
+            ctx, f"Test video set to {video}.", title="Daily playback checks", tone="success"
+        )
 
     def _get_player(self, guild):
         player = self._players.get(guild.id)
@@ -437,7 +677,7 @@ class AudioPlus(commands.Cog):
             "Playback": f"`{p}play <query>`\n`{p}np` · `{p}queue`\n`{p}skip` · `{p}stop`",
             "Controls": f"`{p}pause` · `{p}resume`\n`{p}volume [0..1000]` · `{p}shuffle`\n`{p}repeat [off|track|queue]`",
             "Voice": f"`{p}join` · `{p}disconnect`\n`{p}speak` · `{p}undeafen`\n`{p}fixvoice` · `{p}rejoin`",
-            "Diagnostics": f"`{p}audiostatus` · `{p}playerstate`\n`{p}debugvc` · `{p}tone`",
+            "Diagnostics": f"`{p}audiostatus` · `{p}playerstate`\n`{p}debugvc` · `{p}tone`\n`{p}audiocheck` (owner)",
             "Slash commands": "Use the same controls with `/play`, `/skip`, `/queue`, and more.",
         }
         for name, value in sections.items():
@@ -890,10 +1130,14 @@ class AudioPlus(commands.Cog):
         return await self._invoke_control(ctx, self.audio_rejoin)
 
     async def red_delete_data_for_user(self, *, requester, user_id):
-        return
+        if (await self.config.watchdog())["recipient_id"] == user_id:
+            await self._watchdog.configure(**DEFAULT_WATCHDOG)
 
     async def red_get_data_for_user(self, *, user_id):
-        return {}
+        state = await self.config.watchdog()
+        if state["recipient_id"] != user_id:
+            return {}
+        return {"audioplus.json": io.BytesIO(json.dumps({"watchdog": state}, indent=2).encode())}
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):

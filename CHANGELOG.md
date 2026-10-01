@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-01: daily AudioPlus playback checks
+
+- Add owner-only `audiocheck` setup/status, immediate test, disable, schedule, and video commands. Default to 09:00 America/Chicago with DST handling and DM the owner who enables checking in the test server. Verify setup DM delivery before enabling.
+- Probe a public YouTube video through the existing resolver, FFmpeg/native player, and Discord audio thread for three silent seconds. Disconnect and clean up afterward. Use automatic voice-channel selection or a configured ordinary channel, respect guild disable settings, and postpone busy/foreign voice connections or retained queues for 15 minutes.
+- Persist one daily cursor, the latest safe result, and pending DM delivery. Stay quiet on success, send failure alerts privately, retry undelivered alerts every 15 minutes, and cancel owned tasks/probes on disable, settings changes, or unload. Catch up once after downtime without replaying missed days.
+- Add an opt-in global `watchdog` Config section through Red's merged defaults, preserving all legacy settings and defaults. Implement recipient data export/deletion without exposing the legacy node password or signed streams. Update guides and Downloader data statements.
+- Exercise local/DST schedules, reload persistence, duplicate prevention, busy connections, blocked DMs, command permissions, cancellation, decoder failures, and real FFmpeg/Discord audio-thread/Opus playback against local HTTP audio. External YouTube access and Discord networking remain mocked.
+
 ## 2026-10-01: LevelPlus slash synchronization fix
 
 - Give `level formula calibrate` the valid lowercase slash options `level1`, `xp1`, `level2`, and `xp2`, with descriptions. Capitalized option names previously caused Discord to reject the entire slash synchronization request with HTTP 400. Preserve the text command arguments, permission checks, calibration behavior, and saved settings.

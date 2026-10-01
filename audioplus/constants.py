@@ -1,3 +1,3 @@
 """AudioPlus data-storage statement."""
 
-__red_end_user_data_statement__ = "Preserves legacy Lavalink connection settings, including the node password, in Red Config for rollback. Native playback ignores them. Queues, playback state, and request contexts are transient. No listening history, downloaded audio, or yt-dlp cache is persisted."
+__red_end_user_data_statement__ = "Preserves legacy Lavalink connection settings, including the node password, in Red Config for rollback. Native playback ignores them. Optional daily checks store the configuring owner's Discord ID, test server/channel IDs, public video URL, local schedule, latest safe result, and pending failure DM in Config. User-data hooks export or remove that owner's check settings and disable the monitor. Queues, playback state, and request contexts are transient. No listening history, downloaded audio, or yt-dlp cache is persisted."
