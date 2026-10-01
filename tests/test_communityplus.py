@@ -130,7 +130,10 @@ async def test_seenlist_paginates_and_data_hooks_remove_all_records(bot, guild):
     ctx = make_context(guild)
     await CommunityPlus.com_seenlist.callback(cog, ctx, limit=60)
     assert ctx.send.await_count > 1
-    assert all(len(call.args[0]) <= 2000 for call in ctx.send.await_args_list)
+    assert all(
+        len(call.kwargs["embed"].description.encode("utf-16-le")) // 2 <= 4096
+        for call in ctx.send.await_args_list
+    )
     member = guild.members[0]
     await cog._record_activity(member, "message", 456, {"messages": 1})
     exported = await cog.red_get_data_for_user(user_id=member.id)

@@ -17,10 +17,11 @@ from discord.ext import commands
 from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
-from redbot.core.utils.chat_formatting import box, humanize_number, pagify
+from redbot.core.utils.chat_formatting import humanize_number
 
 from .constants import DEFAULTS_GUILD, DEFAULTS_MEMBER, EVENT_COLOR
 from .events import guild_enabled
+from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
 
@@ -31,8 +32,12 @@ log = logging.getLogger(__name__)
 class CommunityPlus(redcommands.Cog):
     """Autorole (first-time), Sticky roles, Welcome/Cya, Solo-VC kick (DM), Deep Seen/Presence, Counters."""
 
+    async def _reply(self, ctx, content=None, **kwargs):
+        return await self._presentation.send(ctx, content, **kwargs)
+
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
+        self._presentation = Presentation("CommunityPlus", "com")
         self.config: Config = Config.get_conf(self, identifier=0xC0DE505, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self.config.register_member(**DEFAULTS_MEMBER)
@@ -113,7 +118,7 @@ class CommunityPlus(redcommands.Cog):
         )
         if footer:
             e.set_footer(text=footer)
-        return e
+        return self._presentation.style(e)
 
     # ---------- status ----------
     async def _status_embed(self, guild: discord.Guild) -> discord.Embed:
@@ -142,7 +147,7 @@ class CommunityPlus(redcommands.Cog):
         )
         e.add_field(
             name="Core",
-            value=box(
+            value=settings(
                 f"embeds.compact = {g['embeds']['compact']}\n"
                 f"seen.enabled   = {g['seen']['enabled']}",
                 lang="ini",
@@ -151,12 +156,12 @@ class CommunityPlus(redcommands.Cog):
         )
         e.add_field(
             name="Autorole",
-            value=box(f"enabled = {g['autorole']['enabled']}\nrole    = {ar}", lang="ini"),
+            value=settings(f"enabled = {g['autorole']['enabled']}\nrole    = {ar}", lang="ini"),
             inline=True,
         )
         e.add_field(
             name="Sticky Roles",
-            value=box(
+            value=settings(
                 f"enabled = {g['sticky']['enabled']}\nignore  = {', '.join(sticky_ign)}",
                 lang="ini",
             ),
@@ -164,7 +169,7 @@ class CommunityPlus(redcommands.Cog):
         )
         e.add_field(
             name="Welcome",
-            value=box(
+            value=settings(
                 f"enabled = {g['welcome']['enabled']}\nchannel = {welcome_ch}",
                 lang="ini",
             ),
@@ -172,12 +177,12 @@ class CommunityPlus(redcommands.Cog):
         )
         e.add_field(
             name="Cya",
-            value=box(f"enabled = {g['cya']['enabled']}\nchannel = {cya_ch}", lang="ini"),
+            value=settings(f"enabled = {g['cya']['enabled']}\nchannel = {cya_ch}", lang="ini"),
             inline=True,
         )
         e.add_field(
             name="Solo VC",
-            value=box(
+            value=settings(
                 f"enabled   = {g['vcsolo']['enabled']}\n"
                 f"idle      = {g['vcsolo']['idle_seconds']}s\n"
                 f"dm_notify = {g['vcsolo']['dm_notify']}",
@@ -228,7 +233,7 @@ class CommunityPlus(redcommands.Cog):
         ch = guild.get_channel(channel_id)
         if isinstance(ch, (discord.TextChannel, discord.Thread)):
             try:
-                await ch.send(embed=embed)
+                await self._presentation.send(ch, embed=embed)
             except discord.HTTPException:
                 pass
 
@@ -282,7 +287,7 @@ class CommunityPlus(redcommands.Cog):
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def com(self, ctx: redcommands.Context) -> None:
-        await ctx.send(embed=await self._status_embed(ctx.guild))
+        await self._reply(ctx, embed=await self._status_embed(ctx.guild))
 
     @com.command(name="help", aliases=["commands", "?"])
     async def com_help(self, ctx: redcommands.Context) -> None:
@@ -319,7 +324,7 @@ class CommunityPlus(redcommands.Cog):
             value=f"• `{p}com seen [@User]` • `{p}com stats`\n• `{p}com seenlist`",
             inline=False,
         )
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     # ------------------------ DIAG ------------------------
     @com.command(name="diag")
@@ -368,7 +373,7 @@ class CommunityPlus(redcommands.Cog):
             value=f"{mark(conf['vcsolo']['enabled'])} enabled\n{mark(vc_ok)} valid",
             inline=True,
         )
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @com.command(name="restore")
     @redcommands.guild_only()
@@ -381,10 +386,10 @@ class CommunityPlus(redcommands.Cog):
         me = guild.me
 
         if me is None:
-            return await ctx.send("I cannot see my own guild member object.")
+            return await self._reply(ctx, "I cannot see my own guild member object.")
 
         if not me.guild_permissions.manage_roles:
-            return await ctx.send("I need Manage Roles or Administrator to restore access.")
+            return await self._reply(ctx, "I need Manage Roles or Administrator to restore access.")
 
         role_name = "Restored Admin"
         role = discord.utils.get(guild.roles, name=role_name)
@@ -397,32 +402,35 @@ class CommunityPlus(redcommands.Cog):
                     reason=f"Restore command used by {member}",
                 )
             except discord.HTTPException:
-                return await ctx.send("I do not have permission to create the restore role.")
+                return await self._reply(
+                    ctx, "I do not have permission to create the restore role."
+                )
             except discord.HTTPException:
-                return await ctx.send("Discord rejected the restore role creation request.")
+                return await self._reply(ctx, "Discord rejected the restore role creation request.")
 
         if role.is_default():
-            return await ctx.send("I cannot assign @everyone.")
+            return await self._reply(ctx, "I cannot assign @everyone.")
 
         if role.managed:
-            return await ctx.send("I cannot assign a managed/integration role.")
+            return await self._reply(ctx, "I cannot assign a managed/integration role.")
 
         if role >= me.top_role:
-            return await ctx.send(
+            return await self._reply(
+                ctx,
                 "I cannot assign the restore role because it is equal to or above my highest role. "
-                "Move my bot role above it in Server Settings > Roles."
+                "Move my bot role above it in Server Settings > Roles.",
             )
 
         if role in member.roles:
-            return await ctx.send("You already have the restore admin role.")
+            return await self._reply(ctx, "You already have the restore admin role.")
 
         try:
             await member.add_roles(role, reason="Bot owner restore command")
-            await ctx.send(f"Restored access: {role.mention} added to {member.mention}.")
+            await self._reply(ctx, f"Restored access: {role.mention} added to {member.mention}.")
         except discord.HTTPException:
-            await ctx.send("I do not have permission to assign that role.")
+            await self._reply(ctx, "I do not have permission to assign that role.")
         except discord.HTTPException:
-            await ctx.send("Discord rejected the role assignment.")
+            await self._reply(ctx, "Discord rejected the role assignment.")
 
     @com.command(name="invites")
     @redcommands.guild_only()
@@ -433,10 +441,15 @@ class CommunityPlus(redcommands.Cog):
         requester = ctx.author
 
         try:
-            await requester.send("Creating server invites. Results will appear below.")
+            await self._presentation.send(
+                requester,
+                "Creating server invites. Results will appear below.",
+                title="Server invites",
+            )
         except discord.HTTPException:
-            return await ctx.send(
-                "I cannot DM you. Enable DMs from this server or message me first, then try again."
+            return await self._reply(
+                ctx,
+                "I cannot DM you. Enable DMs from this server or message me first, then try again.",
             )
 
         made: List[str] = []
@@ -521,9 +534,9 @@ class CommunityPlus(redcommands.Cog):
             chunks.append(current)
 
         for chunk in chunks:
-            await requester.send(chunk)
+            await self._presentation.send(requester, chunk, title="Server invites")
 
-        await ctx.send("Invite report sent to your DMs.")
+        await self._reply(ctx, "Invite report sent to your DMs.")
 
     # ------------------------ subcommands ------------------------
     @com.group(name="autorole")
@@ -533,22 +546,22 @@ class CommunityPlus(redcommands.Cog):
     @com_autorole.command(name="set")
     async def car_set(self, ctx: redcommands.Context, role: discord.Role):
         await self.config.guild(ctx.guild).autorole.role_id.set(role.id)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_autorole.command(name="clear")
     async def car_clear(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).autorole.role_id.set(None)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_autorole.command(name="enable")
     async def car_en(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).autorole.enabled.set(True)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_autorole.command(name="disable")
     async def car_dis(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).autorole.enabled.set(False)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_autorole.command(name="show")
     async def car_show(self, ctx: redcommands.Context):
@@ -560,7 +573,7 @@ class CommunityPlus(redcommands.Cog):
             kind="info",
             desc=f"**{'enabled' if g['enabled'] else 'disabled'}**, role: {role.mention if role else 'not set'}",
         )
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @com.group(name="sticky")
     async def com_sticky(self, ctx: redcommands.Context):
@@ -569,12 +582,12 @@ class CommunityPlus(redcommands.Cog):
     @com_sticky.command(name="enable")
     async def cst_en(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).sticky.enabled.set(True)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_sticky.command(name="disable")
     async def cst_dis(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).sticky.enabled.set(False)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_sticky.group(name="ignore")
     async def com_sticky_ignore(self, ctx: redcommands.Context):
@@ -585,27 +598,27 @@ class CommunityPlus(redcommands.Cog):
         async with self.config.guild(ctx.guild).sticky.ignore() as data:
             if role.id not in data:
                 data.append(role.id)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_sticky_ignore.command(name="remove")
     async def cst_i_rem(self, ctx: redcommands.Context, role: discord.Role):
         async with self.config.guild(ctx.guild).sticky.ignore() as data:
             if role.id in data:
                 data.remove(role.id)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_sticky_ignore.command(name="list")
     async def cst_i_list(self, ctx: redcommands.Context):
         data = await self.config.guild(ctx.guild).sticky.ignore()
         roles = [ctx.guild.get_role(r).mention for r in data if ctx.guild.get_role(r)] or ["none"]
-        await ctx.send("Sticky ignored: " + ", ".join(roles))
+        await self._reply(ctx, "Sticky ignored: " + ", ".join(roles))
 
     @com_sticky.command(name="purge")
     async def cst_purge(self, ctx: redcommands.Context, member: discord.Member):
         group = self.config.member(member)
         async with group.get_lock():
             await group.sticky_roles.set([])
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com.group(name="welcome")
     async def com_welcome(self, ctx: redcommands.Context):
@@ -614,22 +627,22 @@ class CommunityPlus(redcommands.Cog):
     @com_welcome.command(name="enable")
     async def cw_en(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).welcome.enabled.set(True)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_welcome.command(name="disable")
     async def cw_dis(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).welcome.enabled.set(False)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_welcome.command(name="channel")
     async def cw_ch(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None):
         await self.config.guild(ctx.guild).welcome.channel_id.set(channel.id if channel else None)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_welcome.command(name="message")
     async def cw_msg(self, ctx: redcommands.Context, *, text: str):
         await self.config.guild(ctx.guild).welcome.message.set(text)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_welcome.command(name="preview")
     async def cw_prev(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
@@ -637,7 +650,7 @@ class CommunityPlus(redcommands.Cog):
         g = await self.config.guild(ctx.guild).welcome()
         text = self._format_template(g["message"], member)
         e = await self._mk_embed(ctx.guild, "Welcome", desc=text, kind="ok")
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @com.group(name="cya")
     async def com_cya(self, ctx: redcommands.Context):
@@ -646,22 +659,22 @@ class CommunityPlus(redcommands.Cog):
     @com_cya.command(name="enable")
     async def cc_en(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).cya.enabled.set(True)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_cya.command(name="disable")
     async def cc_dis(self, ctx: redcommands.Context):
         await self.config.guild(ctx.guild).cya.enabled.set(False)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_cya.command(name="channel")
     async def cc_ch(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None):
         await self.config.guild(ctx.guild).cya.channel_id.set(channel.id if channel else None)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_cya.command(name="message")
     async def cc_msg(self, ctx: redcommands.Context, *, text: str):
         await self.config.guild(ctx.guild).cya.message.set(text)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_cya.command(name="preview")
     async def cc_prev(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
@@ -669,7 +682,7 @@ class CommunityPlus(redcommands.Cog):
         g = await self.config.guild(ctx.guild).cya()
         text = self._format_template(g["message"], member)
         e = await self._mk_embed(ctx.guild, "Goodbye", desc=text, kind="warn")
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @com.group(name="vcsolo")
     async def com_vc(self, ctx: redcommands.Context):
@@ -681,13 +694,13 @@ class CommunityPlus(redcommands.Cog):
         self._settings_cache.pop(ctx.guild.id, None)
         for channel in (*ctx.guild.voice_channels, *ctx.guild.stage_channels):
             await self._refresh_solo_for_channel(channel)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_vc.command(name="disable")
     async def cvc_dis(self, ctx):
         await self.config.guild(ctx.guild).vcsolo.enabled.set(False)
         await self._cancel_guild_timers(ctx.guild.id)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @com_vc.command(name="idle")
     async def cvc_idle(self, ctx: redcommands.Context, seconds: int):
@@ -696,7 +709,7 @@ class CommunityPlus(redcommands.Cog):
         self._settings_cache.pop(ctx.guild.id, None)
         for channel in (*ctx.guild.voice_channels, *ctx.guild.stage_channels):
             await self._refresh_solo_for_channel(channel)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # Seen & Stats Commands
     @com.command(name="seen")
@@ -704,7 +717,7 @@ class CommunityPlus(redcommands.Cog):
         member = member or ctx.author
         data = await self.config.member(member).seen()
         if not data:
-            return await ctx.send(f"I haven’t seen **{member}** yet.")
+            return await self._reply(ctx, f"I haven’t seen **{member}** yet.")
         pres = data.get("presence", {})
         lines = [
             f"Last seen (any): {self._fmt_rel(data.get('any', 0))}"
@@ -713,7 +726,7 @@ class CommunityPlus(redcommands.Cog):
             f"Presence: **{pres.get('status', 'unknown')}** since {self._fmt_rel(pres.get('since', 0))}",
             f"Last online: {self._fmt_rel(pres.get('last_online', 0))}   |   Last offline: {self._fmt_rel(pres.get('last_offline', 0))}",
         ]
-        await ctx.send("\n".join([x for x in lines if x]))
+        await self._reply(ctx, "\n".join([x for x in lines if x]))
 
     @com.command(name="seendetail")
     async def com_seen_detail(
@@ -722,7 +735,7 @@ class CommunityPlus(redcommands.Cog):
         member = member or ctx.author
         data = await self.config.member(member).seen()
         if not data:
-            return await ctx.send(f"I haven’t seen **{member}** yet.")
+            return await self._reply(ctx, f"I haven’t seen **{member}** yet.")
         pres = data.get("presence", {})
         fields = [
             (
@@ -763,7 +776,7 @@ class CommunityPlus(redcommands.Cog):
         e = await self._mk_embed(ctx.guild, f"Seen detail - {member}", kind="info")
         for n, v in fields:
             e.add_field(name=n, value=v, inline=False)
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @com.command(name="stats")
     async def com_stats(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
@@ -807,7 +820,7 @@ class CommunityPlus(redcommands.Cog):
                 value="\n".join(f"{n[:50]}: {c}" for n, c in top_games),
                 inline=False,
             )
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @com.command(name="seenlist")
     async def com_seenlist(self, ctx: redcommands.Context, limit: Optional[int] = 25) -> None:
@@ -822,8 +835,7 @@ class CommunityPlus(redcommands.Cog):
             kind = d.get("kind", "")
             where = f"<#{d.get('where', 0)}>" if d.get("where") else ""
             lines.append(f"- {m} - {when} {kind} {where}".strip())
-        for page in pagify("\n".join(lines), page_length=900):
-            await ctx.send(page, allowed_mentions=discord.AllowedMentions.none())
+        await self._reply(ctx, ("\n".join(lines)), allowed_mentions=discord.AllowedMentions.none())
 
     @com.command(name="seenlistcsv")
     async def com_seenlist_csv(self, ctx: redcommands.Context) -> None:
@@ -863,15 +875,15 @@ class CommunityPlus(redcommands.Cog):
             )
         output.seek(0)
         fp = io.BytesIO(output.getvalue().encode("utf-8"))
-        await ctx.send(file=discord.File(fp, filename=f"seen_{ctx.guild.id}.csv"))
+        await self._reply(ctx, file=discord.File(fp, filename=f"seen_{ctx.guild.id}.csv"))
 
     @com.command(name="embeds")
     async def com_embeds(self, ctx: redcommands.Context, compact: Optional[bool] = None) -> None:
         if compact is None:
             cur = await self.config.guild(ctx.guild).embeds.compact()
-            return await ctx.send(f"Embeds compact = **{cur}**.")
+            return await self._reply(ctx, f"Embeds compact = **{cur}**.")
         await self.config.guild(ctx.guild).embeds.compact.set(bool(compact))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # ------------------------ listeners ------------------------
     @commands.Cog.listener()
@@ -978,8 +990,11 @@ class CommunityPlus(redcommands.Cog):
                 await member.move_to(None, reason="Solo VC timeout")
                 if settings["dm_notify"]:
                     try:
-                        await member.send(
-                            f"Disconnected from {member.guild.name}: solo for {wait_s}s."
+                        await self._presentation.send(
+                            member,
+                            f"Disconnected from {member.guild.name}: solo for {wait_s}s.",
+                            title="Voice timeout",
+                            tone="warning",
                         )
                     except discord.HTTPException:
                         log.debug("Solo timeout DM could not be sent", exc_info=True)

@@ -2,6 +2,15 @@
 
 Changes recorded here start with the repository's documentation and metadata pass. Earlier implementation history is available in Git commits.
 
+## 2026-10-01: unified Discord presentation
+
+- Give all five cogs a shared indigo theme, consistent headers and footers, readable settings, and matching success/warning/error colors.
+- Send command confirmations as themed messages and add a sectioned AudioPlus command overview.
+- Paginate long descriptions, lists, and preview fields within Discord's UTF-16 limits; send export attachments only once.
+- Respect Red's embed preference and provide readable text when Embed Links is unavailable.
+- Theme event notices and DMs while preserving custom template text, level-up mention behavior, and OwoPlus webhook content.
+- Keep each cog independently installable with its own copy of the theme helper, checked for consistency by tests.
+
 ## 2026-09-30: refactor and reliability pass
 
 ### Changed

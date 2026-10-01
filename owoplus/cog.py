@@ -18,7 +18,6 @@ from discord.ext import commands
 from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
-from redbot.core.utils.chat_formatting import box, pagify
 
 from .constants import (
     CODE_SPLIT,
@@ -39,6 +38,7 @@ from .haiku import (
     _normalize_for_haiku,
     _reflow_text_as_haiku,
 )
+from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
 
@@ -59,8 +59,12 @@ def _bool_emoji(v: bool) -> str:
 class OwoPlus(redcommands.Cog):
     """Webhook-only cute/owo replacer with auto-intensity 1..5, keys-only fallback, and optional haiku formatting."""
 
+    async def _reply(self, ctx, content=None, **kwargs):
+        return await self._presentation.send(ctx, content, **kwargs)
+
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
+        self._presentation = Presentation("OwoPlus", "owoplus")
         self.config: Config = Config.get_conf(self, identifier=0x5E0F1A, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self._wh_cache = OrderedDict()
@@ -563,7 +567,7 @@ class OwoPlus(redcommands.Cog):
         )
         e.add_field(
             name=f"{EMO['core']} Core",
-            value=box(
+            value=settings(
                 f"enabled = {cfg['enabled']}\n"
                 f"one_in  = 1/{cfg['one_in']}\n"
                 f"owner_bypass= {cfg['owner_bypass']}\n"
@@ -586,7 +590,7 @@ class OwoPlus(redcommands.Cog):
     @redcommands.admin_or_permissions(manage_guild=True)
     async def owoplus(self, ctx: redcommands.Context) -> None:
         e = await self._status_embed(ctx.guild)
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @owoplus.command(name="help")
     async def owoplus_help(self, ctx: redcommands.Context) -> None:
@@ -623,7 +627,7 @@ class OwoPlus(redcommands.Cog):
             value="Haiku detected ⇒ three italic lines with a blossom; otherwise RNG full vs keys-only.",
             inline=False,
         )
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @owoplus.command(name="ownerbypass")
     async def owoplus_ownerbypass(
@@ -631,32 +635,35 @@ class OwoPlus(redcommands.Cog):
     ) -> None:
         if state is None:
             cur = await self.config.guild(ctx.guild).owner_bypass()
-            return await ctx.send(embed=_embed(f"Owner bypass is **{'on' if cur else 'off'}**"))
+            return await self._reply(
+                ctx, embed=_embed(f"Owner bypass is **{'on' if cur else 'off'}**")
+            )
         if state.lower() not in {"on", "true", "yes", "1", "off", "false", "no", "0"}:
-            return await ctx.send("Use on or off.")
+            return await self._reply(ctx, "Use on or off.")
         val = state.lower() in {"on", "true", "yes", "1"}
         await self.config.guild(ctx.guild).owner_bypass.set(val)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     # ------- poem group (haiku tools) -------
     @owoplus.group(name="poem", invoke_without_command=True)
     async def owoplus_poem(self, ctx: redcommands.Context) -> None:
         cur = await self.config.guild(ctx.guild).haiku_enabled()
-        await ctx.send(
+        await self._reply(
+            ctx,
             embed=_embed(
                 f"Haiku formatting is **{'on' if cur else 'off'}**. Use `poem on|off` or `poem diag <text>`"
-            )
+            ),
         )
 
     @owoplus_poem.command(name="on")
     async def owoplus_poem_on(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).haiku_enabled.set(True)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @owoplus_poem.command(name="off")
     async def owoplus_poem_off(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).haiku_enabled.set(False)
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @owoplus_poem.command(name="diag")
     async def owoplus_poem_diag(self, ctx: redcommands.Context, *, text: str) -> None:
@@ -691,43 +698,48 @@ class OwoPlus(redcommands.Cog):
             out = self._format_haiku_lines(out)
             out = self._add_haiku_suffix(out)
             out = self._format_haiku_lines(out)
-        e = _embed("OwoPlus - Haiku Diag", desc=box("\n".join(lines), lang="ini"))
-        e.add_field(name="Haiku Render", value=box(out, lang="ini"), inline=False)
-        await ctx.send(embed=e)
+        e = _embed("OwoPlus - Haiku Diag", desc=settings("\n".join(lines)))
+        e.add_field(
+            name="Haiku Render", value=discord.utils.escape_markdown(out) or "(empty)", inline=False
+        )
+        await self._reply(ctx, embed=e)
 
     # ---------------------------------------
 
     @owoplus.command(name="enable")
     async def owoplus_enable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).enabled.set(True)
-        await ctx.send(
+        await self._reply(
+            ctx,
             embed=_embed(
                 f"{EMO['ok']} OwoPlus enabled (guild-wide).",
                 color=discord.Color.green(),
-            )
+            ),
         )
 
     @owoplus.command(name="disable")
     async def owoplus_disable(self, ctx: redcommands.Context) -> None:
         await self.config.guild(ctx.guild).enabled.set(False)
-        await ctx.send(
+        await self._reply(
+            ctx,
             embed=_embed(
                 f"{EMO['ok']} OwoPlus disabled (guild-wide).",
                 color=discord.Color.green(),
-            )
+            ),
         )
 
     @owoplus.command(name="onein")
     async def owoplus_onein(self, ctx: redcommands.Context, n: int) -> None:
         if n < 1 or n > 1_000_000:
-            return await ctx.send(
+            return await self._reply(
+                ctx,
                 embed=_embed(
                     "Use 1..1,000,000 (probability = 1/N).",
                     color=discord.Color.orange(),
-                )
+                ),
             )
         await self.config.guild(ctx.guild).one_in.set(int(n))
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @owoplus.group(name="prob")
     async def owoplus_prob(self, ctx: redcommands.Context) -> None:
@@ -739,25 +751,26 @@ class OwoPlus(redcommands.Cog):
             raise redcommands.BadArgument("Probability denominator must be from 1 to 1,000,000.")
         async with self.config.guild(ctx.guild).user_probs() as probabilities:
             probabilities[str(member.id)] = n
-        await ctx.tick()
+        await self._presentation.confirm(ctx)
 
     @owoplus_prob.command(name="remove")
     async def owoplus_prob_remove(self, ctx: redcommands.Context, member: discord.Member):
         async with self.config.guild(ctx.guild).user_probs() as probabilities:
             removed = probabilities.pop(str(member.id), None)
-        await ctx.send("Removed." if removed is not None else "No override was set.")
+        await self._reply(ctx, "Removed." if removed is not None else "No override was set.")
 
     @owoplus_prob.command(name="list")
     async def owoplus_prob_list(self, ctx: redcommands.Context) -> None:
         data = await self.config.guild(ctx.guild).user_probs()
         if not data:
-            return await ctx.send(embed=_embed("No overrides.", color=discord.Color.orange()))
+            return await self._reply(
+                ctx, embed=_embed("No overrides.", color=discord.Color.orange())
+            )
         out = []
         for uid, n in data.items():
             m = ctx.guild.get_member(int(uid))
             out.append(f"- {(m.mention if m else uid)}: 1/{n}")
-        for page in pagify("\n".join(out), page_length=1800):
-            await ctx.send(embed=_embed("Probability Overrides", desc=box(page, lang="ini")))
+        await self._reply(ctx, embed=_embed("Probability Overrides", desc=("\n".join(out))))
 
     @owoplus.command(name="preview")
     async def owoplus_preview(self, ctx: redcommands.Context, *, text: str) -> None:
@@ -774,8 +787,10 @@ class OwoPlus(redcommands.Cog):
             "OwoPlus - Preview",
             desc=f"mode={mode} (n=1/{n}{', key seen' if forced else ''}) • haiku={'on' if conf.get('haiku_enabled', True) else 'off'}",
         )
-        e.add_field(name="OUTPUT", value=box(out, lang="ini"), inline=False)
-        await ctx.send(embed=e)
+        e.add_field(
+            name="OUTPUT", value=discord.utils.escape_markdown(out) or "(empty)", inline=False
+        )
+        await self._reply(ctx, embed=e)
 
     @owoplus.command(name="diag")
     async def owoplus_diag(self, ctx: redcommands.Context) -> None:
@@ -792,7 +807,7 @@ class OwoPlus(redcommands.Cog):
                 f"overrides={len(g['user_probs'])}",
             ]
         )
-        await ctx.send(embed=_embed("OwoPlus - Diag", desc=box(payload, lang="ini")))
+        await self._reply(ctx, embed=_embed("OwoPlus - Diag", desc=settings(payload)))
 
     @owoplus.command(name="test")
     async def owoplus_test(self, ctx):
@@ -808,8 +823,8 @@ class OwoPlus(redcommands.Cog):
                 last = message
                 break
         if last is None:
-            return await ctx.send(
-                embed=_embed("OwoPlus test", desc="No eligible recent message found.")
+            return await self._reply(
+                ctx, embed=_embed("OwoPlus test", desc="No eligible recent message found.")
             )
         conf = await self._settings(ctx.guild)
         mode = self._choose_mode(last.author, last.content, conf)
@@ -817,13 +832,14 @@ class OwoPlus(redcommands.Cog):
             last.content, mode, bool(conf.get("haiku_enabled", True))
         )
         success = await self._repost(last, content)
-        await ctx.send(
+        await self._reply(
+            ctx,
             embed=_embed(
                 "OwoPlus test",
                 desc="Reposted successfully."
                 if success
                 else "Original retained. Check permissions, rich content, and attachment limits.",
-            )
+            ),
         )
 
     # ---------- listener ----------

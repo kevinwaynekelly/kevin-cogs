@@ -14,10 +14,10 @@ from discord.ext import commands
 from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
-from redbot.core.utils.chat_formatting import box
 
 from .constants import _UI, DEFAULTS_GUILD, EVENT_STYLE
 from .events import guild_enabled
+from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +32,12 @@ log = logging.getLogger(__name__)
 class LogPlus(redcommands.Cog):
     """Power logging for server changes."""
 
+    async def _reply(self, ctx, content=None, **kwargs):
+        return await self._presentation.send(ctx, content, **kwargs)
+
     def __init__(self, bot: Red) -> None:
         self.bot: Red = bot
+        self._presentation = Presentation("LogPlus", "logplus")
         self.config: Config = Config.get_conf(self, identifier=0x51A7E11, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
 
@@ -83,7 +87,7 @@ class LogPlus(redcommands.Cog):
         )
         if footer:
             e.set_footer(text=footer)
-        return self._fit_embed(e)
+        return self._presentation.style(e)
 
     async def _E(
         self,
@@ -132,8 +136,9 @@ class LogPlus(redcommands.Cog):
         if channel is None:
             return
         try:
-            await channel.send(
-                embed=self._fit_embed(embed),
+            await self._presentation.send(
+                channel,
+                embed=embed,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except discord.HTTPException:
@@ -217,7 +222,7 @@ class LogPlus(redcommands.Cog):
         )
         e.add_field(
             name=f"{_UI['core']} Core",
-            value=box(
+            value=settings(
                 f"log_channel   = {getattr(log_ch, 'mention', 'not set')}\n"
                 f"rate          = {g['rate']['seconds']}s\n"
                 f"style.compact = {g['style']['compact']}",
@@ -227,7 +232,7 @@ class LogPlus(redcommands.Cog):
         )
         e.add_field(
             name="Message",
-            value=box(
+            value=settings(
                 f"edit={self._onoff(g['message']['edit'])} "
                 f"delete={self._onoff(g['message']['delete'])} "
                 f"bulk={self._onoff(g['message']['bulk_delete'])} "
@@ -239,7 +244,7 @@ class LogPlus(redcommands.Cog):
         )
         e.add_field(
             name="Reactions",
-            value=box(
+            value=settings(
                 f"add={self._onoff(g['reactions']['add'])} "
                 f"remove={self._onoff(g['reactions']['remove'])} "
                 f"clear={self._onoff(g['reactions']['clear'])}",
@@ -249,7 +254,7 @@ class LogPlus(redcommands.Cog):
         )
         e.add_field(
             name="Server",
-            value=box(
+            value=settings(
                 f"channels c/d/u={[g['server']['channel_create'], g['server']['channel_delete'], g['server']['channel_update']]}\n"
                 f"roles    c/d/u={[g['server']['role_create'], g['server']['role_delete'], g['server']['role_update']]}\n"
                 f"emoji={g['server']['emoji_update']} sticker={g['server']['sticker_update']} integ={g['server']['integrations_update']}\n"
@@ -261,7 +266,7 @@ class LogPlus(redcommands.Cog):
         )
         e.add_field(
             name="Member/Voice/Sched/Commands",
-            value=box(
+            value=settings(
                 f"member: join={g['member']['join']} leave={g['member']['leave']} roles={g['member']['roles_changed']} nick={g['member']['nick_changed']} "
                 f"ban={g['member']['ban']} unban={g['member']['unban']} timeout={g['member']['timeout']} presence={g['member']['presence']}\n"
                 f"voice: join={g['voice']['join']} move={g['voice']['move']} leave={g['voice']['leave']} mute={g['voice']['mute']} "
@@ -280,7 +285,7 @@ class LogPlus(redcommands.Cog):
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def logplus(self, ctx: redcommands.Context):
-        await ctx.send(embed=await self._status_embed(ctx.guild))
+        await self._reply(ctx, embed=await self._status_embed(ctx.guild))
 
     @logplus.command(name="help")
     async def help_(self, ctx: redcommands.Context):
@@ -315,29 +320,31 @@ class LogPlus(redcommands.Cog):
             value="Routing uses the global log channel unless an override is configured for a specific source channel.",
             inline=False,
         )
-        await ctx.send(embed=e)
+        await self._reply(ctx, embed=e)
 
     @logplus.command(name="rate")
     async def cmd_rate(self, ctx: redcommands.Context, seconds: Optional[float] = None):
         if seconds is None:
             cur = await self._rate_seconds(ctx.guild)
-            return await ctx.send(
-                embed=await self._E(ctx.guild, "Rate limit", f"Current window: **{cur:.2f}s**")
+            return await self._reply(
+                ctx, embed=await self._E(ctx.guild, "Rate limit", f"Current window: **{cur:.2f}s**")
             )
         if not math.isfinite(seconds) or seconds < 0:
-            return await ctx.send(
+            return await self._reply(
+                ctx,
                 embed=await self._E(
                     ctx.guild,
                     "Rate limit",
                     f"{_UI['warn']} Seconds must be finite and ≥ 0.",
                     color=discord.Color.orange(),
-                )
+                ),
             )
         await self.config.guild(ctx.guild).rate.seconds.set(float(seconds))
-        await ctx.send(
+        await self._reply(
+            ctx,
             embed=await self._E(
                 ctx.guild, "Rate limit", f"{_UI['ok']} Window set to **{seconds:.2f}s**"
-            )
+            ),
         )
 
     @logplus.group(name="style")
@@ -348,26 +355,29 @@ class LogPlus(redcommands.Cog):
     async def style_compact(self, ctx: redcommands.Context, flag: Optional[str] = None):
         if flag is None:
             cur = await self.config.guild(ctx.guild).style.compact()
-            return await ctx.send(
+            return await self._reply(
+                ctx,
                 embed=await self._E(
                     ctx.guild,
                     "Style: compact",
                     f"Compact style is **{'ON' if cur else 'OFF'}**.",
-                )
+                ),
             )
         flag = flag.lower()
         if flag not in {"on", "off"}:
-            return await ctx.send(
+            return await self._reply(
+                ctx,
                 embed=await self._E(
                     ctx.guild,
                     "Style: compact",
                     "Use `on` or `off`.",
                     color=discord.Color.orange(),
-                )
+                ),
             )
         await self.config.guild(ctx.guild).style.compact.set(flag == "on")
-        await ctx.send(
-            embed=await self._E(ctx.guild, "Style: compact", f"Compact style **{flag.upper()}**.")
+        await self._reply(
+            ctx,
+            embed=await self._E(ctx.guild, "Style: compact", f"Compact style **{flag.upper()}**."),
         )
 
     @style.command(name="preview")
@@ -378,7 +388,7 @@ class LogPlus(redcommands.Cog):
             ("Channel created", "channel_created"),
         ]
         for title, etype in samples:
-            await ctx.send(embed=await self._E(ctx.guild, title, etype=etype))
+            await self._reply(ctx, embed=await self._E(ctx.guild, title, etype=etype))
 
     # ---------------- intuitive channel commands ----------------
     @logplus.command(name="channel")
@@ -387,24 +397,26 @@ class LogPlus(redcommands.Cog):
         cid = await self.config.guild(ctx.guild).log_channel()
         ch = ctx.guild.get_channel(cid) if cid else None
         msg = f"Current log channel: **{getattr(ch, 'mention', 'not set')}**"
-        await ctx.send(embed=await self._E(ctx.guild, "Log channel", msg))
+        await self._reply(ctx, embed=await self._E(ctx.guild, "Log channel", msg))
 
     @logplus.command(name="setchannel")
     async def channel_set(self, ctx: redcommands.Context, channel: discord.TextChannel):
         """Set the destination log channel."""
         await self.config.guild(ctx.guild).log_channel.set(channel.id)
-        await ctx.send(
-            embed=await self._E(ctx.guild, "Log channel", f"{_UI['ok']} Set to {channel.mention}.")
+        await self._reply(
+            ctx,
+            embed=await self._E(ctx.guild, "Log channel", f"{_UI['ok']} Set to {channel.mention}."),
         )
 
     @logplus.command(name="clearchannel")
     async def channel_clear(self, ctx: redcommands.Context):
         """Clear the destination log channel."""
         await self.config.guild(ctx.guild).log_channel.set(None)
-        await ctx.send(
+        await self._reply(
+            ctx,
             embed=await self._E(
                 ctx.guild, "Log channel", f"{_UI['ok']} Cleared (logging disabled)."
-            )
+            ),
         )
 
     # ---------------- per-channel routing overrides ----------------
@@ -419,10 +431,11 @@ class LogPlus(redcommands.Cog):
     ):
         async with self.config.guild(ctx.guild).overrides() as overrides:
             overrides[str(source.id)] = dest.id
-        await ctx.send(
+        await self._reply(
+            ctx,
             embed=await self._E(
                 ctx.guild, "Route", f"{_UI['ok']} {source.mention} → {dest.mention}"
-            )
+            ),
         )
 
     @route.command(name="clear")
@@ -434,7 +447,7 @@ class LogPlus(redcommands.Cog):
             if removed is not None
             else "No override for that channel."
         )
-        await ctx.send(embed=await self._E(ctx.guild, "Route", text))
+        await self._reply(ctx, embed=await self._E(ctx.guild, "Route", text))
 
     @route.command(name="list")
     async def route_list(self, ctx: redcommands.Context):
@@ -449,8 +462,8 @@ class LogPlus(redcommands.Cog):
                 lines.append(f"{s_name} → {d_name}")
         else:
             lines.append("(none)")
-        e = await self._E(ctx.guild, "Routing overrides", box("\n".join(lines), lang="ini"))
-        await ctx.send(embed=e)
+        e = await self._E(ctx.guild, "Routing overrides", settings("\n".join(lines), lang="ini"))
+        await self._reply(ctx, embed=e)
 
     # ---------------- toggles (unchanged API) ----------------
     @logplus.group()
@@ -461,8 +474,9 @@ class LogPlus(redcommands.Cog):
         async with self.config.guild(ctx.guild).get_attr(group)() as section:
             section[key] = not section[key]
             enabled = section[key]
-        await ctx.send(
-            embed=await self._E(ctx.guild, "Toggle", f"{group}.{key} → **{self._onoff(enabled)}**")
+        await self._reply(
+            ctx,
+            embed=await self._E(ctx.guild, "Toggle", f"{group}.{key} → **{self._onoff(enabled)}**"),
         )
 
     # message toggles
@@ -681,7 +695,7 @@ class LogPlus(redcommands.Cog):
         ]
         lines.extend(f"{group}.{key} = {value}" for group, key, value in switches)
         embed = await self._E(ctx.guild, "Diagnostics", "\n".join(lines))
-        await ctx.send(embed=self._fit_embed(embed))
+        await self._reply(ctx, embed=self._fit_embed(embed))
 
     # ---------------- listeners ----------------
     # messages
