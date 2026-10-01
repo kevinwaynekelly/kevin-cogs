@@ -163,7 +163,9 @@ For another base-image family, add FFmpeg, libopus, and a supported JavaScript r
 
 ## Playback
 
-Join a voice channel, then try:
+Run a play command in your server. AudioPlus joins your voice channel when you are in one. If you are not in voice, it chooses the available voice channel with the most people, excluding bots from the count. It skips the AFK channel, channels where it lacks View Channel/Connect/Speak, and full channels unless it has permission to bypass the member limit. Ties, including empty channels, follow the server's channel order. If no channel is available, it explains the permissions or capacity needed. Automatic selection uses ordinary voice channels; joining your existing Stage channel still uses the Stage-speaking checks.
+
+Try:
 
 ```text
 [p]play roar
@@ -184,13 +186,15 @@ Each guild has an independent in-memory player. The queue holds at most 100 upco
 
 Natural completion advances once. Skip cancels the current lookup or playback before advancing. Failed tracks are reported in the latest request channel and the player tries the next queued track. A failed or skipped track is not repeated. Stop clears upcoming tracks and cancels the active playback operation. Rejoin refreshes the stream and restores position, pause state, volume, and the queue for seekable audio. Live streams may restart at their live edge. If reconnection fails, tracks remain available in memory for a later `[p]join` or `/join`.
 
+**AudioPlus disconnects automatically after the queue has been idle for 10 seconds.** Adding a song or starting a new play/tone search cancels the countdown. A failed, cancelled, or empty search starts a fresh countdown once all pending searches finish. Paused tracks, active stream preparation, and repeating playback keep the connection active. Stop, skipping the last track, and exhausting failed tracks also leave after the queue becomes idle. Each server has its own timer, and disconnect/reload/unload cancels it. The next play command connects again using the same channel-selection rules.
+
 ## Commands
 
 All playback and voice commands are server commands. The bot needs Connect and Speak in the target voice channel and may need Stage moderator approval to speak. Ordinary controls retain their existing permission checks; the three legacy setup commands remain bot-owner-only.
 
 | Prefix command | Slash command | Purpose |
 | --- | --- | --- |
-| `[p]play <query>` | `/play` | Search or queue music; prefix alias `p`. |
+| `[p]play <query>` | `/play` | Search or queue music in your voice channel, or the available channel with the most people; prefix alias `p`. |
 | `[p]join` | `/join` | Join or move to your voice channel; prefix aliases `connect`, `summon`. |
 | `[p]disconnect` | `/disconnect` | Disconnect and clear the queue; prefix alias `dc`. |
 | `[p]skip` | `/skip` | Skip current playback or lookup; prefix aliases `next`, `s`. |
@@ -235,11 +239,11 @@ For bug reports, include Red/Discord.py versions, `[p]audiostatus`, `[p]playerst
 
 Only legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The cog does not persist listening histories, playlists, user profiles, audio files, or yt-dlp disk caches. Track metadata, command contexts, errors, queues, volume, and repeat settings stay in memory. The data hooks therefore have no per-user Config records to export or delete.
 
-Unload closes only AudioPlus's players and cancels owned lookups/decoders. Other cogs' voice connections are left alone. Removing a guild also closes its player. Each cog remains independently installable through Downloader.
+Unload closes only AudioPlus's players and cancels owned lookups/decoders and idle timers. Other cogs' voice connections are left alone. Removing a guild also closes its player. Each cog remains independently installable through Downloader.
 
 ## Development and references
 
-Regression tests cover Red Config/command compatibility, real Red hybrid command registration, slash option conversion and callbacks, initial response deferral, queue races, paused playback, stale callbacks, repeat, reconnect recovery, provider errors, process cancellation, and real yt-dlp/FFmpeg against a local HTTP audio fixture. The native Discord audio thread and Opus encoding are exercised against local audio too. Discord command synchronization, voice networking, and external YouTube/SoundCloud behavior are mocked. A successful test suite does not establish live playback on your server.
+Regression tests cover Red Config/command compatibility, real Red hybrid command registration, slash option conversion and callbacks, initial response deferral, automatic channel selection, the 10-second idle deadline and cancellation, queue races, paused playback, stale callbacks, repeat, reconnect recovery, provider errors, process cancellation, and real yt-dlp/FFmpeg against a local HTTP audio fixture. The native Discord audio thread and Opus encoding are exercised against local audio too. Discord command synchronization, voice networking, and external YouTube/SoundCloud behavior are mocked. A successful test suite does not establish live playback on your server.
 
 - [yt-dlp documentation](https://github.com/yt-dlp/yt-dlp)
 - [yt-dlp JavaScript runtime setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS)

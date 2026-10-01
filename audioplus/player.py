@@ -15,6 +15,7 @@ import discord
 from .resolver import MAX_TRACKS, MediaError, Stream, Track
 
 log = logging.getLogger(__name__)
+IDLE_DISCONNECT_SECONDS = 10
 
 
 class NativeSource(discord.AudioSource):
@@ -71,11 +72,12 @@ class NativeSource(discord.AudioSource):
 
 
 class GuildPlayer:
-    def __init__(self, voice, resolver, report_error, *, source_factory=NativeSource):
+    def __init__(self, voice, resolver, report_error, *, source_factory=NativeSource, on_idle=None):
         self.voice = voice
         self.resolver = resolver
         self.report_error = report_error
         self.source_factory = source_factory
+        self.on_idle = on_idle
         self.guild = voice.guild
         self.queue: deque[Track] = deque()
         self.current: Track | None = None
@@ -89,6 +91,8 @@ class GuildPlayer:
         self._runner = None
         self._track_task = None
         self._restart = None
+        self._idle_task = None
+        self._queue_requests = 0
         self.lock = asyncio.Lock()
 
     @property
@@ -107,6 +111,66 @@ class GuildPlayer:
         if not self.closed and (self._runner is None or self._runner.done()):
             self._runner = asyncio.create_task(self._run(), name=f"AudioPlus:{self.guild.id}")
 
+    def _cancel_idle(self):
+        task = self._idle_task
+        self._idle_task = None
+        if task and task is not asyncio.current_task():
+            task.cancel()
+        return task
+
+    def begin_queue_request(self):
+        """Reserve this connection while a command searches for tracks."""
+        if self.closed:
+            raise MediaError("The voice player disconnected. Join again before queueing music.")
+        self._queue_requests += 1
+        self._cancel_idle()
+
+    def end_queue_request(self):
+        self._queue_requests -= 1
+        self._schedule_idle()
+
+    def _is_idle(self):
+        return (
+            not self.closed
+            and self.current is None
+            and not self.queue
+            and self._restart is None
+            and not self.preparing
+            and not self._queue_requests
+            and not self.playing
+            and not self.paused
+        )
+
+    def _schedule_idle(self):
+        if self._is_idle() and (self._idle_task is None or self._idle_task.done()):
+            self._idle_task = asyncio.create_task(
+                self._leave_after_idle(), name=f"AudioPlusIdle:{self.guild.id}"
+            )
+
+    async def _leave_after_idle(self):
+        try:
+            await asyncio.sleep(IDLE_DISCONNECT_SECONDS)
+            if self.on_idle:
+                await self.on_idle(self)
+            else:
+                await self.disconnect_if_idle()
+        except Exception:
+            log.warning(
+                "AudioPlus idle disconnect failed in guild %s", self.guild.id, exc_info=True
+            )
+        finally:
+            if self._idle_task is asyncio.current_task():
+                self._idle_task = None
+
+    async def disconnect_if_idle(self):
+        async with self.lock:
+            if not self._is_idle():
+                return False
+            # Claim the disconnect before allowing a concurrent enqueue to proceed.
+            self.closed = True
+        await self.close()
+        return True
+
     async def enqueue(self, tracks, ctx=None):
         async with self.lock:
             if self.closed:
@@ -115,6 +179,7 @@ class GuildPlayer:
                 raise MediaError(
                     f"The queue holds at most {MAX_TRACKS} upcoming tracks. Clear some tracks first."
                 )
+            self._cancel_idle()
             self.queue.extend(tracks)
             if ctx is not None:
                 self.context = ctx
@@ -166,6 +231,7 @@ class GuildPlayer:
                     elif self.queue:
                         track, start, paused = self.queue.popleft(), 0, False
                     else:
+                        self._schedule_idle()
                         return
                     self.current = track
                     self._track_task = asyncio.create_task(self._play_one(track, start, paused))
@@ -213,6 +279,7 @@ class GuildPlayer:
             track = self.current
             self._restart = None
             self._cancel_track()
+            self._schedule_idle()
             self._start_worker()
             return track
 
@@ -221,6 +288,7 @@ class GuildPlayer:
             self.queue.clear()
             self._restart = None
             self._cancel_track()
+            self._schedule_idle()
 
     async def set_volume(self, value):
         self.volume = max(0, min(1000, int(value)))
@@ -235,6 +303,7 @@ class GuildPlayer:
 
     async def restart(self, track, *, start=0, paused=False):
         async with self.lock:
+            self._cancel_idle()
             self._restart = (track, start, paused)
             self._cancel_track()
             self._start_worker()
@@ -243,9 +312,14 @@ class GuildPlayer:
         self.closed = True
         self.queue.clear()
         self._restart = None
+        idle = self._cancel_idle()
         self._cancel_track()
+        pending = []
+        if idle and idle is not asyncio.current_task():
+            pending.append(idle)
         if self._runner:
             self._runner.cancel()
-            await asyncio.gather(self._runner, return_exceptions=True)
+            pending.append(self._runner)
+        await asyncio.gather(*pending, return_exceptions=True)
         if disconnect:
             await self.voice.disconnect(force=True)

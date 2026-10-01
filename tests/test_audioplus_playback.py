@@ -158,8 +158,8 @@ async def test_rejoin_restores_track_position_volume_pause_and_queue(audio_runti
     monkeypatch.setattr(
         audio_module,
         "GuildPlayer",
-        lambda voice, resolver, report: GuildPlayer(
-            voice, resolver, report, source_factory=FakeSource
+        lambda voice, resolver, report, **kwargs: GuildPlayer(
+            voice, resolver, report, source_factory=FakeSource, **kwargs
         ),
     )
     assert await cog._rebind_voice(guild)
@@ -195,8 +195,8 @@ async def test_failed_rejoin_preserves_tracks_for_later_join(audio_runtime, monk
     monkeypatch.setattr(
         audio_module,
         "GuildPlayer",
-        lambda voice, resolver, report: GuildPlayer(
-            voice, resolver, report, source_factory=FakeSource
+        lambda voice, resolver, report, **kwargs: GuildPlayer(
+            voice, resolver, report, source_factory=FakeSource, **kwargs
         ),
     )
     new, _ = await cog._fetch_or_connect_player(ctx)

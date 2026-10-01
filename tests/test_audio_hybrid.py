@@ -115,7 +115,7 @@ async def test_red_messages_reply_for_owner_and_ordinary_member(red_command_runt
         bot.owner_ids.add(member.id)
     for content, expected in (
         ("!queue", "Not connected."),
-        ("!play roar", "Join a voice channel first."),
+        ("!play roar", "No available voice channel."),
         ("!play", "query is a required argument"),
         ("!audio queue", "Not connected."),
     ):

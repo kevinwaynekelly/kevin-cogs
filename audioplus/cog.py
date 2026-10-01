@@ -104,6 +104,16 @@ class AudioPlus(commands.Cog):
         if player:
             await player.close(disconnect=disconnect)
 
+    async def _disconnect_idle_player(self, player):
+        async with self._player_locks[player.guild.id]:
+            if self._closing or self._players.get(player.guild.id) is not player:
+                return
+            if player.guild.voice_client is not player.voice:
+                await self._dispose_player(player.guild.id, disconnect=False)
+            elif await player.disconnect_if_idle():
+                if self._players.get(player.guild.id) is player:
+                    self._players.pop(player.guild.id)
+
     async def _open_voice(self, channel):
         owned = None
 
@@ -160,13 +170,42 @@ class AudioPlus(commands.Cog):
             await player.restart(resume[0], start=resume[1], paused=resume[2])
         await player.enqueue(queued, player.context)
 
-    async def _fetch_or_connect_player(self, ctx):
+    @staticmethod
+    def _busiest_voice_channel(guild):
+        candidates = []
+        for channel in guild.voice_channels:
+            if channel == guild.afk_channel:
+                continue
+            permissions = channel.permissions_for(guild.me)
+            if not permissions.view_channel or not permissions.connect or not permissions.speak:
+                continue
+            if (
+                channel.user_limit
+                and len(channel.members) >= channel.user_limit
+                and not permissions.move_members
+                and (guild.voice_client is None or guild.voice_client.channel != channel)
+            ):
+                continue
+            candidates.append(channel)
+        if not candidates:
+            raise commands.UserInputError(
+                "No available voice channel. Give me View Channel, Connect, and Speak permissions in a voice channel with room."
+            )
+        # Count people rather than bots; ties follow the server's channel order.
+        return max(
+            candidates, key=lambda channel: sum(not member.bot for member in channel.members)
+        )
+
+    async def _fetch_or_connect_player(self, ctx, *, queue_request=False):
         if ctx.guild is None:
             raise commands.NoPrivateMessage()
         voice = getattr(ctx.author, "voice", None)
-        if not voice or not voice.channel:
+        if voice and voice.channel:
+            channel = voice.channel
+        elif queue_request:
+            channel = self._busiest_voice_channel(ctx.guild)
+        else:
             raise commands.UserInputError("Join a voice channel first.")
-        channel = voice.channel
         try:
             require_voice()
         except MediaError as exc:
@@ -187,6 +226,8 @@ class AudioPlus(commands.Cog):
                 raise commands.BotMissingPermissions(
                     discord.Permissions(**dict.fromkeys(missing, True))
                 )
+            request_player = None
+            ready = False
             try:
                 if player is None or not player.voice.is_connected():
                     snapshot = self._snapshot(previous) if previous else None
@@ -198,13 +239,25 @@ class AudioPlus(commands.Cog):
                             self._retain(previous, snapshot)
                             self._players[ctx.guild.id] = previous
                         raise
-                    player = GuildPlayer(vc, self._resolver, self._report_playback_failure)
+                    player = GuildPlayer(
+                        vc,
+                        self._resolver,
+                        self._report_playback_failure,
+                        on_idle=self._disconnect_idle_player,
+                    )
                     self._players[ctx.guild.id] = player
                     if snapshot:
                         await self._restore(player, snapshot)
-                elif player.voice.channel != channel:
+                if queue_request:
+                    player.begin_queue_request()
+                    request_player = player
+                if player.voice.channel != channel:
                     await player.voice.move_to(channel, timeout=30)
                     await self._force_undeafen(ctx.guild, channel)
+                player.context = ctx
+                await self._stage_unsuppress_if_needed(ctx.guild, channel)
+                ready = True
+                return player, channel
             except (
                 asyncio.TimeoutError,
                 discord.ClientException,
@@ -214,9 +267,9 @@ class AudioPlus(commands.Cog):
                 raise commands.CommandError(
                     "Discord voice could not connect. Check audiostatus, channel permissions, and the Red container's UDP network access."
                 ) from exc
-            player.context = ctx
-            await self._stage_unsuppress_if_needed(ctx.guild, channel)
-            return player, channel
+            finally:
+                if request_player and not ready:
+                    request_player.end_queue_request()
 
     @staticmethod
     def _normalize_query(query):
@@ -242,6 +295,16 @@ class AudioPlus(commands.Cog):
             await player.enqueue(tracks, ctx)
         except MediaError as exc:
             raise commands.CommandError(str(exc)) from exc
+
+    async def _queue_query(self, ctx, query):
+        player, _ = await self._fetch_or_connect_player(ctx, queue_request=True)
+        try:
+            tracks = await self._load_tracks(query)
+            if tracks:
+                await self._enqueue(player, tracks, ctx)
+            return tracks
+        finally:
+            player.end_queue_request()
 
     @staticmethod
     def _duration(milliseconds):
@@ -298,7 +361,12 @@ class AudioPlus(commands.Cog):
             try:
                 require_voice()
                 vc = await self._connect_voice(channel)
-                player = GuildPlayer(vc, self._resolver, self._report_playback_failure)
+                player = GuildPlayer(
+                    vc,
+                    self._resolver,
+                    self._report_playback_failure,
+                    on_idle=self._disconnect_idle_player,
+                )
                 self._players[guild.id] = player
                 await self._restore(player, snapshot)
                 await self._stage_unsuppress_if_needed(guild, channel)
@@ -521,11 +589,9 @@ class AudioPlus(commands.Cog):
     @GUILD_ONLY
     async def audio_tone(self, ctx: commands.Context):
         """Queue a direct MP3 to test native playback independently of YouTube."""
-        player, _ = await self._fetch_or_connect_player(ctx)
-        tracks = await self._load_tracks(
-            "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+        tracks = await self._queue_query(
+            ctx, "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
         )
-        await self._enqueue(player, tracks, ctx)
         await self._reply_queued(ctx, tracks)
 
     @audio.command(name="join", aliases=["connect", "summon"])
@@ -552,13 +618,13 @@ class AudioPlus(commands.Cog):
 
         Plain terms search YouTube. Use scsearch: for SoundCloud. YouTube playlists queue
         up to 100 tracks. Signed stream URLs are resolved when each track starts.
+        If you are not in voice, joins the available voice channel with the most people.
+        Disconnects after the queue has been empty for 10 seconds.
         """
         query = self._normalize_query(query)
-        player, _ = await self._fetch_or_connect_player(ctx)
-        tracks = await self._load_tracks(query)
+        tracks = await self._queue_query(ctx, query)
         if not tracks:
             return await self._reply(ctx, "No results.", tone="warning")
-        await self._enqueue(player, tracks, ctx)
         await self._reply_queued(ctx, tracks)
 
     @audio.command(name="skip", aliases=["next", "s"])
@@ -697,7 +763,7 @@ class AudioPlus(commands.Cog):
     @GUILD_ONLY
     @app_commands.describe(query="Song name, media URL, or YouTube playlist URL.")
     async def play(self, ctx: commands.Context, *, query: str):
-        """Search for music or queue tracks from a URL."""
+        """Play music in your voice channel or the available channel with the most people."""
         return await self._invoke_control(ctx, self.audio_play, query=query)
 
     @commands.hybrid_command(name="join", aliases=["connect", "summon"])
@@ -839,5 +905,5 @@ class AudioPlus(commands.Cog):
         if member.id != getattr(self.bot.user, "id", None) or after.channel is not None:
             return
         player = self._players.get(member.guild.id)
-        if player and not player.voice.is_connected():
+        if player and not player.closed and not player.voice.is_connected():
             await self._dispose_player(member.guild.id)

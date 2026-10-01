@@ -33,6 +33,8 @@ class FakeVoice:
     async def _disconnect(self, **kwargs):
         self.connected = False
         self.stop()
+        if getattr(self.guild, "voice_client", None) is self:
+            self.guild.voice_client = None
 
     def is_connected(self):
         return self.connected

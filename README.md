@@ -58,7 +58,7 @@ Read the cog's guide before loading it on an existing server. Some features star
 
 | Cog | Initial behavior |
 | --- | --- |
-| AudioPlus | Runs music search and playback locally with `[p]play` or `/play`. Unload Red's bundled Audio cog before loading AudioPlus. Check dependencies with `[p]audiostatus`; enable and sync slash commands once as the bot owner. |
+| AudioPlus | Runs music search and playback locally with `[p]play` or `/play`. Joins your voice channel, or the available channel with the most people if you are not in voice. Disconnects after the queue is idle for 10 seconds. Unload Red's bundled Audio cog before loading AudioPlus. Check dependencies with `[p]audiostatus`; enable and sync slash commands once as the bot owner. |
 | CommunityPlus | Sticky roles, activity tracking, and solo voice cleanup are enabled. Solo voice cleanup defaults to 900 seconds. Autorole and welcome/goodbye targets need to be configured. |
 | LevelPlus | Message, reaction, and voice XP are enabled, along with level-up announcements. |
 | LogPlus | Needs a destination channel or route before it can post logs. |

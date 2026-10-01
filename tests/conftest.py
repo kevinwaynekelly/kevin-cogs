@@ -41,6 +41,8 @@ def make_channel(guild, channel_id=456, kind=discord.TextChannel):
     channel.name = f"channel-{channel_id}"
     channel.mention = f"<#{channel_id}>"
     channel.members = []
+    if kind is discord.VoiceChannel:
+        channel.user_limit = 0
     channel.parent_id = None
     channel.parent = None
     channel.permissions_for.return_value = discord.Permissions.all()
@@ -49,6 +51,10 @@ def make_channel(guild, channel_id=456, kind=discord.TextChannel):
     channel.webhooks = AsyncMock(return_value=[])
     channel.create_webhook = AsyncMock()
     guild.channels.append(channel)
+    if kind is discord.VoiceChannel:
+        guild.voice_channels.append(channel)
+    elif kind is discord.StageChannel:
+        guild.stage_channels.append(channel)
     return channel
 
 

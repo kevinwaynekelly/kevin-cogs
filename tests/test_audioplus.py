@@ -25,7 +25,11 @@ async def audio_runtime(bot, guild):
     voice.guild, voice.channel = guild, channel
     guild.voice_client = voice
     player = GuildPlayer(
-        voice, cog._resolver, cog._report_playback_failure, source_factory=FakeSource
+        voice,
+        cog._resolver,
+        cog._report_playback_failure,
+        source_factory=FakeSource,
+        on_idle=cog._disconnect_idle_player,
     )
     cog._players[guild.id] = player
     cog._resolver.resolve = AsyncMock(side_effect=lambda tr: SimpleNamespace(url=tr.uri))

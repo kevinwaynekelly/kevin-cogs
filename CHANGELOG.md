@@ -2,6 +2,13 @@
 
 Changes recorded here start with the repository's documentation and metadata pass. Earlier implementation history is available in Git commits.
 
+## 2026-10-01: AudioPlus automatic voice selection and idle disconnect
+
+- Let direct, slash, and legacy play commands work when the requester is not in voice. Select the available ordinary voice channel with the most people, excluding bots and the AFK channel, and respect channel access and member limits. Keep the requester's own voice channel preferred when present.
+- Disconnect after 10 seconds with an empty queue and no active track or lookup. New songs and play/tone searches cancel the timer. Paused tracks, stream preparation, and repeating playback keep the connection active; empty or failed searches release their reservation and allow a fresh idle countdown.
+- Keep timers per guild, recheck ownership/activity at expiry, cancel them on disconnect/unload, and reconnect normally for the next play command. Preserve all command names, arguments, checks, and saved Config defaults.
+- Exercise timer expiry/cancellation, concurrent searches, voice-disconnect events, channel choice, permissions, and reconnects with real player/command lifetimes and mocked Discord transport. Live server behavior still needs a deployment check.
+
 ## 2026-10-01: AudioPlus updates with existing voice libraries
 
 - Treat PyNaCl and davey as required bot-level voice prerequisites instead of reinstalling them into Downloader's package folder on every cog update. Downloader still installs yt-dlp and its matching EJS package. Existing usable voice libraries, including copies installed by Downloader, remain supported.
