@@ -10,7 +10,7 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, timezone
 from heapq import nlargest
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import discord
 from discord.ext import commands
@@ -22,6 +22,18 @@ from redbot.core.utils.chat_formatting import humanize_number
 from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
 from .constants import DEFAULTS_GUILD, DEFAULTS_MEMBER, EVENT_COLOR
 from .events import guild_enabled
+from .features import (
+    FEATURE_DEFAULTS,
+    PARTICIPATION_DEFAULTS,
+    CommunityFeatures,
+    RoleMenuView,
+    add_day,
+    local_zone,
+    safe_role,
+    validate_zone,
+    week_key,
+)
+from .interactive import SetupView, close_views
 from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
@@ -30,7 +42,7 @@ log = logging.getLogger(__name__)
 # ------------------------ defaults ------------------------
 
 
-class CommunityPlus(redcommands.Cog):
+class CommunityPlus(CommunityFeatures, redcommands.Cog):
     """Community roles, notices, voice cleanup, and member activity."""
 
     async def cog_command_error(self, ctx, error):
@@ -44,16 +56,24 @@ class CommunityPlus(redcommands.Cog):
         self.bot: Red = bot
         self._presentation = Presentation("CommunityPlus", "community")
         self.config: Config = Config.get_conf(self, identifier=0xC0DE505, force_registration=True)
-        self.config.register_guild(**DEFAULTS_GUILD)
-        self.config.register_member(**DEFAULTS_MEMBER)
+        self.config.register_guild(**DEFAULTS_GUILD, features=FEATURE_DEFAULTS)
+        self.config.register_member(**DEFAULTS_MEMBER, participation=PARTICIPATION_DEFAULTS)
         self._solo_tasks = {}
         self._startup_task = None
+        self._maintenance_task = None
+        self._voice_sessions = {}
+        self._voice_locks = defaultdict(asyncio.Lock)
+        self._role_locks = defaultdict(asyncio.Lock)
+        self._digest_locks = defaultdict(asyncio.Lock)
+        self._role_views = {}
+        self._views = set()
         self._settings_cache = {}
         self._settings_locks = defaultdict(asyncio.Lock)
 
     async def _restore_solo_timers(self):
         await self.bot.wait_until_red_ready()
         for guild in self.bot.guilds:
+            await self._restore_role_menus(guild)
             if await self.bot.cog_disabled_in_guild(self, guild):
                 continue
             for channel in (*guild.voice_channels, *guild.stage_channels):
@@ -197,6 +217,15 @@ class CommunityPlus(redcommands.Cog):
             inline=False,
         )
         e.set_footer(text="Use [p]community help for commands.")
+        e.add_field(
+            name="Community features",
+            value=settings(
+                f"Self-service roles = {len(g['features']['self_roles'])}\n"
+                f"Solo warning = {g['features']['warning_seconds']}s\n"
+                f"Weekly digest = {g['features']['summary']['enabled']}"
+            ),
+            inline=False,
+        )
         return e
 
     @staticmethod
@@ -830,6 +859,279 @@ class CommunityPlus(redcommands.Cog):
             await self._refresh_solo_for_channel(channel)
         await self._presentation.confirm(ctx)
 
+    @redcommands.hybrid_command(name="roles")
+    @redcommands.guild_only()
+    async def roles(self, ctx):
+        """Choose your configured self-service roles."""
+        roles = await self._self_roles(ctx.guild)
+        if not roles:
+            return await self._reply(ctx, "No self-service roles are configured.", tone="warning")
+        view = RoleMenuView(self, ctx.guild, roles, owner_id=ctx.author.id)
+        view.message = await self._reply(
+            ctx,
+            "Choose all the self-service roles you want. Unselected configured roles are removed.",
+            title="Your roles",
+            view=view,
+        )
+
+    @redcommands.hybrid_command(name="voicehours")
+    @redcommands.guild_only()
+    @redcommands.admin_or_permissions(manage_guild=True)
+    async def voicehours(self, ctx, member: Optional[discord.Member] = None):
+        """Show recorded voice time for a member."""
+        member = member or ctx.author
+        if member.voice and member.voice.channel:
+            await self._track_voice(member, member.voice.channel)
+        data = await self.config.member(member).participation()
+        await self._reply(
+            ctx, f"{member.mention} · {data['voice_seconds'] / 3600:.2f} voice hours."
+        )
+
+    @com.group(name="rolemenu", autohelp=False)
+    async def rolemenu(self, ctx):
+        """Configure safe self-service role menus."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
+
+    @rolemenu.command(name="add")
+    async def rolemenu_add(self, ctx, role: discord.Role):
+        """Offer a safe role for members to select."""
+        safe_role(ctx.guild, role)
+        async with self.config.guild(ctx.guild).features() as features:
+            if role.id not in features["self_roles"]:
+                if len(features["self_roles"]) >= 25:
+                    raise redcommands.BadArgument("At most 25 self-service roles can be offered.")
+                features["self_roles"].append(role.id)
+        await self._refresh_role_menus(ctx.guild)
+        await self._presentation.confirm(ctx)
+
+    @rolemenu.command(name="remove")
+    async def rolemenu_remove(self, ctx, role: discord.Role):
+        """Stop offering a role without removing assignments."""
+        async with self.config.guild(ctx.guild).features() as features:
+            if role.id in features["self_roles"]:
+                features["self_roles"].remove(role.id)
+        await self._refresh_role_menus(ctx.guild)
+        await self._presentation.confirm(ctx)
+
+    @rolemenu.command(name="list")
+    async def rolemenu_list(self, ctx):
+        """List available roles and persistent menu messages."""
+        conf = await self.config.guild(ctx.guild).features()
+        await self._reply(
+            ctx, "\n".join(f"<@&{rid}>" for rid in conf["self_roles"]) or "No roles configured."
+        )
+        if conf["role_menus"]:
+            await self._reply(
+                ctx,
+                "\n".join(
+                    f"https://discord.com/channels/{ctx.guild.id}/{entry['channel']}/{entry['message']}"
+                    for entry in conf["role_menus"]
+                ),
+                title="Posted role menus",
+            )
+
+    @rolemenu.command(name="post")
+    async def rolemenu_post(self, ctx, channel: discord.TextChannel):
+        """Post a role picker that survives cog reloads."""
+        roles = await self._self_roles(ctx.guild)
+        if not roles:
+            raise redcommands.BadArgument("Add a safe role before posting a menu.")
+        async with self.config.guild(ctx.guild).features() as features:
+            if len(features["role_menus"]) >= 10:
+                raise redcommands.BadArgument(
+                    "At most ten posted menus are retained. Use rolemenu unpost first."
+                )
+            view = RoleMenuView(self, ctx.guild, roles, message_id=0)
+            try:
+                message = await self._presentation.send(
+                    channel,
+                    "Choose all the self-service roles you want. Unselected configured roles are removed.",
+                    title="Choose your roles",
+                    view=view,
+                )
+            except Exception:
+                view.stop()
+                raise
+            features["role_menus"].append({"channel": channel.id, "message": message.id})
+            self._role_views[message.id] = view
+        await self._presentation.confirm(ctx)
+
+    @rolemenu.command(name="unpost")
+    async def rolemenu_unpost(self, ctx, message_id: str):
+        """Remove a saved role menu and disable its picker."""
+        if not message_id.isdecimal():
+            raise redcommands.BadArgument("Supply the numeric message ID from rolemenu list.")
+        mid = int(message_id)
+        async with self.config.guild(ctx.guild).features() as features:
+            entry = next((row for row in features["role_menus"] if row["message"] == mid), None)
+            if entry is None:
+                raise redcommands.BadArgument("That message is not a saved menu in this server.")
+            features["role_menus"].remove(entry)
+        view = self._role_views.pop(mid, None)
+        if view:
+            view.stop()
+        channel = ctx.guild.get_channel(entry["channel"])
+        if isinstance(channel, discord.TextChannel):
+            try:
+                await (await channel.fetch_message(mid)).edit(view=None)
+            except discord.HTTPException:
+                pass
+        await self._presentation.confirm(ctx)
+
+    @com.command(name="tracking")
+    async def tracking(self, ctx, enabled: bool):
+        """Enable or stop collection of member activity."""
+        if not enabled:
+            for member in ctx.guild.members:
+                if (ctx.guild.id, member.id) in self._voice_sessions:
+                    await self._track_voice(member, None)
+        await self.config.guild(ctx.guild).seen.enabled.set(enabled)
+        self._settings_cache.pop(ctx.guild.id, None)
+        if enabled:
+            for channel in (*ctx.guild.voice_channels, *ctx.guild.stage_channels):
+                for member in channel.members:
+                    if not member.bot:
+                        await self._track_voice(member, channel)
+        await self._presentation.confirm(ctx)
+
+    @com_vc.command(name="notify")
+    async def solo_notify(self, ctx, enabled: bool):
+        """Enable or disable solo voice timeout DMs."""
+        await self.config.guild(ctx.guild).vcsolo.dm_notify.set(enabled)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @com_vc.command(name="warning")
+    async def solo_warning(self, ctx, seconds: int):
+        """Warn by DM this many seconds before a solo timeout."""
+        if not 0 <= seconds <= 3600:
+            raise redcommands.BadArgument("Use 0 to disable, or up to 3600 seconds before timeout.")
+        async with self.config.guild(ctx.guild).features() as features:
+            features["warning_seconds"] = seconds
+        await self._reset_solo(ctx.guild)
+        await self._presentation.confirm(ctx)
+
+    @com_vc.command(name="exemptchannel")
+    async def solo_exempt_channel(
+        self, ctx, channel: Union[discord.VoiceChannel, discord.StageChannel], enabled: bool = True
+    ):
+        """Exempt a voice or Stage channel from solo cleanup."""
+        await self._set_solo_exemption(ctx.guild, "solo_channels", channel.id, enabled)
+        await self._presentation.confirm(ctx)
+
+    @com_vc.command(name="exemptrole")
+    async def solo_exempt_role(self, ctx, role: discord.Role, enabled: bool = True):
+        """Exempt role holders from solo voice cleanup."""
+        await self._set_solo_exemption(ctx.guild, "solo_roles", role.id, enabled)
+        await self._presentation.confirm(ctx)
+
+    async def _set_solo_exemption(self, guild, key, uid, enabled):
+        async with self.config.guild(guild).features() as features:
+            values = features[key]
+            if enabled and uid not in values:
+                values.append(uid)
+            elif not enabled and uid in values:
+                values.remove(uid)
+        await self._reset_solo(guild)
+
+    async def _reset_solo(self, guild):
+        self._settings_cache.pop(guild.id, None)
+        await self._cancel_guild_timers(guild.id)
+        for channel in (*guild.voice_channels, *guild.stage_channels):
+            await self._refresh_solo_for_channel(channel)
+
+    @com.group(name="summary", autohelp=False)
+    async def summary(self, ctx):
+        """Inspect and schedule weekly participation summaries."""
+        if ctx.invoked_subcommand is None:
+            await self._presentation.help(ctx)
+
+    @summary.command(name="show")
+    async def summary_show(self, ctx):
+        """Show message and voice totals for the past seven days."""
+        for member in ctx.guild.members:
+            if (ctx.guild.id, member.id) in self._voice_sessions:
+                await self._track_voice(member, member.voice.channel if member.voice else None)
+        await self._reply(ctx, embed=await self._summary_embed(ctx.guild))
+
+    @summary.command(name="channel")
+    async def summary_channel(self, ctx, channel: Optional[discord.TextChannel] = None):
+        """Set or clear the weekly summary destination."""
+        async with self.config.guild(ctx.guild).features() as features:
+            features["summary"]["channel"] = channel.id if channel else None
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @summary.command(name="enable")
+    async def summary_enable(self, ctx, enabled: bool):
+        """Enable or disable the opt-in weekly digest."""
+        async with self.config.guild(ctx.guild).features() as features:
+            conf = features["summary"]
+            if enabled and not isinstance(
+                ctx.guild.get_channel(conf["channel"]), discord.TextChannel
+            ):
+                raise redcommands.BadArgument("Set a summary channel first.")
+            conf["enabled"] = enabled
+            conf["last_week"] = week_key(time.time(), conf)[0]
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @summary.command(name="schedule")
+    async def summary_schedule(
+        self, ctx, weekday: int = 0, hour: int = 9, zone: str = "America/Chicago"
+    ):
+        """Set weekly digest day (Monday=0), hour, and timezone."""
+        if not 0 <= weekday <= 6 or not 0 <= hour <= 23:
+            raise redcommands.BadArgument("Use weekday 0..6 (Monday..Sunday) and hour 0..23.")
+        validate_zone(zone)
+        async with self.config.guild(ctx.guild).features() as features:
+            conf = features["summary"]
+            conf.update(weekday=weekday, hour=hour, timezone=zone)
+            conf["last_week"] = week_key(time.time(), conf)[0]
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
+
+    @com.command(name="setup")
+    async def setup(self, ctx):
+        """Open guided community channel, role, and tracking setup."""
+
+        async def update(ctx, key, value):
+            if key == "autorole":
+                role = ctx.guild.get_role(value)
+                if role is None:
+                    raise redcommands.BadArgument("That role is unavailable.")
+                safe_role(ctx.guild, role)
+                await self.config.guild(ctx.guild).autorole.role_id.set(value)
+            elif key == "tracking":
+                await self.tracking.callback(self, ctx, enabled=value)
+            elif key == "solo":
+                await self.config.guild(ctx.guild).vcsolo.enabled.set(value)
+                await self._reset_solo(ctx.guild)
+            else:
+                await getattr(self.config.guild(ctx.guild), key).channel_id.set(value)
+            self._settings_cache.pop(ctx.guild.id, None)
+
+        view = SetupView(
+            self,
+            ctx,
+            "community setup",
+            [
+                ("welcome", "Welcome channel", "text"),
+                ("cya", "Goodbye channel", "text"),
+                ("autorole", "Join role", "role"),
+                ("tracking", "Activity tracking", "toggle"),
+                ("solo", "Solo voice cleanup", "toggle"),
+            ],
+            update,
+        )
+        view.message = await self._reply(
+            ctx,
+            "Choose channels, a safe join role, and activity preferences.",
+            title="Setup",
+            view=view,
+        )
+
     # Seen & Stats Commands
     @com.command(name="seen")
     async def com_seen(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
@@ -1054,6 +1356,8 @@ class CommunityPlus(redcommands.Cog):
     @commands.Cog.listener()
     @guild_enabled
     async def on_member_remove(self, member: discord.Member) -> None:
+        await self._track_voice(member, None)
+        await self._cancel_task_for_member(member.id, member.guild.id)
         g = await self._settings(member.guild)
         # Sticky Snapshot: FIX APPLIED HERE
         if g["sticky"]["enabled"]:
@@ -1103,18 +1407,44 @@ class CommunityPlus(redcommands.Cog):
             return
         channel_id = member.voice.channel.id if member.voice and member.voice.channel else None
 
+        async def eligible():
+            if await self.bot.cog_disabled_in_guild(self, member.guild):
+                return False
+            conf = await self._settings(member.guild)
+            if not conf["vcsolo"]["enabled"] or not member.voice or not member.voice.channel:
+                return False
+            channel = member.voice.channel
+            humans = [m for m in channel.members if not m.bot]
+            return (
+                channel.id == channel_id
+                and len(humans) == 1
+                and humans[0].id == member.id
+                and not self._solo_exempt(member, conf["features"])
+            )
+
         async def disconnect():
             try:
-                await asyncio.sleep(wait_s)
-                if await self.bot.cog_disabled_in_guild(self, member.guild):
+                deadline = time.monotonic() + wait_s
+                conf = await self._settings(member.guild)
+                warning = min(conf["features"]["warning_seconds"], max(0, wait_s - 1))
+                await asyncio.sleep(wait_s - warning)
+                if warning:
+                    if not await eligible():
+                        return
+                    if (await self._settings(member.guild))["vcsolo"]["dm_notify"]:
+                        try:
+                            await self._presentation.send(
+                                member,
+                                f"You are alone in {member.guild.name}. Disconnecting in {warning}s if you stay alone.",
+                                title="Voice timeout warning",
+                                tone="warning",
+                            )
+                        except discord.HTTPException:
+                            pass
+                    await asyncio.sleep(max(0, deadline - time.monotonic()))
+                if not await eligible():
                     return
                 settings = (await self._settings(member.guild))["vcsolo"]
-                if not settings["enabled"] or not member.voice or not member.voice.channel:
-                    return
-                channel = member.voice.channel
-                humans = [m for m in channel.members if not m.bot]
-                if channel.id != channel_id or len(humans) != 1 or humans[0].id != member.id:
-                    return
                 await member.move_to(None, reason="Solo VC timeout")
                 if settings["dm_notify"]:
                     try:
@@ -1139,9 +1469,14 @@ class CommunityPlus(redcommands.Cog):
     async def _refresh_solo_for_channel(self, channel):
         if channel is None:
             return
-        settings = (await self._settings(channel.guild))["vcsolo"]
+        conf = await self._settings(channel.guild)
+        settings = conf["vcsolo"]
         humans = [m for m in channel.members if not m.bot]
-        if settings["enabled"] and len(humans) == 1:
+        if (
+            settings["enabled"]
+            and len(humans) == 1
+            and not self._solo_exempt(humans[0], conf["features"])
+        ):
             await self._schedule_solo_disconnect(humans[0], int(settings["idle_seconds"]))
         else:
             for member in channel.members:
@@ -1151,6 +1486,8 @@ class CommunityPlus(redcommands.Cog):
     @guild_enabled
     async def on_voice_state_update(self, member, before, after):
         settings = await self._settings(member.guild)
+        if not member.bot and before.channel != after.channel:
+            await self._track_voice(member, after.channel)
         if not member.bot and settings["seen"]["enabled"]:
             counters = {}
             if before.channel is None and after.channel is not None:
@@ -1176,20 +1513,41 @@ class CommunityPlus(redcommands.Cog):
         if not after.bot and (await self._settings(after.guild))["seen"]["enabled"]:
             await self._handle_presence_update_logic(before, after)
 
+    @commands.Cog.listener()
+    @guild_enabled
+    async def on_member_update(self, before, after):
+        if before.roles != after.roles and after.voice and after.voice.channel:
+            await self._refresh_solo_for_channel(after.voice.channel)
+
     async def cog_load(self):
         self._startup_task = asyncio.create_task(
             self._restore_solo_timers(), name="communityplus-restore"
+        )
+        self._maintenance_task = asyncio.create_task(
+            self._maintenance(), name="communityplus-maintenance"
         )
 
     async def cog_unload(self):
         tasks = list(self._solo_tasks.values())
         if self._startup_task:
             tasks.append(self._startup_task)
+        if self._maintenance_task:
+            tasks.append(self._maintenance_task)
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._solo_tasks.clear()
+        for gid, uid in list(self._voice_sessions):
+            guild = self.bot.get_guild(gid)
+            member = guild.get_member(uid) if guild else None
+            if member:
+                await self._track_voice(member, None)
+        await close_views(self)
+        for view in self._role_views.values():
+            view.stop()
+        self._role_views.clear()
+        self._voice_sessions.clear()
         self._settings_cache.clear()
 
     async def cog_before_invoke(self, ctx):
@@ -1214,6 +1572,7 @@ class CommunityPlus(redcommands.Cog):
             return settings
 
     async def _record_activity(self, member, kind, where=0, counters=None):
+        zone = (await self._settings(member.guild))["features"]["summary"]["timezone"]
         async with self.config.member(member).all() as data:
             seen = data.setdefault("seen", deepcopy(DEFAULTS_MEMBER["seen"]))
             now = self._now_ts()
@@ -1225,6 +1584,9 @@ class CommunityPlus(redcommands.Cog):
             stats = data.setdefault("stats", deepcopy(DEFAULTS_MEMBER["stats"]))
             for key, increment in (counters or {}).items():
                 stats[key] = int(stats.get(key, 0)) + increment
+            if kind == "message":
+                day = datetime.fromtimestamp(now, local_zone(zone)).date().isoformat()
+                add_day(data["participation"], day, messages=(counters or {}).get("messages", 0))
 
     async def _cancel_guild_timers(self, guild_id):
         for key in list(self._solo_tasks):
@@ -1235,8 +1597,10 @@ class CommunityPlus(redcommands.Cog):
     async def red_delete_data_for_user(self, *, requester, user_id):
         for guild_id in await self.config.all_members():
             group = self.config.member_from_ids(guild_id, user_id)
-            async with group.get_lock():
-                await group.clear()
+            async with self._voice_locks[(guild_id, user_id)]:
+                self._voice_sessions.pop((guild_id, user_id), None)
+                async with group.get_lock():
+                    await group.clear()
         for key in list(self._solo_tasks):
             if key[1] == user_id:
                 self._solo_tasks.pop(key).cancel()
@@ -1254,5 +1618,11 @@ class CommunityPlus(redcommands.Cog):
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         await self._cancel_guild_timers(guild.id)
+        for key in list(self._voice_sessions):
+            if key[0] == guild.id:
+                self._voice_sessions.pop(key, None)
+        for mid, view in list(self._role_views.items()):
+            if view.guild_id == guild.id:
+                self._role_views.pop(mid).stop()
         self._settings_cache.pop(guild.id, None)
         self._settings_locks.pop(guild.id, None)

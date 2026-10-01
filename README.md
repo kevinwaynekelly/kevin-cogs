@@ -84,6 +84,8 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]rank [@member]` | `/rank` | Member level, XP, and progress. |
 | `[p]leaderboard [top]` | `/leaderboard` | Highest XP totals. Text alias: `lb`. |
 | `[p]levellookup <query>` | `/levellookup` | Find member IDs by mention, ID, or name. |
+| `[p]roles` | `/roles` | Choose configured safe self-service roles. |
+| `[p]voicehours [@member]` | `/voicehours` | Recorded voice duration. |
 | `[p]seen [@member]` | `/seen` | Last-seen information. |
 | `[p]seendetail [@member]` | `/seendetail` | Detailed activity timestamps. |
 | `[p]activity [@member]` | `/activity` | Activity counters and games. Text alias: `stats`. |
@@ -92,7 +94,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community and logging shortcuts retain administrator checks. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 142 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
+Community and logging shortcuts retain administrator checks. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 159 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 

@@ -62,4 +62,9 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
         from owoplus.features import FEATURE_DEFAULTS
 
         assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS
+    if package == "communityplus":
+        from communityplus.features import FEATURE_DEFAULTS, PARTICIPATION_DEFAULTS
+
+        assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS
+        assert defaults["MEMBER"].pop("participation") == PARTICIPATION_DEFAULTS
     assert defaults == BASELINE[package]["defaults"]

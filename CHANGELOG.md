@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Community feature expansion
+
+- Add safe self-service role menus with persistent message registration, bounded offers/menus, current clicker checks, and refreshed options. Keep unrelated and no-longer-offered roles unchanged.
+- Add solo channel/role exemptions, optional warnings without extending deadlines, DM and tracking controls, voice duration checkpoints, 35 daily participation buckets, and opt-in weekly digests with saved cursors.
+- Add direct/slash roles and voicehours plus guided setup. Merge additive guild/member defaults, preserve existing settings and counters, and include duration/rollup data in user-data hooks. Validate role escalation prevention, reloads, DST date boundaries, timer cancellation, tracking switches, summary failures, and original command compatibility.
+
 ## 2026-10-01: Owo feature expansion
 
 - Add all-channel/allowlist scopes, exclusions with thread inheritance, persistent personal opt-outs, member owoify/haiku commands, and requester-bound guided setup. Manual transformations leave source messages alone.

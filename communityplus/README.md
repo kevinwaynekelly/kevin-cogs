@@ -9,7 +9,7 @@ Commands, confirmations, welcome/goodbye notices, and voice-timeout DMs use the 
 
 ## Setup
 
-All `community` commands and direct activity shortcuts run in a server and require a Red admin or **Manage Server** permission. `restore` and `invites` additionally require the bot owner.
+All `community` commands and direct activity shortcuts run in a server and require a Red admin or **Manage Server** permission. The direct `roles` command and posted role pickers are available to members. `restore` and `invites` additionally require the bot owner.
 
 The cog starts with solo voice disconnection enabled. To disable it while configuring the other features:
 
@@ -50,7 +50,7 @@ Managed/integration roles and `@everyone` are excluded from sticky restoration. 
 
 These shortcuts retain the permissions and disabled state of their grouped versions. The renamed root is `community`; the old `com` name is removed. Installation and reload still use `communityplus`.
 
-Enable the 34 slash actions once as the bot owner:
+Enable the 51 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog communityplus
@@ -60,6 +60,38 @@ Enable the 34 slash actions once as the bot owner:
 Use `/community status` for settings. Autorole, sticky-role enable/disable/purge, welcome/goodbye, solo voice, diagnostics, activity, CSV export, and embed settings have slash versions. For example, `/community autorole set` accepts a role, `/community welcome preview` accepts an optional member, and `/community vcsolo idle` accepts seconds. Slash requests are acknowledged before settings I/O.
 
 `community sticky ignore ...` remains text-only because its nesting exceeds Discord's slash limit. Owner recovery and invite commands also remain text-only. Slash groups have no bare-group action; use the offered subcommands. After updates, reload `communityplus` and run `slash sync` again. Custom Red rules referencing `com ...` need to be reapplied under `community ...`.
+
+## Role menus, voice time, and weekly summaries
+
+These additions have slash equivalents and use the same theme. `roles` is a member command; other commands below require administrator access.
+
+| Command | Purpose |
+| --- | --- |
+| `[p]roles` | Open a personal self-service role picker. |
+| `[p]voicehours [@Member]` | Show recorded lifetime voice hours. |
+| `[p]community rolemenu add @Role` / `remove @Role` / `list` | Offer up to 25 safe self-service roles. Removing an offer leaves assignments alone. |
+| `[p]community rolemenu post #channel` | Post a persistent picker, with at most ten saved menus per server. |
+| `[p]community rolemenu unpost <message_id>` | Forget a posted menu and attempt to disable its controls. |
+| `[p]community tracking <enabled>` | Start or stop activity collection without deleting previous records. |
+| `[p]community vcsolo exemptchannel <channel> [enabled=True]` | Exempt a voice or Stage channel, or remove the exemption with `False`. |
+| `[p]community vcsolo exemptrole @Role [enabled=True]` | Exempt members with that role. |
+| `[p]community vcsolo warning <seconds>` | Send an optional warning before timeout. `0` disables it, maximum `3600`. |
+| `[p]community vcsolo notify <enabled>` | Control warning and timeout DMs. |
+| `[p]community summary show` | Show the latest seven calendar days of participation, including today. |
+| `[p]community summary channel [#channel]` | Set or clear the weekly digest channel. |
+| `[p]community summary enable <enabled>` | Enable or disable scheduled digests, disabled by default. |
+| `[p]community summary schedule [weekday=0] [hour=9] [zone=America/Chicago]` | Choose Monday=0 through Sunday=6, local hour 0..23, and an installed IANA timezone. |
+| `[p]community setup` | Open channel/role pickers and tracking/solo-cleanup toggles. |
+
+Self-service roles must be unmanaged, below the bot, and free of server management or moderation permissions. Each click checks the actual member, current Red command permissions, disabled state, and the current safe-role list. Selection only changes configured safe roles. Posted menus resume after reload, and configuration changes refresh their options when Discord allows editing. A role that becomes privileged is rejected even by an old menu. Personal pickers and setup panels expire after three minutes; posted pickers remain registered until removed or the cog unloads.
+
+Voice time counts connected humans, including muted members and Stage listeners. Active sessions checkpoint every minute and on moves, leaves, reports, and clean unload. A crash can lose the interval since the last checkpoint, and time while Red is offline or tracking is disabled is not reconstructed. Daily message/voice totals retain at most 35 dated buckets per member, with lifetime voice seconds stored separately. Local midnight and daylight-saving boundaries use the digest timezone. Changing that timezone affects future buckets and does not rewrite previous dates. Turning tracking off leaves welcome, roles, and solo cleanup active.
+
+Solo exemptions are checked again at the warning and timeout. Warnings are capped below the idle duration and do not extend its deadline. Changing solo settings rebuilds the timers; mute, deafen, and camera changes keep the current deadline. DMs need the member's DM permissions and can fail without preventing cleanup.
+
+Weekly digests include the last seven completed calendar days, total messages/voice hours, active members, and separate top-five lists for current members. Enabling or rescheduling waits until the next weekly boundary. A saved weekly cursor prevents ordinary reloads from repeating delivered summaries; after downtime, at most the current due week is sent. Failed sends retry on the next maintenance cycle. Like other Discord sends, a process crash immediately after delivery but before saving its cursor can repeat that send. Mention notifications are suppressed.
+
+The additive `features` guild section and `participation` member section merge through Red defaults. Existing settings, sticky roles, counters, and timestamps are preserved. The new daily counters start with this update and do not infer history from lifetime counts.
 
 ## Grouped text commands
 
@@ -104,6 +136,6 @@ Welcome and goodbye templates support `{user}`, `{mention}`, `{server}`, `{count
 
 ## Stored data and current limits
 
-Red Config stores server settings and IDs for channels/roles, message templates, and per-member data keyed by server and user IDs. Member data includes the first-seen flag, sticky role IDs, event timestamps and channel IDs, presence/platform statuses, last-online/offline times, counters, and game names with launch counts. Ordinary message contents are not saved.
+Red Config stores server settings and IDs for channels/roles, message templates, posted self-role menu IDs, solo exemptions, and digest schedules/cursors. Per-member data includes the first-seen flag, sticky role IDs, event timestamps and channel IDs, presence/platform statuses, last-online/offline times, counters, game names with launch counts, lifetime voice seconds, and up to 35 daily message/voice buckets. Ordinary message contents are not saved.
 
-`seenlistcsv` exports a summary for current members, not every stored record. `sticky purge` clears only saved roles. Red's user-data export hook returns all stored records for that user across servers. Its deletion hook clears those records and cancels pending timers for the user. There is no command to toggle seen tracking or solo-disconnect DMs; their existing Config settings are respected. Statistics reflect events observed while the cog is running, not a historical Discord backfill. Presence duration tracks actual status changes rather than every activity update. Seen lists paginate and exports read member records in one batch.
+`seenlistcsv` exports a summary for current members, not every stored record. `sticky purge` clears only saved roles. Red's user-data export hook returns all stored records for that user across servers. Its deletion hook clears those records and cancels pending timers and the current voice accounting interval for the user. Future observed activity can create new records. Use `community tracking` and `community vcsolo notify` to control collection and DMs. Statistics reflect events observed while the cog is running, without historical Discord backfill. Presence duration tracks actual status changes rather than every activity update. Seen lists paginate and exports read member records in one batch.

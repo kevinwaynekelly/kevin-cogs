@@ -9,7 +9,8 @@ __red_end_user_data_statement__ = (
     "solo-voice idle settings, and compact-embed preference. It also stores, per member, last-seen timestamps for "
     "message/voice/join/leave/presence, presence status history (last online/offline), and counters for messages sent, "
     "voice joins/moves/leaves, stream/video starts, activity starts (playing/streaming/listening/watching/competing/custom), "
-    "and per-game launch counts. No message contents are stored."
+    "and per-game launch counts. It also stores lifetime voice seconds and bounded daily participation totals, "
+    "self-role menu IDs, solo exemptions, and weekly digest settings. No message contents are stored."
 )
 
 DEFAULTS_GUILD = {
