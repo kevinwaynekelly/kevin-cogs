@@ -8,7 +8,7 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 
 | Cog | What it does | Command group | Guide |
 | --- | --- | --- | --- |
-| AudioPlus | Lavalink music playback, queues, and voice diagnostics | `[p]audio` | [Setup and commands](audioplus/README.md) |
+| AudioPlus | Native Discord music playback, YouTube/SoundCloud search, queues, and voice diagnostics | `[p]audio` | [Setup and commands](audioplus/README.md) |
 | CommunityPlus | Autoroles, sticky roles, welcome/goodbye messages, activity tracking, and solo voice cleanup | `[p]com` | [Setup and commands](communityplus/README.md) |
 | LevelPlus | Message, reaction, and voice XP with configurable level curves and import/export tools | `[p]level` | [Setup and commands](levelplus/README.md) |
 | LogPlus | Server event logs with a default destination and per-channel routing | `[p]logplus` | [Setup and commands](logplus/README.md) |
@@ -39,16 +39,16 @@ Install and load the cogs you want. For example:
 [p]load communityplus levelplus logplus owoplus
 ```
 
-AudioPlus can load before a node is configured. Follow the [AudioPlus setup guide](audioplus/README.md), then install it separately:
+AudioPlus can load before its local system dependencies are installed. Follow the [AudioPlus setup guide](audioplus/README.md), then install it separately:
 
 ```text
 [p]cog install kevin-cogs audioplus
 [p]load audioplus
 ```
 
-Cog metadata declares Red **3.5.0 or newer**. AudioPlus requires **Lavalink v4**, **Wavelink >=3.4.1,<4.0.0**, and **aiohttp >=3.8**; Downloader installs the declared Python dependencies. The other cogs have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
+The other cogs declare Red **3.5.0 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**; Downloader installs its declared Python dependencies. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. Restart Red after installing voice dependencies. Its guide includes an optional persistent container image recipe. The other cogs have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
 
-These guides describe the current source. Compatibility metadata is not a record of live testing on every Red, Discord, or Lavalink version.
+These guides describe the current source. Compatibility metadata is not a record of live testing on every Red, Discord, or media-provider version.
 
 ## First setup
 
@@ -56,7 +56,7 @@ Read the cog's guide before loading it on an existing server. Some features star
 
 | Cog | Initial behavior |
 | --- | --- |
-| AudioPlus | Connects when the owner configures a node or playback first needs it; uses the `audio` command name, also used by Red's bundled Audio cog. |
+| AudioPlus | Runs music search and playback locally when a member queues music; uses the `audio` command name, also used by Red's bundled Audio cog. Check dependencies with `[p]audio pingnode`. |
 | CommunityPlus | Sticky roles, activity tracking, and solo voice cleanup are enabled. Solo voice cleanup defaults to 900 seconds. Autorole and welcome/goodbye targets need to be configured. |
 | LevelPlus | Message, reaction, and voice XP are enabled, along with level-up announcements. |
 | LogPlus | Needs a destination channel or route before it can post logs. |
@@ -71,7 +71,7 @@ Common starting points:
 [p]owoplus help
 ```
 
-Server management commands generally require Red's admin access or the **Manage Server** permission. LevelPlus also exposes member commands. AudioPlus node configuration is owner-only; ordinary playback controls are server commands. Each guide lists the permissions required by its features.
+Server management commands generally require Red's admin access or the **Manage Server** permission. LevelPlus also exposes member commands. AudioPlus legacy node commands remain owner-only for compatibility; ordinary native playback controls are server commands. Each guide lists the permissions required by its features.
 
 ## Updates
 
@@ -80,13 +80,13 @@ Server management commands generally require Red's admin access or the **Manage 
 [p]reload communityplus levelplus logplus owoplus
 ```
 
-For AudioPlus, use `[p]cog update audioplus` followed by `[p]reload audioplus`.
+For the AudioPlus native-backend upgrade, use `[p]cog update False audioplus`, install the local dependencies, and restart Red. Later source updates can use `[p]cog update True audioplus`. See its [upgrade instructions](audioplus/README.md#upgrading-from-the-lavalink-backend).
 
 `[p]repo update kevin-cogs` updates the downloaded repository; use `cog update` to update installed cogs. If you named the repository differently when adding it, use that name in repository and installation commands.
 
 ## Data
 
-Settings and persistent records use Red's Config system. CommunityPlus records member activity and sticky roles, LevelPlus retains XP and display names, and OwoPlus stores per-user probability overrides. AudioPlus stores Lavalink connection settings, including the node password.
+Settings and persistent records use Red's Config system. CommunityPlus records member activity and sticky roles, LevelPlus retains XP and display names, and OwoPlus stores per-user probability overrides. AudioPlus preserves legacy Lavalink connection settings, including the old node password, for rollback. Native playback ignores them; track metadata and queues are transient, and audio downloads and yt-dlp disk caching are disabled.
 
 LogPlus does not persist message contents in its Config, but it can post edited or deleted message text to Discord log channels. OwoPlus reposts transformed messages through webhooks and attempts to delete the originals. Each cog's guide and `info.json` describe its stored data. CommunityPlus, LevelPlus, and OwoPlus implement Red's user-data export/deletion hooks. Deletion removes their Config records; it does not delete messages already posted to Discord.
 
@@ -97,4 +97,4 @@ LogPlus does not persist message contents in its Config, but it can post edited 
 - [Report an issue](https://github.com/kevinwaynekelly/kevin-cogs/issues)
 - [Red Downloader documentation](https://docs.discord.red/en/stable/cog_guides/downloader.html)
 
-Each cog has a small `__init__.py` entry point, `cog.py` command/event implementation, `constants.py` defaults, metadata, and a README. Level calculations and haiku detection have separate modules. The regression suite checks real Red Config storage and command registration with mocked Discord calls; CI covers Python 3.10/3.11 and Wavelink 3.4.1/3.5.2. See [CONTRIBUTING.md](CONTRIBUTING.md) for test and benchmark commands.
+Each cog has a small `__init__.py` entry point, `cog.py` command/event implementation, `constants.py` defaults, metadata, and a README. Level calculations and haiku detection have separate modules. The regression suite checks real Red Config storage and command registration with mocked Discord calls, plus local yt-dlp extraction and FFmpeg decoding; CI covers Python 3.10/3.11 with Red 3.5.24 and native voice dependencies. See [CONTRIBUTING.md](CONTRIBUTING.md) for test and benchmark commands.
