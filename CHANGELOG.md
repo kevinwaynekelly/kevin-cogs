@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Custom progression and monthly seasons
+
+- Add administrator-defined achievements with safe role and once-only XP rewards, bounded local-day streak bonuses and member views. Serialize earned rewards with existing XP updates and daily caps.
+- Add automatic monthly closure/winner announcements with bounded archives while preserving lifetime XP, plus role-filtered calendar/lifetime boards.
+- Extend configuration backup validation and user-data hooks for definitions, counters and pending summaries.
+
 ## 2026-10-01: Community rooms and participation tools
 
 - Add bounded join-to-create voice rooms with owner admission/name/capacity controls, restart cleanup and a creation guard for delayed voice state updates.

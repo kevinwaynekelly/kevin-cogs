@@ -42,11 +42,12 @@ from .interactive import SetupView, close_views
 from .levels import cumulative_xp, level_from_xp
 from .milestones import MILESTONE_DEFAULTS, MilestoneCommands
 from .presentation import Presentation, settings
+from .progression import CALENDAR_DEFAULTS, PROGRESS_SETTINGS, ProgressionCommands
 
 log = logging.getLogger(__name__)
 
 
-class LevelPlus(MilestoneCommands, redcommands.Cog):
+class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
     """Member XP, levels, leaderboards, and announcements."""
 
     async def cog_command_error(self, ctx, error):
@@ -65,6 +66,9 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
             **FEATURE_DEFAULTS_GUILD,
             milestone_settings=MILESTONE_DEFAULTS,
             milestones={},
+            progress_settings=PROGRESS_SETTINGS,
+            progress={},
+            season_calendar=CALENDAR_DEFAULTS,
         )
 
         self._settings_cache = {}
@@ -79,9 +83,14 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
         self._closing = False
         self._card_slots = asyncio.Semaphore(2)
         self._card_tasks = set()
+        self._progress_task = None
+        self._progress_log = log
 
     async def cog_unload(self) -> None:
         self._closing = True
+        if self._progress_task:
+            self._progress_task.cancel()
+            await asyncio.gather(self._progress_task, return_exceptions=True)
         for task in tuple(self._card_tasks):
             task.cancel()
         await asyncio.gather(*self._card_tasks, return_exceptions=True)
@@ -137,6 +146,8 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
                     if source and features["periods"]
                     else None
                 )
+                if periods is not None:
+                    await self._roll_month(guild, periods, settings, day, now)
                 if cap is not None and cap["day"] != day.isoformat():
                     cap.update(day=day.isoformat(), xp={})
                 data = await group.xp() if len(updates) > 1 else None
@@ -165,6 +176,18 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
                         bonus = await self._milestone_award(
                             guild, member, amount, source, day, now, old_xp, settings, budget
                         )
+                        remaining = max(0, budget - bonus) if budget is not None else None
+                        bonus += await self._progress_award(
+                            guild,
+                            member,
+                            amount,
+                            source,
+                            day,
+                            now,
+                            new_xp + bonus,
+                            settings,
+                            remaining,
+                        )
                         amount += bonus
                         new_xp += bonus
                         if cap is not None:
@@ -187,7 +210,12 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
         settings = await self._settings(member.guild)
         rewards = settings["rewards"]
         if (
-            not rewards["roles"]
+            (
+                not rewards["roles"]
+                and not any(
+                    goal["role"] for goal in settings["progress_settings"]["goals"].values()
+                )
+            )
             or not member.guild.me
             or not member.guild.me.guild_permissions.manage_roles
         ):
@@ -214,7 +242,8 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
                 if eligible
                 else []
             )
-            add = [role for role in desired if role not in member.roles]
+            desired.extend(await self._custom_reward_roles(member, settings))
+            add = list(dict.fromkeys(role for role in desired if role not in member.roles))
             remove = [role for role in managed if role not in desired and role in member.roles]
             try:
                 if add:
@@ -1502,6 +1531,7 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
     async def cog_load(self):
         self._closing = False
         self.voice_tick.start()
+        self._progress_task = asyncio.create_task(self._progress_loop())
 
     async def cog_before_invoke(self, ctx):
         await prepare_hybrid(ctx)
@@ -1525,6 +1555,7 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
                 "xp_features",
                 "rewards",
                 "milestone_settings",
+                "progress_settings",
             ]
             values = await asyncio.gather(*(group.get_attr(key)() for key in keys))
             settings = dict(zip(keys, values))
@@ -1892,6 +1923,8 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
             group = self.config.guild_from_id(guild_id)
             async with group.xp.get_lock():
                 await group.clear_raw("xp", uid)
+                async with group.progress.get_lock():
+                    await group.progress.clear_raw(uid)
                 async with group.milestones.get_lock():
                     await group.milestones.clear_raw(uid)
             async with group.names.get_lock():
@@ -1900,6 +1933,7 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
                 forget_user(data, uid)
             async with group.earned_today() as data:
                 data["xp"].pop(uid, None)
+        await self._calendar_user_data(user_id, delete=True)
         for cache in (
             self._last_msg,
             self._last_rxn,
@@ -1923,6 +1957,7 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
                 or periods["season"]
                 or periods["archives"]
                 or uid in config["milestones"]
+                or uid in config["progress"]
             ):
                 data[str(guild_id)] = {
                     "xp": config.get("xp", {}).get(uid, 0),
@@ -1930,7 +1965,11 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
                     "periods": periods,
                     "daily_earned": config["earned_today"]["xp"].get(uid, 0),
                     "milestones": config["milestones"].get(uid, {}),
+                    "progress": config["progress"].get(uid, {}),
                 }
+        calendar = await self._calendar_user_data(user_id)
+        if calendar:
+            data["pending_season_announcements"] = calendar
         return {"levelplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
 
     @commands.Cog.listener()

@@ -43,6 +43,7 @@ FIELDS = {
         "rewards",
         "xp_features",
         "milestone_settings",
+        "progress_settings",
     ),
     "LogPlus": (
         "log_channel",
@@ -87,6 +88,7 @@ MAP_PATHS = {
     "features.words",
     "features.syllables",
     "features.channel_styles",
+    "progress_settings.goals",
 }
 ENUMS = {
     "curve": {"linear", "exponential", "constant"},
@@ -97,6 +99,8 @@ ENUMS = {
 RANGES = {
     "continuity.empty_grace": (10, 3600),
     "community_tools.birthdays.hour": (0, 23),
+    "progress_settings.daily_bonus": (0, 100),
+    "progress_settings.max_bonus": (0, 1000),
     "multiplier": (0.1, 10),
     "voice.min_members": (1, 99),
     "message.cooldown": (0, 3600),
@@ -214,6 +218,32 @@ def server_id(guild, value, path, *, role=False, grant=False, text=False):
 
 
 def validate_map(guild, path, value):
+    if path == "progress_settings.goals":
+        if len(value) > 25:
+            fail(path)
+        for name, goal in value.items():
+            if (
+                not re.fullmatch(r"[a-z0-9_-]{1,32}", name)
+                or not isinstance(goal, dict)
+                or set(goal) != {"id", "metric", "target", "reward", "role"}
+            ):
+                fail(path)
+            if (
+                not isinstance(goal["id"], str)
+                or not re.fullmatch(r"[a-f0-9]{12}", goal["id"])
+                or goal["metric"] not in {"xp", "message", "reaction", "voice", "level", "streak"}
+            ):
+                fail(path)
+            if (
+                type(goal["target"]) is not int
+                or not 1 <= goal["target"] <= 1000000000
+                or type(goal["reward"]) is not int
+                or not 0 <= goal["reward"] <= 10000
+            ):
+                fail(path)
+            if goal["role"] is not None:
+                server_id(guild, goal["role"], path, role=True, grant=True)
+        return
     if len(value) > (500 if path == "features.syllables" else 100):
         fail(path)
     for key, item in value.items():
@@ -318,6 +348,7 @@ def validate_fields(guild, expected, incoming, path=""):
                     "levelup.channel_id",
                     "features.summary.channel",
                     "community_tools.birthdays.channel",
+                    "progress_settings.announce_channel",
                 },
             )
     elif isinstance(expected, bool):

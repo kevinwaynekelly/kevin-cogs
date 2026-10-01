@@ -6,7 +6,7 @@ import re
 
 __red_end_user_data_statement__ = (
     "This cog stores per-guild leveling settings, per-user XP totals, and a last-known display name. "
-    "Data persists across leaves/joins to preserve user progress. Admins may export or erase specific users via commands. Added settings include milestone roles, boosts, farming controls, dated earned-XP totals, seasons, and daily caps; Red data hooks export/delete associated user records."
+    "Data persists across leaves/joins to preserve user progress. Admins may export or erase specific users via commands. Added settings include milestone roles, boosts, farming controls, dated earned-XP totals, seasons, and daily caps; Custom achievement definitions and up to 25 active earned goal IDs per user add qualifying activity counters, last active local date, streak length and pending bonuses bounded at 250000 XP. Automatic monthly seasons retain five top-50 archives and up to five pending top-three winner announcements. Red data hooks export/delete associated user records."
 )
 
 DEFAULTS_GUILD = {

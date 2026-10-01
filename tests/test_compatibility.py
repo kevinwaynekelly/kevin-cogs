@@ -62,6 +62,11 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
 
         assert defaults["GUILD"].pop("milestone_settings") == MILESTONE_DEFAULTS
         assert defaults["GUILD"].pop("milestones") == {}
+        from levelplus.progression import CALENDAR_DEFAULTS, PROGRESS_SETTINGS
+
+        assert defaults["GUILD"].pop("progress_settings") == PROGRESS_SETTINGS
+        assert defaults["GUILD"].pop("progress") == {}
+        assert defaults["GUILD"].pop("season_calendar") == CALENDAR_DEFAULTS
         from levelplus.features import FEATURE_DEFAULTS_GUILD
 
         for key, value in FEATURE_DEFAULTS_GUILD.items():

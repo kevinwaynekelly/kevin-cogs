@@ -51,7 +51,7 @@ Changing a curve recalculates displayed levels from existing XP. The multiplier 
 
 These are member commands. Administrator settings stay under `level`, with the existing checks. Direct shortcuts also honor Red permission and disabled-command rules on the original grouped command.
 
-Enable the 66 slash actions once as the bot owner:
+Enable slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog levelplus
@@ -185,3 +185,12 @@ Only positive XP surviving source restrictions, farming protections, and the sha
 `[p]rankcard [@member]` renders a local 900×340 PNG with level, server rank, next-level progress, total XP, and earned achievement count, using the common indigo/mint theme. It requires Attach Files and the cog's `Pillow>=10.4,<13` dependency, respects the original `level show` permission/disabled rules, and keeps the existing text rank command. Rendering is bounded to two tasks and never fetches external avatars or fonts. All new member commands and administrator controls have slash equivalents.
 
 Additive `milestone_settings` and `milestones` sections preserve existing XP/settings. Member records store earned XP, badge IDs/times, one current week's counters/completions, and pending earned rewards. Data hooks export/delete them. XP-only removal/reset commands retain earned badges and challenge records; Red data deletion clears all personal records. Generated rank cards remain in memory until sent and are not saved by the cog.
+
+## Custom progression and automatic seasons
+
+- `[p]achievement create <name> <metric> <target> [reward] [role]` defines one of 25 server goals. Metrics: `xp`, `message`, `reaction`, `voice`, `level`, `streak`. Targets range from 1 to 1 billion; XP rewards from 0 to 10000. Role rewards must be unmanaged, below the bot and without moderation/management permissions; grants recheck safety. Members use `achievement [member]` alongside the existing fixed `achievements` badges. Managers use `achievement delete <name>`; granted rewards remain. Recreation gets a new goal identity. Counts start while custom goals or streaks are enabled, use qualifying awards and exclude bonus XP. Voice counts qualifying award intervals.
+- `[p]streakset true 10 100` enables a daily bonus that grows by 10 XP per consecutive local active day, capped at 100 XP. One bonus per day; skipped days reset the streak. The multiplier stops growing after ten days. Daily step is limited to 100 XP and the maximum to 1000 XP. `[p]streak [member]` shows progress. Existing source/exclusion policies and daily XP caps apply; unpaid earned rewards remain pending, capped at 250000 XP. Goals and streaks are disabled/empty by default and award no extra XP until configured.
+- `[p]monthlyseason true [channel]` archives the current seasonal rankings and starts automatic calendar seasons using the XP timezone. Month changes archive up to 50 leaders, announce the top three if a channel is set, and start a fresh season. Five archives are retained; lifetime XP and the existing calendar boards stay intact. Period tracking must be enabled. Missed months produce one closure for the accumulated season, without replaying empty months. `false` stops automation. Manual season starts still work between monthly boundaries.
+- `[p]roleboard <role> [all|week|month|season] [top]` ranks up to 25 current cached human members of a role. Removed or unavailable members are excluded; reliable membership needs the Members intent.
+
+All additions have slash equivalents and use existing Config namespaces, award serialization, daily caps and user-data deletion/export hooks.
