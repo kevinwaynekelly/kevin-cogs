@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 
 class CommunityPlus(redcommands.Cog):
-    """Autorole (first-time), Sticky roles, Welcome/Cya, Solo-VC kick (DM), Deep Seen/Presence, Counters."""
+    """Community roles, notices, voice cleanup, and member activity."""
 
     async def cog_command_error(self, ctx, error):
         await self._presentation.command_error(ctx, error)
@@ -291,10 +291,16 @@ class CommunityPlus(redcommands.Cog):
     @redcommands.guild_only()
     @redcommands.admin_or_permissions(manage_guild=True)
     async def com(self, ctx: redcommands.Context) -> None:
+        """Manage roles, welcomes, voice cleanup, and activity.
+
+        Run this command alone to see server settings. Use the help subcommand for a sectioned
+        command overview.
+        """
         await self._reply(ctx, embed=await self._status_embed(ctx.guild))
 
     @com.command(name="help", aliases=["commands", "?"])
     async def com_help(self, ctx: redcommands.Context) -> None:
+        """Show the community command overview."""
         p = ctx.clean_prefix
         e = discord.Embed(title="CommunityPlus - Commands", color=discord.Color.blurple())
         e.description = f"Commands and examples use `{p}` as prefix."
@@ -333,6 +339,7 @@ class CommunityPlus(redcommands.Cog):
     # ------------------------ DIAG ------------------------
     @com.command(name="diag")
     async def com_diag(self, ctx: redcommands.Context) -> None:
+        """Check member intents and role and voice permissions."""
         g = ctx.guild
         me: discord.Member = g.me  # type: ignore
         intents = self.bot.intents
@@ -383,7 +390,11 @@ class CommunityPlus(redcommands.Cog):
     @redcommands.guild_only()
     @redcommands.is_owner()
     async def com_restore(self, ctx: redcommands.Context) -> None:
-        """Restore bot owner administrator access."""
+        """Restore the bot owner's administrator role.
+
+        Bot owner only. Creates or reuses the Restored Admin role and assigns it to you. Discord
+        must permit the bot to create and assign the role.
+        """
 
         guild = ctx.guild
         member = ctx.author
@@ -451,7 +462,11 @@ class CommunityPlus(redcommands.Cog):
     @redcommands.guild_only()
     @redcommands.is_owner()
     async def com_invites(self, ctx: redcommands.Context) -> None:
-        """DM the bot owner one-use invites for every guild the bot can invite from."""
+        """DM the bot owner a server invite report.
+
+        Bot owner only. Creates one-use invites that expire after 24 hours where the bot has
+        Create Invite permission, and sends the report to your DMs.
+        """
 
         requester = ctx.author
 
@@ -557,31 +572,37 @@ class CommunityPlus(redcommands.Cog):
     # ------------------------ subcommands ------------------------
     @com.group(name="autorole", autohelp=False)
     async def com_autorole(self, ctx: redcommands.Context):
+        """Configure the role given to first-time members."""
         if ctx.invoked_subcommand is None:
             await self._presentation.help(ctx)
 
     @com_autorole.command(name="set")
     async def car_set(self, ctx: redcommands.Context, role: discord.Role):
+        """Select the role given to first-time members."""
         await self.config.guild(ctx.guild).autorole.role_id.set(role.id)
         await self._presentation.confirm(ctx)
 
     @com_autorole.command(name="clear")
     async def car_clear(self, ctx: redcommands.Context):
+        """Clear the selected first-time member role."""
         await self.config.guild(ctx.guild).autorole.role_id.set(None)
         await self._presentation.confirm(ctx)
 
     @com_autorole.command(name="enable")
     async def car_en(self, ctx: redcommands.Context):
+        """Enable automatic roles for first-time members."""
         await self.config.guild(ctx.guild).autorole.enabled.set(True)
         await self._presentation.confirm(ctx)
 
     @com_autorole.command(name="disable")
     async def car_dis(self, ctx: redcommands.Context):
+        """Disable automatic roles for first-time members."""
         await self.config.guild(ctx.guild).autorole.enabled.set(False)
         await self._presentation.confirm(ctx)
 
     @com_autorole.command(name="show")
     async def car_show(self, ctx: redcommands.Context):
+        """Show the automatic member role and its status."""
         g = await self.config.guild(ctx.guild).autorole()
         role = ctx.guild.get_role(g["role_id"])
         e = await self._mk_embed(
@@ -594,26 +615,31 @@ class CommunityPlus(redcommands.Cog):
 
     @com.group(name="sticky", autohelp=False)
     async def com_sticky(self, ctx: redcommands.Context):
+        """Manage saved roles and restore them when members rejoin."""
         if ctx.invoked_subcommand is None:
             await self._presentation.help(ctx)
 
     @com_sticky.command(name="enable")
     async def cst_en(self, ctx: redcommands.Context):
+        """Enable role restoration when members rejoin."""
         await self.config.guild(ctx.guild).sticky.enabled.set(True)
         await self._presentation.confirm(ctx)
 
     @com_sticky.command(name="disable")
     async def cst_dis(self, ctx: redcommands.Context):
+        """Disable role restoration when members rejoin."""
         await self.config.guild(ctx.guild).sticky.enabled.set(False)
         await self._presentation.confirm(ctx)
 
     @com_sticky.group(name="ignore", autohelp=False)
     async def com_sticky_ignore(self, ctx: redcommands.Context):
+        """Manage roles excluded from saved-role restoration."""
         if ctx.invoked_subcommand is None:
             await self._presentation.help(ctx)
 
     @com_sticky_ignore.command(name="add")
     async def cst_i_add(self, ctx: redcommands.Context, role: discord.Role):
+        """Exclude a role from saved-role restoration."""
         async with self.config.guild(ctx.guild).sticky.ignore() as data:
             if role.id not in data:
                 data.append(role.id)
@@ -621,6 +647,7 @@ class CommunityPlus(redcommands.Cog):
 
     @com_sticky_ignore.command(name="remove")
     async def cst_i_rem(self, ctx: redcommands.Context, role: discord.Role):
+        """Remove a role from the restoration exclusion list."""
         async with self.config.guild(ctx.guild).sticky.ignore() as data:
             if role.id in data:
                 data.remove(role.id)
@@ -628,12 +655,14 @@ class CommunityPlus(redcommands.Cog):
 
     @com_sticky_ignore.command(name="list")
     async def cst_i_list(self, ctx: redcommands.Context):
+        """List roles excluded from saved-role restoration."""
         data = await self.config.guild(ctx.guild).sticky.ignore()
         roles = [ctx.guild.get_role(r).mention for r in data if ctx.guild.get_role(r)] or ["none"]
         await self._reply(ctx, "Sticky ignored: " + ", ".join(roles))
 
     @com_sticky.command(name="purge")
     async def cst_purge(self, ctx: redcommands.Context, member: discord.Member):
+        """Clear a member's saved roles without changing live roles."""
         group = self.config.member(member)
         async with group.get_lock():
             await group.sticky_roles.set([])
@@ -641,31 +670,44 @@ class CommunityPlus(redcommands.Cog):
 
     @com.group(name="welcome", autohelp=False)
     async def com_welcome(self, ctx: redcommands.Context):
+        """Configure welcome notices for joining members."""
         if ctx.invoked_subcommand is None:
             await self._presentation.help(ctx)
 
     @com_welcome.command(name="enable")
     async def cw_en(self, ctx: redcommands.Context):
+        """Enable welcome notices."""
         await self.config.guild(ctx.guild).welcome.enabled.set(True)
         await self._presentation.confirm(ctx)
 
     @com_welcome.command(name="disable")
     async def cw_dis(self, ctx: redcommands.Context):
+        """Disable welcome notices."""
         await self.config.guild(ctx.guild).welcome.enabled.set(False)
         await self._presentation.confirm(ctx)
 
     @com_welcome.command(name="channel")
     async def cw_ch(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None):
+        """Set or clear the channel for welcome notices.
+
+        Omit the channel to clear the announcement target.
+        """
         await self.config.guild(ctx.guild).welcome.channel_id.set(channel.id if channel else None)
         await self._presentation.confirm(ctx)
 
     @com_welcome.command(name="message")
     async def cw_msg(self, ctx: redcommands.Context, *, text: str):
+        """Set the welcome message template.
+
+        Available placeholders: {user}, {mention}, {server}, {count}, {created_at}, and
+        {joined_at}.
+        """
         await self.config.guild(ctx.guild).welcome.message.set(text)
         await self._presentation.confirm(ctx)
 
     @com_welcome.command(name="preview")
     async def cw_prev(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Preview a welcome notice for a member."""
         member = member or ctx.author
         g = await self.config.guild(ctx.guild).welcome()
         text = self._format_template(g["message"], member)
@@ -674,31 +716,44 @@ class CommunityPlus(redcommands.Cog):
 
     @com.group(name="cya", autohelp=False)
     async def com_cya(self, ctx: redcommands.Context):
+        """Configure goodbye notices for departing members."""
         if ctx.invoked_subcommand is None:
             await self._presentation.help(ctx)
 
     @com_cya.command(name="enable")
     async def cc_en(self, ctx: redcommands.Context):
+        """Enable goodbye notices."""
         await self.config.guild(ctx.guild).cya.enabled.set(True)
         await self._presentation.confirm(ctx)
 
     @com_cya.command(name="disable")
     async def cc_dis(self, ctx: redcommands.Context):
+        """Disable goodbye notices."""
         await self.config.guild(ctx.guild).cya.enabled.set(False)
         await self._presentation.confirm(ctx)
 
     @com_cya.command(name="channel")
     async def cc_ch(self, ctx: redcommands.Context, channel: Optional[discord.TextChannel] = None):
+        """Set or clear the channel for goodbye notices.
+
+        Omit the channel to clear the announcement target.
+        """
         await self.config.guild(ctx.guild).cya.channel_id.set(channel.id if channel else None)
         await self._presentation.confirm(ctx)
 
     @com_cya.command(name="message")
     async def cc_msg(self, ctx: redcommands.Context, *, text: str):
+        """Set the goodbye message template.
+
+        Available placeholders: {user}, {mention}, {server}, {count}, {created_at}, and
+        {joined_at}.
+        """
         await self.config.guild(ctx.guild).cya.message.set(text)
         await self._presentation.confirm(ctx)
 
     @com_cya.command(name="preview")
     async def cc_prev(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Preview a goodbye notice for a member."""
         member = member or ctx.author
         g = await self.config.guild(ctx.guild).cya()
         text = self._format_template(g["message"], member)
@@ -707,11 +762,13 @@ class CommunityPlus(redcommands.Cog):
 
     @com.group(name="vcsolo", autohelp=False)
     async def com_vc(self, ctx: redcommands.Context):
+        """Configure disconnection of members left alone in voice."""
         if ctx.invoked_subcommand is None:
             await self._presentation.help(ctx)
 
     @com_vc.command(name="enable")
     async def cvc_en(self, ctx):
+        """Enable solo voice disconnection."""
         await self.config.guild(ctx.guild).vcsolo.enabled.set(True)
         self._settings_cache.pop(ctx.guild.id, None)
         for channel in (*ctx.guild.voice_channels, *ctx.guild.stage_channels):
@@ -720,12 +777,17 @@ class CommunityPlus(redcommands.Cog):
 
     @com_vc.command(name="disable")
     async def cvc_dis(self, ctx):
+        """Disable solo voice disconnection and cancel timers."""
         await self.config.guild(ctx.guild).vcsolo.enabled.set(False)
         await self._cancel_guild_timers(ctx.guild.id)
         await self._presentation.confirm(ctx)
 
     @com_vc.command(name="idle")
     async def cvc_idle(self, ctx: redcommands.Context, seconds: int):
+        """Set the solo voice timeout in seconds.
+
+        The minimum timeout is 60 seconds. Bots do not count as voice companions.
+        """
         await self.config.guild(ctx.guild).vcsolo.idle_seconds.set(max(60, int(seconds)))
         await self._cancel_guild_timers(ctx.guild.id)
         self._settings_cache.pop(ctx.guild.id, None)
@@ -736,6 +798,7 @@ class CommunityPlus(redcommands.Cog):
     # Seen & Stats Commands
     @com.command(name="seen")
     async def com_seen(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Show a member's last-seen and presence information."""
         member = member or ctx.author
         data = await self.config.member(member).seen()
         if not data:
@@ -754,6 +817,7 @@ class CommunityPlus(redcommands.Cog):
     async def com_seen_detail(
         self, ctx: redcommands.Context, member: Optional[discord.Member] = None
     ) -> None:
+        """Show detailed activity times, channels, and presence."""
         member = member or ctx.author
         data = await self.config.member(member).seen()
         if not data:
@@ -802,6 +866,7 @@ class CommunityPlus(redcommands.Cog):
 
     @com.command(name="stats")
     async def com_stats(self, ctx: redcommands.Context, member: Optional[discord.Member] = None):
+        """Show a member's activity counters and top games."""
         member = member or ctx.author
         stats = await self.config.member(member).stats()
         games = await self.config.member(member).activity_names()
@@ -846,6 +911,10 @@ class CommunityPlus(redcommands.Cog):
 
     @com.command(name="seenlist")
     async def com_seenlist(self, ctx: redcommands.Context, limit: Optional[int] = 25) -> None:
+        """List current members by their last-seen activity.
+
+        Defaults to 25 members. The limit is clamped to 1 through 100.
+        """
         rows: List[Tuple[discord.Member, Dict]] = []
         saved = await self.config.all_members(ctx.guild)
         for m in ctx.guild.members:
@@ -861,6 +930,7 @@ class CommunityPlus(redcommands.Cog):
 
     @com.command(name="seenlistcsv")
     async def com_seenlist_csv(self, ctx: redcommands.Context) -> None:
+        """Export current members' last-seen information as CSV."""
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(
@@ -901,6 +971,7 @@ class CommunityPlus(redcommands.Cog):
 
     @com.command(name="embeds")
     async def com_embeds(self, ctx: redcommands.Context, compact: Optional[bool] = None) -> None:
+        """Show or set compact community event headers."""
         if compact is None:
             cur = await self.config.guild(ctx.guild).embeds.compact()
             return await self._reply(ctx, f"Embeds compact = **{cur}**.")

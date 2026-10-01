@@ -24,7 +24,7 @@ GUILD_ONLY = commands.guild_only()
 
 
 class AudioPlus(commands.Cog):
-    """Lavalink v4 music using Wavelink. Set node: `[p]audio setnode`."""
+    """Music playback, queue controls, and Lavalink voice diagnostics."""
 
     default_global = {
         "host": "127.0.0.1",
@@ -315,6 +315,10 @@ class AudioPlus(commands.Cog):
     @commands.group(name="audio", invoke_without_command=True)
     @GUILD_ONLY
     async def audio(self, ctx: commands.Context) -> None:
+        """Play music and manage the queue and voice connection.
+
+        Run this command alone for playback controls, voice tools, and diagnostics.
+        """
         p = ctx.clean_prefix
         embed = self._presentation.embed("Commands", "Music, playback controls, and voice tools.")
         sections = {
@@ -341,6 +345,12 @@ class AudioPlus(commands.Cog):
         password: str,
         secure: Optional[bool] = False,
     ):
+        """Save Lavalink node settings and reconnect.
+
+        Bot owner only. Saves the host, port, password, and optional TLS setting, then
+        reconnects. A fresh node connection disconnects existing AudioPlus players. Use a
+        private server channel because the command includes the password.
+        """
         if (
             not host.strip()
             or "://" in host
@@ -366,6 +376,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="shownode")
     @checks.is_owner()
     async def audio_shownode(self, ctx: commands.Context) -> None:
+        """Show node settings without revealing the password."""
         data = await self.config.all()
         await self._reply(
             ctx,
@@ -375,6 +386,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="connectnode")
     @checks.is_owner()
     async def audio_connectnode(self, ctx: commands.Context) -> None:
+        """Reconnect to Lavalink using the saved node settings."""
         cfg = await self._get_node_config()
         await self._reconnect_fresh(cfg)
         node = self._connected_node()
@@ -392,6 +404,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="pingnode")
     @GUILD_ONLY
     async def audio_pingnode(self, ctx: commands.Context) -> None:
+        """Check Lavalink connectivity, version, and statistics."""
         node = self._connected_node()
         cfg = await self._get_node_config() if node is None else None
         info = await self._fetch_lavalink_info(node or cfg, timeout=7.0) if (node or cfg) else None
@@ -436,6 +449,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="playerstate")
     @GUILD_ONLY
     async def audio_playerstate(self, ctx: commands.Context) -> None:
+        """Inspect playback and voice state reported by Lavalink."""
         data = await self._fetch_player_state(ctx.guild.id)
         if not data:
             await self._reply(
@@ -473,6 +487,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="speak")
     @GUILD_ONLY
     async def audio_speak(self, ctx: commands.Context) -> None:
+        """Request speaking access in the current Stage channel."""
         vc = getattr(ctx.guild.me, "voice", None)
         if not vc or not vc.channel:
             await self._reply(ctx, "I'm not connected to a voice channel.", tone="warning")
@@ -483,6 +498,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="undeafen")
     @GUILD_ONLY
     async def audio_undeafen(self, ctx: commands.Context) -> None:
+        """Try to clear the bot's self-deafen voice flag."""
         me_vs = getattr(ctx.guild.me, "voice", None)
         if not me_vs or not me_vs.channel:
             await self._reply(ctx, "I'm not connected to voice.", tone="warning")
@@ -497,7 +513,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="fixvoice")
     @GUILD_ONLY
     async def audio_fixvoice(self, ctx: commands.Context) -> None:
-        """Try unsuppress + undeafen + quick reconnect if needed."""
+        """Try to recover Stage speaking and self-deafen state."""
         me_vs = getattr(ctx.guild.me, "voice", None)
         if not me_vs or not me_vs.channel:
             await self._reply(ctx, "I'm not connected to voice.", tone="warning")
@@ -514,6 +530,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="debugvc")
     @GUILD_ONLY
     async def audio_debugvc(self, ctx: commands.Context) -> None:
+        """Show Discord voice flags and playback diagnostics."""
         me_vs = getattr(ctx.guild.me, "voice", None)
         vc = self._get_player(ctx.guild)
         if not me_vs or not me_vs.channel:
@@ -543,7 +560,11 @@ class AudioPlus(commands.Cog):
     @audio.command(name="rejoin")
     @GUILD_ONLY
     async def audio_rejoin(self, ctx: commands.Context) -> None:
-        """Force leave+join of the current voice channel."""
+        """Reconnect to voice and restore playback and the queue.
+
+        Restores the current track, playback position, volume, pause state, and queued tracks
+        when reconnection succeeds.
+        """
         ok = await self._rebind_voice(ctx.guild)
         await self._reply(
             ctx, "Rejoin: " + ("**OK**" if ok else "**failed**"), tone="success" if ok else "error"
@@ -552,6 +573,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="tone")
     @GUILD_ONLY
     async def audio_tone(self, ctx: commands.Context):
+        """Queue a direct MP3 track to test audio playback."""
         player, _ = await self._fetch_or_connect_player(ctx)
         tracks = await wavelink.Pool.fetch_tracks(
             "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
@@ -570,12 +592,14 @@ class AudioPlus(commands.Cog):
     @audio.command(name="join", aliases=["connect", "summon"])
     @GUILD_ONLY
     async def audio_join(self, ctx: commands.Context) -> None:
+        """Join or move to your current voice channel."""
         _, channel = await self._fetch_or_connect_player(ctx)
         await self._reply(ctx, f"Connected to **{channel}**.", tone="success")
 
     @audio.command(name="leave", aliases=["dc", "disconnect"])
     @GUILD_ONLY
     async def audio_leave(self, ctx: commands.Context) -> None:
+        """Disconnect the bot from voice."""
         vc = self._get_player(ctx.guild)
         if vc and isinstance(vc, wavelink.Player):
             await vc.disconnect()
@@ -586,6 +610,11 @@ class AudioPlus(commands.Cog):
     @audio.command(name="play", aliases=["p"])
     @GUILD_ONLY
     async def audio_play(self, ctx: commands.Context, *, query: str):
+        """Search for music or queue tracks from a URL.
+
+        Search terms use YouTube search. URL and search support depend on the Lavalink node's
+        source plugins.
+        """
         player, _ = await self._fetch_or_connect_player(ctx)
         query = query.strip()
         if not query.startswith(("http://", "https://")):
@@ -606,6 +635,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="skip", aliases=["next", "s"])
     @GUILD_ONLY
     async def audio_skip(self, ctx):
+        """Skip the current track and advance the queue."""
         player = self._get_player(ctx.guild)
         if not isinstance(player, wavelink.Player):
             return await self._reply(ctx, "Not connected.", tone="warning")
@@ -617,6 +647,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="stop")
     @GUILD_ONLY
     async def audio_stop(self, ctx: commands.Context) -> None:
+        """Stop playback and clear the queue."""
         vc = self._get_player(ctx.guild)
         if vc and isinstance(vc, wavelink.Player):
             try:
@@ -631,6 +662,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="pause")
     @GUILD_ONLY
     async def audio_pause(self, ctx: commands.Context) -> None:
+        """Pause the current track."""
         vc = self._get_player(ctx.guild)
         if vc and isinstance(vc, wavelink.Player):
             await vc.pause(True)
@@ -641,6 +673,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="resume")
     @GUILD_ONLY
     async def audio_resume(self, ctx: commands.Context) -> None:
+        """Resume paused playback."""
         vc = self._get_player(ctx.guild)
         if vc and isinstance(vc, wavelink.Player):
             await vc.pause(False)
@@ -651,6 +684,10 @@ class AudioPlus(commands.Cog):
     @audio.command(name="volume", aliases=["vol"])
     @GUILD_ONLY
     async def audio_volume(self, ctx: commands.Context, value: Optional[int] = None) -> None:
+        """Show or set the playback volume.
+
+        Omit the value to show the current volume. Values are clamped to 0 through 1000.
+        """
         vc = self._get_player(ctx.guild)
         if not vc or not isinstance(vc, wavelink.Player):
             await self._reply(ctx, "Not connected.", tone="warning")
@@ -665,6 +702,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="np", aliases=["nowplaying"])
     @GUILD_ONLY
     async def audio_nowplaying(self, ctx: commands.Context) -> None:
+        """Show the current track and playback progress."""
         vc = self._get_player(ctx.guild)
         if not vc or not isinstance(vc, wavelink.Player) or not getattr(vc, "current", None):
             await self._reply(ctx, "Nothing is playing.", tone="warning")
@@ -693,6 +731,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="queue", aliases=["q"])
     @GUILD_ONLY
     async def audio_queue(self, ctx: commands.Context) -> None:
+        """Show the next ten queued tracks."""
         vc = self._get_player(ctx.guild)
         if not vc or not isinstance(vc, wavelink.Player):
             await self._reply(ctx, "Not connected.", tone="warning")
@@ -712,6 +751,7 @@ class AudioPlus(commands.Cog):
     @audio.command(name="shuffle")
     @GUILD_ONLY
     async def audio_shuffle(self, ctx: commands.Context) -> None:
+        """Shuffle the queued tracks."""
         vc = self._get_player(ctx.guild)
         if not vc or not isinstance(vc, wavelink.Player):
             await self._reply(ctx, "Not connected.", tone="warning")

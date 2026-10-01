@@ -20,6 +20,8 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 
 All five cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
 
+Red's native `[p]help` lists descriptions for every cog command. Use `[p]help com`, `[p]help level`, or `[p]help logplus` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
+
 ## Install
 
 Run these commands as the bot owner:

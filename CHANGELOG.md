@@ -10,6 +10,7 @@ Changes recorded here start with the repository's documentation and metadata pas
 - Respect Red's embed preference and provide readable text when Embed Links is unavailable.
 - Theme event notices and DMs while preserving custom template text, level-up mention behavior, and OwoPlus webhook content.
 - Keep each cog independently installable with its own copy of the theme helper, checked for consistency by tests.
+- Add descriptions to all 209 commands and groups so Red's native help menus show meaningful summaries and detailed command help.
 
 ## 2026-09-30: refactor and reliability pass
 

@@ -2,6 +2,8 @@
 
 All five cogs use one visual theme for their own command replies, nested command help, input errors, event notices, and direct messages.
 
+Every command and group also has a description for Red's native help formatter. The main help menu lists readable summaries, while help for a group or individual command includes its purpose, syntax, and relevant details.
+
 ![Sample cog output](presentation-preview.svg)
 
 This preview uses actual command and event payloads with sample data. It illustrates the theme; Discord controls the final layout, fonts, and emoji rendering.
