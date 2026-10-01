@@ -15,7 +15,7 @@ from redbot.core import Config, app_commands, checks, commands
 from redbot.core.bot import Red
 
 from .backend import diagnostics, require_voice
-from .command_support import prepare_hybrid
+from .command_support import finish_configuration_audit, prepare_hybrid
 from .continuity import CONTINUITY_DEFAULTS, AudioContinuity
 from .dependencies import VoiceDependencyRepair
 from .failures import log_failure, playback_stage
@@ -94,6 +94,9 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
 
     async def cog_before_invoke(self, ctx):
         await prepare_hybrid(ctx)
+
+    async def cog_after_invoke(self, ctx):
+        finish_configuration_audit(ctx)
 
     async def cog_load(self):
         # Setup/help remain available when the container needs dependencies.

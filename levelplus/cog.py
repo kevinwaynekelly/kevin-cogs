@@ -23,7 +23,13 @@ from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
 
-from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
+from .command_support import (
+    attach_prefix_groups,
+    finish_configuration_audit,
+    invoke_shortcut,
+    prefix_group,
+    prepare_hybrid,
+)
 from .constants import DEFAULTS_GUILD, WORD_RE
 from .events import guild_enabled
 from .features import (
@@ -1538,6 +1544,7 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_after_invoke(self, ctx):
+        finish_configuration_audit(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def _settings(self, guild):

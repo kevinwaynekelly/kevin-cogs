@@ -13,7 +13,7 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 | LevelPlus | XP, custom achievements, streaks, monthly seasons, filtered boards and rank cards | `[p]level`, `[p]achievement`, `/streak` | [Setup and commands](levelplus/README.md) |
 | LogPlus | Event logs, retained history, burst alerts, daily digests and staff incidents | `[p]log`, `[p]logalerts`, `/incident list` | [Setup and commands](logplus/README.md) |
 | OwoPlus | Custom styles, author Undo, scoped transformations, approved haiku and contests | `[p]owo`, `[p]owoundo`, `/haikucontest list` | [Setup and commands](owoplus/README.md) |
-| SettingsHub | Shared themes, permission-aware command discovery, diagnostics and configuration snapshots | `[p]settings`, `/theme show`, `[p]snapshots` | [Setup and commands](settingshub/README.md) |
+| SettingsHub | Shared themes, command discovery, diagnostics, configuration history, readiness checks and snapshots | `[p]settings`, `/theme show`, `[p]snapshots` | [Setup and commands](settingshub/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
 
@@ -29,7 +29,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | LogPlus | `[p]log setup` or `/log setup` | Administrator routing, permission diffs, delivery recovery, and opt-in retained history with timeline/search/export. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The five feature cogs expose 297 slash actions; optional SettingsHub adds 16. The six cogs together register 77 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
+The five feature cogs expose 303 slash actions; optional SettingsHub adds 22. The six cogs together register 79 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
@@ -162,8 +162,8 @@ AudioPlus now has automatic player panels with checked buttons, `seek`, queue `r
 
 | Cog | Added features | Starting commands |
 | --- | --- | --- |
-| AudioPlus | Opt-in queue/position recovery after restart, empty-room pause/departure, loudness normalization and DJ-approved shared playlists | `audioset recovery`, `recoverqueue`, `audioset emptypause`, `audioset normalize`, `serverplaylist` |
-| CommunityPlus | Join-to-create rooms with owner controls, rules acceptance, opt-in month/day birthdays and recurring events with capacity waitlists | `voiceroom`, `onboard`, `birthday`, `eventpolicy` |
+| AudioPlus | Listening history/replay, atomic request limits, opt-in queue recovery, empty-room pause/departure, normalization and DJ-approved shared playlists | `history`, `replay`, `audioset limits`, `recoverqueue`, `serverplaylist` |
+| CommunityPlus | Join-to-create rooms with owner controls, rules acceptance, opt-in month/day birthdays and recurring events with capacity waitlists | `voiceroom`, `onboard`, `birthday`, `event policy` |
 | LevelPlus | Administrator-defined achievement goals/rewards, bounded daily streak bonuses, role-filtered boards and automatic monthly season closure/winners | `achievement`, `streakset`, `streak`, `roleboard`, `monthlyseason` |
 | LogPlus | Join/delete/permission burst warnings, aggregate daily digests, staff incident notes/log attachments/resolution and private repeated-error notices | `logalerts`, `incident` |
 | OwoPlus | Named custom dictionaries/decorations, two-minute author Undo, approved haiku submissions and deadline/voting contests | `customstyle`, `stylize`, `owoundo`, `haikuhall`, `haikucontest` |
@@ -173,9 +173,9 @@ Use the prefix or matching slash action shown in each guide. Recovery needs an e
 
 ## Data
 
-Settings and persistent records use Red's Config system. CommunityPlus records activity, sticky roles, temporary-room ownership, opted-in birthday dates and rules acceptance. LevelPlus retains XP, display names, achievements/streaks and bounded season archives. OwoPlus stores personal preferences and explicitly submitted haiku/contest entries/votes for up to 90 days; author Undo text stays only in memory for two minutes. SettingsHub stores themes and up to ten selected configuration snapshots.
+Settings and persistent records use Red's Config system. CommunityPlus records activity, sticky roles, temporary-room ownership, opted-in birthday dates and rules acceptance. LevelPlus retains XP, display names, achievements/streaks and bounded season archives. OwoPlus stores personal preferences and explicitly submitted haiku/contest entries/votes for up to 90 days; author Undo text stays only in memory for two minutes. SettingsHub stores themes, up to ten selected configuration snapshots and bounded actor-attributed configuration changes, with identified-user export/deletion.
 
-AudioPlus preserves legacy Lavalink connection settings, including the old node password, for rollback. Native playback ignores them. The optional daily monitor stores recipient/test/schedule/result records. Personal/shared playlists retain public metadata and proposer/requester attribution. Opt-in listening history retains 100 public playback starts for 30 days, capped at 512 KiB, with requester export/deletion. Opt-in queue recovery retains up to 100 public records and playback state for seven days; ordinary queues remain transient when recovery is off. Extracted stream URLs, downloaded audio and yt-dlp disk caches are not persisted.
+AudioPlus preserves legacy Lavalink connection settings, including the old node password, for rollback. Native playback ignores them. The optional daily monitor stores recipient/test/schedule/result records. Personal/shared playlists retain public metadata and proposer/requester attribution. Listening history starts enabled and retains 100 public playback starts for 30 days, capped at 512 KiB, with requester export/deletion. Opt-in queue recovery retains up to 100 public records and playback state for seven days; ordinary queues remain transient when recovery is off. Extracted stream URLs, downloaded audio and yt-dlp disk caches are not persisted.
 
 LogPlus posts edited/deleted text to configured Discord channels. Opt-in history retains bounded event details for 1 to 90 days; staff incident cases retain selected log excerpts/notes and attribution for up to 90 days. Daily digests store aggregate counts, and owner error policies store the configuring recipient. OwoPlus reposts transformed messages through webhooks and attempts to delete originals. Each guide and `info.json` describes its records and limits. All six cogs implement Red's user-data hooks. Deletion removes or anonymizes associated records; messages already posted to Discord remain managed there.
 

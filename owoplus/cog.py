@@ -19,7 +19,7 @@ from redbot.core import commands as redcommands
 from redbot.core.bot import Red
 from redbot.core.config import Config
 
-from .command_support import prepare_hybrid
+from .command_support import finish_configuration_audit, prepare_hybrid
 from .constants import (
     CODE_SPLIT,
     DEFAULTS_GUILD,
@@ -1033,6 +1033,7 @@ class OwoPlus(FunCommands, redcommands.Cog):
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_after_invoke(self, ctx):
+        finish_configuration_audit(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def _settings(self, guild):

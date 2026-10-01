@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01: Configuration history and feature readiness
+
+- Add selected server-settings change history with task-local caller attribution, real Config write/clear observation, before/after values, prefix/slash/component/restore coverage, and per-instance unload cleanup. Preserve successful settings writes if supplementary history fails.
+- Bound retained history by age/count/bytes and value previews; enforce current setup visibility and identified-user export/deletion. Exclude global credentials, member/operational data and inherited background attribution.
+- Add fourteen read-only readiness reports with optional candidate channels/roles, actual destination permissions, safe role hierarchy, intents, room category, scope, snapshot budget and native music prerequisites.
+- Add matching slash controls and command-browser examples while preserving all independently installable cogs.
+
 ## 2026-10-01: Listening history and request limits
 
 - Add server listening history with stable replay IDs, request attribution, 30-day/count/byte retention and user-data hooks. Record playback starts without duplicating seek/reconnect/recovery resumes; repeat playback records a fresh start.

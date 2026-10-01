@@ -14,6 +14,7 @@ from pathlib import Path
 import discord
 from redbot.core import commands
 
+from .audit import AUDIT_DEFAULTS
 from .command_support import check_command
 from .presentation import COLORS, clip
 from .schema import FIELDS, MAX_FILE, TARGETS, select_fields
@@ -21,6 +22,8 @@ from .schema import FIELDS, MAX_FILE, TARGETS, select_fields
 HUB_DEFAULTS = {
     "theme": {"colors": dict(COLORS), "footer": "Kevin's Cogs"},
     "snapshots": {"enabled": False, "hours": 6, "last_at": 0, "records": []},
+    "audit_policy": AUDIT_DEFAULTS,
+    "configuration_history": [],
 }
 
 EXAMPLES = {
@@ -31,6 +34,10 @@ EXAMPLES = {
     "audioset recovery": "audioset recovery True",
     "audioset emptypause": "audioset emptypause True 60",
     "audioset normalize": "audioset normalize True",
+    "audioset history": "audioset history True",
+    "audioset limits": "audioset limits 600 3",
+    "history": "history 1",
+    "replay": "replay <song_id>",
     "serverplaylist create": "serverplaylist create favourites",
     "serverplaylist suggest": "serverplaylist suggest favourites quiet piano",
     "serverplaylist approve": "serverplaylist approve favourites 1 True",
@@ -45,7 +52,7 @@ EXAMPLES = {
     "voiceroom private": "voiceroom private True",
     "onboard accept": "onboard accept",
     "birthday set": "birthday set 10 1",
-    "eventpolicy": "eventpolicy <event_id> 10 7",
+    "event policy": "event policy <event_id> 10 7",
     "logalerts burst": "logalerts burst joins True 10 60",
     "logalerts digest": "logalerts digest True UTC 9",
     "logalerts errors": "logalerts errors True 5 300",
@@ -57,8 +64,14 @@ EXAMPLES = {
     "theme color": "theme color info #818CF8",
     "theme footer": "theme footer Scarlet",
     "snapshots auto": "snapshots auto True 6",
+    "settings history": "settings history 1",
+    "settings history show": "settings history show <change_id>",
+    "settings history enabled": "settings history enabled True 30",
+    "settings ready": "settings ready playback",
 }
 SHORTCUT_TARGETS = {
+    "replay": ("play", "audio play"),
+    "history": ("play", "audio play"),
     **{
         name: f"audio {name}"
         for name in (
@@ -180,6 +193,7 @@ class MaintenanceCommands:
         while not self._closing:
             try:
                 await self._snapshot_tick()
+                await self._audit_tick()
             except Exception:
                 self._maintenance_log.exception("Settings snapshot maintenance failed")
             await asyncio.sleep(60)
@@ -259,11 +273,13 @@ class MaintenanceCommands:
                 continue
             try:
                 await check_command(ctx, command)
-                source_path = SHORTCUT_TARGETS.get(command.qualified_name)
-                if source_path:
+                paths = SHORTCUT_TARGETS.get(command.qualified_name, ())
+                if isinstance(paths, str):
+                    paths = (paths,)
+                for source_path in paths:
                     source = self.bot.get_command(source_path)
                     if source is None:
-                        continue
+                        raise commands.DisabledCommand("This command's source is unavailable.")
                     await check_command(ctx, source)
             except commands.CommandError:
                 continue

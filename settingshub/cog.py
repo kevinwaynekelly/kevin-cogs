@@ -8,14 +8,22 @@ import shutil
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from importlib.metadata import PackageNotFoundError, version
+from typing import Optional, Union
 
 import discord
-from redbot.core import Config, commands
+from redbot.core import Config, app_commands, commands
 
-from .command_support import check_command, prepare_hybrid
+from .audit import AuditCommands
+from .command_support import (
+    check_command,
+    configuration_action,
+    finish_configuration_audit,
+    prepare_hybrid,
+)
 from .interactive import close_views, component_context, component_error
 from .maintenance import HUB_DEFAULTS, MaintenanceCommands
 from .presentation import Presentation
+from .readiness import FEATURES, ReadinessCommands
 from .schema import (
     FIELDS,
     MAX_FILE,
@@ -104,7 +112,8 @@ class RestoreView(DashboardView):
                         raise commands.CheckFailure(
                             "A cog was reloaded. Preview the restore again."
                         )
-                    warnings = await hub._apply_bundle(ctx, self.bundle, selected)
+                    async with configuration_action(hub, ctx):
+                        warnings = await hub._apply_bundle(ctx, self.bundle, selected)
                     self.applied = True
                     self.stop()
                     await self.on_timeout()
@@ -139,7 +148,7 @@ class RestoreView(DashboardView):
         self.add_item(cancel)
 
 
-class SettingsHub(MaintenanceCommands, commands.Cog):
+class SettingsHub(ReadinessCommands, AuditCommands, MaintenanceCommands, commands.Cog):
     """Shared setup, health, and server settings backup."""
 
     def __init__(self, bot):
@@ -151,6 +160,7 @@ class SettingsHub(MaintenanceCommands, commands.Cog):
         self.config.register_guild(**HUB_DEFAULTS)
         self._maintenance_task = None
         self._maintenance_log = log
+        self._init_audit()
 
     async def _reply(self, ctx, content=None, **kwargs):
         return await self._presentation.send(ctx, content, **kwargs)
@@ -169,13 +179,19 @@ class SettingsHub(MaintenanceCommands, commands.Cog):
     async def cog_before_invoke(self, ctx):
         await prepare_hybrid(ctx)
 
+    async def cog_after_invoke(self, ctx):
+        finish_configuration_audit(ctx)
+
     async def cog_load(self):
+        for cog in [self, *self._loaded().values()]:
+            self._observe_config(cog)
         for guild in self.bot.guilds:
             await self._cache_theme(guild.id)
         self._maintenance_task = asyncio.create_task(self._maintenance_loop())
 
     async def cog_unload(self):
         self._closing = True
+        self._close_audit()
         if self._maintenance_task:
             self._maintenance_task.cancel()
             await asyncio.gather(self._maintenance_task, return_exceptions=True)
@@ -337,6 +353,62 @@ class SettingsHub(MaintenanceCommands, commands.Cog):
             title="Server settings",
         )
 
+    @settings.group(name="history", invoke_without_command=True, fallback="list")
+    async def configuration_history(self, ctx, page: int = 1):
+        """Browse who changed server settings and their old and new values."""
+        await self._show_configuration_history(ctx, page)
+
+    @settings.command(name="ready")
+    @app_commands.choices(
+        feature=[
+            app_commands.Choice(name="All configured features", value="all"),
+            *[app_commands.Choice(name=label, value=name) for name, (_, label) in FEATURES.items()],
+        ]
+    )
+    async def ready(
+        self,
+        ctx,
+        feature: str = "all",
+        channel: Optional[discord.TextChannel] = None,
+        voice: Optional[Union[discord.VoiceChannel, discord.StageChannel]] = None,
+        role: Optional[discord.Role] = None,
+    ):
+        """Check a feature's configured or candidate channels, roles and prerequisites."""
+        await self._readiness_reply(ctx, feature.lower(), channel=channel, voice=voice, role=role)
+
+    @configuration_history.command(name="show")
+    async def configuration_history_show(self, ctx, identifier: str):
+        """Show before and after values for a retained change ID."""
+        await self._show_configuration_change(ctx, identifier)
+
+    @configuration_history.command(name="enabled")
+    async def configuration_history_enabled(self, ctx, enabled: bool, days: int = 30):
+        """Enable or pause change collection, with retention from 1 to 90 days."""
+        if not 1 <= days <= 90:
+            raise commands.BadArgument("Choose retention from 1 to 90 days.")
+        section = self.config.guild(ctx.guild).audit_policy
+        async with section.get_lock():
+            await section.set({"enabled": enabled, "days": days})
+        await self._audit_records(ctx.guild.id)
+        await self._reply(
+            ctx, f"Configuration history collection: {enabled}. Retention: {days} days."
+        )
+
+    @configuration_history.command(name="clear")
+    async def configuration_history_clear(self, ctx):
+        """Erase retained changes for cogs you can currently configure."""
+        visible = {r["id"] for r in await self._visible_audit(ctx)}
+        section = self.config.guild(ctx.guild).configuration_history
+        async with section.get_lock():
+            await section.set([r for r in await section() if r["id"] not in visible])
+        await self._reply(ctx, "Accessible configuration history was cleared.", tone="success")
+
+    @configuration_history.command(name="export")
+    @commands.bot_has_permissions(attach_files=True)
+    async def configuration_history_export(self, ctx):
+        """Download retained changes for cogs you can currently configure."""
+        await self._export_configuration_history(ctx)
+
     @settings.command(name="health")
     async def health(self, ctx):
         """Inspect loaded cogs, local dependencies, and delivery."""
@@ -433,9 +505,11 @@ class SettingsHub(MaintenanceCommands, commands.Cog):
         )
 
     async def red_get_data_for_user(self, *, user_id):
-        return {}
+        data = await self._audit_user_data(user_id)
+        return {"settingshub.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
 
     async def red_delete_data_for_user(self, *, requester, user_id):
+        await self._audit_user_data(user_id, delete=True)
         for view in tuple(self._views):
             if view.owner_id == user_id:
                 view.stop()

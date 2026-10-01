@@ -19,7 +19,13 @@ from redbot.core.bot import Red
 from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import humanize_number
 
-from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
+from .command_support import (
+    attach_prefix_groups,
+    finish_configuration_audit,
+    invoke_shortcut,
+    prefix_group,
+    prepare_hybrid,
+)
 from .community_tools import CELEBRATION_DEFAULTS, TOOLS_DEFAULTS, CommunityTools
 from .constants import DEFAULTS_GUILD, DEFAULTS_MEMBER, EVENT_COLOR
 from .events import guild_enabled
@@ -1598,6 +1604,7 @@ class CommunityPlus(CommunityTools, CommunityFeatures, CommunitySocial, redcomma
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_after_invoke(self, ctx):
+        finish_configuration_audit(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def _settings(self, guild):

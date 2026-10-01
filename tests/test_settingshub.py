@@ -317,13 +317,15 @@ async def test_optional_hub_registers_without_other_cogs_and_cleans_views(bot, g
 async def test_hub_slash_payload_and_independent_helpers(hub_runtime):
     bot, hub, member, invoke = hub_runtime
     app = bot.tree._disabled_global_commands["settings"]
-    assert len(app.commands) == 5
+    assert len(app.commands) == 7
     assert {command.name for command in app.commands} == {
         "panel",
         "health",
         "backup",
         "restore",
         "diagnostics",
+        "history",
+        "ready",
     }
     from pathlib import Path
 

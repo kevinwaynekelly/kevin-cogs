@@ -5,6 +5,8 @@ from copy import copy
 import discord
 from redbot.core import commands
 
+from .command_support import configuration_action
+
 
 async def component_context(cog, interaction, path, *, owner_id=None):
     """Apply current Red checks to the clicking member, never the message author."""
@@ -84,7 +86,8 @@ class SetupView(discord.ui.View):
                         value = value.id
                     else:
                         value = value == "on"
-                    await self.update(ctx, key, value)
+                    async with configuration_action(self.cog, ctx):
+                        await self.update(ctx, key, value)
                     await interaction.followup.send("Settings saved.", ephemeral=True)
                 except commands.CommandError as error:
                     await component_error(interaction, error)

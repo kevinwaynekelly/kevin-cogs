@@ -3,6 +3,8 @@
 Vendored per cog so Downloader can install each package independently.
 """
 
+from contextlib import asynccontextmanager
+
 from redbot.core import commands
 
 
@@ -55,6 +57,39 @@ async def prepare_hybrid(ctx):
         await check_command(ctx, ctx.command)
         if not ctx.interaction.response.is_done():
             await ctx.defer()
+    hub = configuration_hub(getattr(ctx, "bot", None))
+    if hub is not None:
+        token = await hub.begin_configuration_action(ctx)
+        if token is not None:
+            if not hasattr(ctx, "_kevin_audit_scopes"):
+                ctx._kevin_audit_scopes = []
+            ctx._kevin_audit_scopes.append((hub, token))
+
+
+def configuration_hub(bot):
+    """Use the optional runtime protocol without importing SettingsHub."""
+    getter = getattr(bot, "get_cog", None)
+    hub = getter("SettingsHub") if getter else None
+    return hub if callable(getattr(hub, "begin_configuration_action", None)) else None
+
+
+def finish_configuration_audit(ctx):
+    scopes = getattr(ctx, "_kevin_audit_scopes", [])
+    if scopes:
+        hub, token = scopes.pop()
+        hub.end_configuration_action(token)
+
+
+@asynccontextmanager
+async def configuration_action(cog, ctx):
+    """Attribute checked component writes to the clicking member's task."""
+    hub = configuration_hub(cog.bot)
+    token = await hub.begin_configuration_action(ctx) if hub is not None else None
+    try:
+        yield
+    finally:
+        if hub is not None:
+            hub.end_configuration_action(token)
 
 
 async def invoke_shortcut(cog, ctx, command, **kwargs):

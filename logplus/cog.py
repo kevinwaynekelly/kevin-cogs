@@ -19,6 +19,7 @@ from redbot.core.config import Config
 from .command_support import (
     attach_prefix_groups,
     check_command,
+    finish_configuration_audit,
     invoke_shortcut,
     prefix_group,
     prepare_hybrid,
@@ -2151,6 +2152,7 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_after_invoke(self, ctx):
+        finish_configuration_audit(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
     async def cog_load(self):
