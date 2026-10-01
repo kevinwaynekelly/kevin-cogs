@@ -16,6 +16,10 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
 
+## Discord presentation
+
+All five cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
+
 ## Install
 
 Run these commands as the bot owner:

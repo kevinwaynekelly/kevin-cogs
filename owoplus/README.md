@@ -6,6 +6,9 @@ Optional server-wide message transformations with keyword replacements, random o
 
 OwoPlus reposts transformed text through a webhook using the author's display name and avatar, then attempts to delete the original message. Reposts are new Discord messages. If downloading, sending, or deleting fails, the original is retained and the cog attempts to remove any partial reposts. Rollback can also fail if Discord denies deletion or is unavailable.
 
+
+Commands, confirmations, and previews use the [shared visual theme](../docs/PRESENTATION.md). Previews separate transformation details from output and paginate long fields. Replies respect Red's embed preference and fall back to text when embeds are unavailable. Webhook reposts keep their original sender presentation and transformed content.
+
 ## Setup
 
 `[p]` means your bot's command prefix. The cog is disabled by default:
@@ -17,7 +20,7 @@ OwoPlus reposts transformed text through a webhook using the author's display na
 [p]owoplus enable
 ```
 
-Commands require Red administrator access or the **Manage Server** permission and can only run in a server. The bot needs **View Channel**, **Send Messages**, **Manage Messages**, and **Manage Webhooks** in channels where messages will be transformed, plus **Embed Links** for command responses. The `test` command also needs **Read Message History**. Threads use a webhook in their parent text or forum channel and need the applicable thread access/send permissions. Enable the bot's Message Content intent for text processing.
+Commands require Red administrator access or the **Manage Server** permission and can only run in a server. The bot needs **View Channel**, **Send Messages**, **Manage Messages**, and **Manage Webhooks** in channels where messages will be transformed, plus **Embed Links** to display themed command cards. The `test` command also needs **Read Message History**. Threads use a webhook in their parent text or forum channel and need the applicable thread access/send permissions. Enable the bot's Message Content intent for text processing.
 
 Once enabled, processing applies throughout the server wherever the bot has access. There is no channel allowlist or exclusion command in this version.
 

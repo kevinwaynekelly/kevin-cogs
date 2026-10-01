@@ -120,12 +120,20 @@ class LevelPlus(redcommands.Cog):
             msg = template.format(user=u)
         except Exception:
             msg = f"{member.mention} has reached level **{new}**!"
+        embed = self._levelup_card(member, new, u.xp)
         try:
-            await self._presentation.send(
-                ch, msg, title="Level up", tone="success", allowed_mentions=None
-            )
+            await self._presentation.send(ch, embed=embed, notification=msg, allowed_mentions=None)
         except discord.HTTPException:
             log.debug("Level-up announcement could not be sent", exc_info=True)
+
+    def _levelup_card(self, member, level, xp, *, preview=False):
+        embed = self._presentation.embed(
+            "Level up preview" if preview else "Level up", tone="success"
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(name="Level", value=f"{level:,}")
+        embed.add_field(name="Total XP", value=f"{xp:,}")
+        return embed
 
     # ---------- listeners ----------
     @commands.Cog.listener()
@@ -468,7 +476,10 @@ class LevelPlus(redcommands.Cog):
         except Exception:
             msg = f"{m.mention} has reached level **{next_level}**!"
         await self._presentation.send(
-            ch, f"[TEST] {msg}", title="Level up preview", tone="success", allowed_mentions=None
+            ch,
+            embed=self._levelup_card(m, next_level, u.xp, preview=True),
+            notification=f"[TEST] {msg}",
+            allowed_mentions=None,
         )
         await self._presentation.confirm(ctx)
 

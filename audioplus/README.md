@@ -4,6 +4,9 @@ Lavalink v4 music playback through Wavelink 3.x, with queue controls and diagnos
 
 [Repository installation](../README.md#install)
 
+
+Command replies use the [shared visual theme](../docs/PRESENTATION.md), with a sectioned command overview, playback cards, and matching status colors. Grant **Embed Links** to show the cards; replies respect Red's embed preference and fall back to text when embeds are unavailable.
+
 ## Requirements and first load
 
 - Red 3.5.0 or newer.

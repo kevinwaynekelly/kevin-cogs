@@ -117,7 +117,7 @@ async def test_confirmation_has_success_color_and_command_heading(guild):
     ctx.command = SimpleNamespace(qualified_name="com autorole enable")
     await Presentation("CommunityPlus", "com").confirm(ctx)
     embed = ctx.send.await_args.kwargs["embed"]
-    assert embed.title == "CommunityPlus · Autorole Enable"
+    assert embed.title == "CommunityPlus · Autorole · Enable"
     assert embed.description == "Settings saved."
     assert embed.color.value == COLORS["success"]
 
@@ -144,7 +144,8 @@ async def test_custom_levelup_template_keeps_text_and_mentions(bot, guild):
     await cog.config.guild(guild).levelup.template.set("{user.mention} reached **{user.level}**!")
     await cog.maybe_announce_levelup(guild, member, 0, 2)
     output = channel.send.await_args.kwargs
-    assert output["embed"].description == f"{member.mention} reached **2**!"
+    assert channel.send.await_args.args[0] == f"{member.mention} reached **2**!"
+    assert output["embed"].fields[0].value == "2"
     assert output["allowed_mentions"] is None
 
 
@@ -244,3 +245,22 @@ async def test_preview_metadata_and_success_colors_survive_restyling(bot, guild)
     assert ctx.send.await_args.kwargs["embed"].color.value == COLORS["success"]
     await OwoPlus.owoplus_onein.callback(cog, ctx, n=0)
     assert ctx.send.await_args.kwargs["embed"].color.value == COLORS["warning"]
+
+
+async def test_long_prefix_and_notification_keep_limits_and_single_attachment(guild):
+    ctx = make_context(guild)
+    ctx.clean_prefix = "😀" * 1500
+    theme = Presentation("TestPlus", "test")
+    attachment = discord.File(io.BytesIO(b"export"), filename="export.txt")
+    notification = "@here long template 😀 " * 200
+    embed = theme.embed("Notice")
+    embed.add_field(name="Details", value="Details " * 500)
+    await theme.send(ctx, embed=embed, notification=notification, file=attachment)
+    content = "".join(call.args[0] for call in ctx.send.await_args_list if call.args)
+    assert content == notification
+    assert sum("file" in call.kwargs for call in ctx.send.await_args_list) == 1
+    for call in ctx.send.await_args_list:
+        if call.args:
+            assert units(call.args[0]) <= 2000
+        if "embed" in call.kwargs:
+            assert_limits(call.kwargs["embed"])

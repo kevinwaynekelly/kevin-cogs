@@ -146,27 +146,27 @@ class CommunityPlus(redcommands.Cog):
 
         e = discord.Embed(
             title="CommunityPlus - Status",
+            description="Roles, member activity, and community notices.",
             color=discord.Color.blurple(),
-            timestamp=self._utcnow(),
         )
         e.add_field(
             name="Core",
             value=settings(
-                f"embeds.compact = {g['embeds']['compact']}\n"
-                f"seen.enabled   = {g['seen']['enabled']}",
+                f"Compact event headers = {g['embeds']['compact']}\n"
+                f"Activity tracking = {g['seen']['enabled']}",
                 lang="ini",
             ),
             inline=False,
         )
         e.add_field(
             name="Autorole",
-            value=settings(f"enabled = {g['autorole']['enabled']}\nrole    = {ar}", lang="ini"),
+            value=settings(f"Status = {g['autorole']['enabled']}\nRole = {ar}", lang="ini"),
             inline=True,
         )
         e.add_field(
             name="Sticky Roles",
             value=settings(
-                f"enabled = {g['sticky']['enabled']}\nignore  = {', '.join(sticky_ign)}",
+                f"Status = {g['sticky']['enabled']}\nIgnored roles = {', '.join(sticky_ign)}",
                 lang="ini",
             ),
             inline=True,
@@ -174,22 +174,22 @@ class CommunityPlus(redcommands.Cog):
         e.add_field(
             name="Welcome",
             value=settings(
-                f"enabled = {g['welcome']['enabled']}\nchannel = {welcome_ch}",
+                f"Status = {g['welcome']['enabled']}\nChannel = {welcome_ch}",
                 lang="ini",
             ),
             inline=True,
         )
         e.add_field(
-            name="Cya",
-            value=settings(f"enabled = {g['cya']['enabled']}\nchannel = {cya_ch}", lang="ini"),
+            name="Goodbye",
+            value=settings(f"Status = {g['cya']['enabled']}\nChannel = {cya_ch}", lang="ini"),
             inline=True,
         )
         e.add_field(
-            name="Solo VC",
+            name="Solo voice cleanup",
             value=settings(
-                f"enabled   = {g['vcsolo']['enabled']}\n"
-                f"idle      = {g['vcsolo']['idle_seconds']}s\n"
-                f"dm_notify = {g['vcsolo']['dm_notify']}",
+                f"Status = {g['vcsolo']['enabled']}\n"
+                f"Idle timeout = {g['vcsolo']['idle_seconds']}s\n"
+                f"DM notifications = {g['vcsolo']['dm_notify']}",
                 lang="ini",
             ),
             inline=False,

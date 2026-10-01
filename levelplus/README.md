@@ -21,7 +21,9 @@ Enable the sources you want by repeating their commands with `true`. The `slashx
 
 Commands run in a server. Settings, XP migration/editing, aliases, and `testmsg`/`testup` require a Red admin or **Manage Server** permission. Status, help, diagnostics, member levels, leaderboards, and lookup are available to members unless restricted through Red's command permissions.
 
-The bot needs **View Channel**, **Send Messages**, and **Embed Links** for commands and announcements, **Attach Files** for export, and **Read Message History** to fetch reaction target messages. **Add Reactions** is used by the diagnostic probe and command confirmations. Enable the **Message Content** intent for word-based XP, **Server Members** for reliable member resolution, and voice-state events for voice XP.
+The bot needs **View Channel** and **Send Messages** for commands and announcements. Grant **Embed Links** for the themed cards; output falls back to text without it. Export needs **Attach Files**, and fetching reaction target messages needs **Read Message History**. **Add Reactions** is used by the diagnostic probe. Enable the **Message Content** intent for word-based XP, **Server Members** for reliable member resolution, and voice-state events for voice XP.
+
+Commands, confirmations, and level-up notices use the [shared visual theme](../docs/PRESENTATION.md). Member cards show level, XP, an avatar, and progress to the next level. Custom announcement templates retain their text and mention behavior. Long lists are paginated.
 
 ## Defaults
 
@@ -35,7 +37,7 @@ The bot needs **View Channel**, **Send Messages**, and **Embed Links** for comma
 | Restrictions | No excluded channels or roles. Thread, forum, text-in-voice, and slash-command flags are enabled. |
 | Level-up announcements | Enabled. Uses the configured text channel, then the server's system channel as fallback. |
 
-The default announcement is `{user.mention} has reached level **{user.level}**! GG!`. Templates support `{user.mention}`, `{user.name}`, `{user.level}`, and `{user.xp}` and are limited to 500 characters. Announcements are text only.
+The default announcement is `{user.mention} has reached level **{user.level}**! GG!`. Templates support `{user.mention}`, `{user.name}`, `{user.level}`, and `{user.xp}` and are limited to 500 characters. The template remains the message text, paired with a themed level/XP card so mentions keep their original behavior.
 
 Changing a curve recalculates displayed levels from existing XP. The multiplier changes the XP required per level, not the XP earned from an event.
 

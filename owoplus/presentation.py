@@ -9,6 +9,29 @@ import discord
 from redbot.core import commands
 
 COLORS = {"info": 0x818CF8, "success": 0x34D399, "warning": 0xFBBF24, "error": 0xFB7185}
+LABELS = {
+    "diag": "Diagnostics",
+    "pingnode": "Node diagnostics",
+    "playerstate": "Player state",
+    "debugvc": "Voice diagnostics",
+    "shownode": "Node settings",
+    "setnode": "Node settings",
+    "connectnode": "Node connection",
+    "fixvoice": "Voice recovery",
+    "seenlist": "Last seen",
+    "seendetail": "Last seen detail",
+    "seenlistcsv": "Last seen export",
+    "xp": "XP",
+    "exportcsv": "CSV export",
+    "importcsv": "CSV import",
+    "importbynamecsv": "CSV import by name",
+    "levelup": "Level-up notices",
+    "ownerbypass": "Bot owner bypass",
+    "onein": "Probability",
+    "nochannels": "Excluded channels",
+    "noroles": "Excluded roles",
+    "vcsolo": "Solo voice cleanup",
+}
 LEGACY_COLORS = {
     **{color: tone for tone, color in COLORS.items()},
     discord.Color.green().value: "success",
@@ -83,6 +106,7 @@ class Presentation:
             footer = footer.replace("[p]", prefix)
         elif "[p]" in footer:
             footer = ""
+        footer = footer.rstrip(".")
         embed.set_footer(text=clip("Kevin's Cogs" + (f" · {footer}" if footer else ""), 1900))
         return embed
 
@@ -126,12 +150,28 @@ class Presentation:
                 page.set_footer(text=f"{base.footer.text} · Page {index}/{len(pages)}")
         return pages
 
-    async def send(self, target, content=None, *, embed=None, title=None, tone=None, **kwargs):
+    async def send(
+        self,
+        target,
+        content=None,
+        *,
+        embed=None,
+        title=None,
+        tone=None,
+        notification=None,
+        **kwargs,
+    ):
         prefix = getattr(target, "clean_prefix", None)
         command = getattr(getattr(target, "command", None), "qualified_name", self.command)
         if title is None:
             tail = command.removeprefix(self.command).strip()
-            title = tail.replace("_", " ").title() if tail else "Status"
+            title = (
+                " · ".join(
+                    LABELS.get(part, part.replace("_", " ").title()) for part in tail.split()
+                )
+                if tail
+                else "Status"
+            )
         if embed is None:
             embed = self.embed(title, str(content) if content is not None else "Export attached.")
         elif content:
@@ -140,7 +180,9 @@ class Presentation:
         embed = self.style(embed, prefix=prefix, tone=tone)
         if prefix is not None and embed.footer.text == "Kevin's Cogs":
             help_command = self.command if self.command == "audio" else f"{self.command} help"
-            embed.set_footer(text=f"Kevin's Cogs · Use {prefix}{help_command} for commands")
+            embed.set_footer(
+                text=clip(f"Kevin's Cogs · Use {prefix}{help_command} for commands", 1900)
+            )
         use_embeds = True
         channel = getattr(target, "channel", target)
         guild = getattr(target, "guild", None)
@@ -152,23 +194,39 @@ class Presentation:
             use_embeds = use_embeds and await requested()
         kwargs.setdefault("allowed_mentions", discord.AllowedMentions.none())
         first_message = None
+        if notification and units(notification) > 2000:
+            for part in chunks(notification, 2000):
+                message = await target.send(part, **kwargs)
+                if first_message is None:
+                    first_message = message
+                kwargs.pop("file", None)
+                kwargs.pop("files", None)
+            notification = None
         for page in self.pages(embed):
             if use_embeds:
-                message = await target.send(embed=page, **kwargs)
+                if notification:
+                    message = await target.send(notification, embed=page, **kwargs)
+                else:
+                    message = await target.send(embed=page, **kwargs)
             else:
                 text = f"**{page.title}**\n{page.description or ''}"
                 for field in page.fields:
                     text += f"\n\n**{field.name}**\n{field.value}"
                 text += f"\n\n{page.footer.text}"
+                if notification:
+                    text = notification + "\n\n" + text
                 message = None
                 for part in chunks(text, 2000):
                     message = await target.send(part, **kwargs)
+                    if first_message is None:
+                        first_message = message
                     kwargs.pop("file", None)
                     kwargs.pop("files", None)
             if first_message is None:
                 first_message = message
             kwargs.pop("file", None)
             kwargs.pop("files", None)
+            notification = None
         return first_message
 
     async def confirm(self, ctx):

@@ -4,6 +4,9 @@ Community tools for Red, including first-time autoroles, role restoration after 
 
 See the [repository README](../README.md) for installation. Load with `[p]load communityplus`. Replace `[p]` with your bot's prefix.
 
+
+Commands, confirmations, welcome/goodbye notices, and voice-timeout DMs use the [shared visual theme](../docs/PRESENTATION.md). Custom templates keep their text. Long results are paginated, and output falls back to text when embeds are unavailable.
+
 ## Setup
 
 All `com` commands run in a server and require a Red admin or **Manage Server** permission. `restore` and `invites` additionally require the bot owner.
