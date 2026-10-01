@@ -21,9 +21,13 @@ DEFAULTS_GUILD = {
         "vote_skip": False,
         "fair_queue": False,
         "autoplay": False,
+        "history": True,
+        "max_seconds": 0,
+        "per_member": 0,
     },
     "playlists": {},
     "favorites": {},
+    "listening_history": [],
 }
 
 
@@ -182,7 +186,17 @@ class AudioCommands:
         try:
             terms = previous.author if previous.author != "Unknown" else previous.title
             tracks = await asyncio.wait_for(self._resolver.search(terms + " audio", limit=10), 15)
-            selected = next((track for track in tracks if track.uri not in player.recent), None)
+            policy = await self.config.guild(player.guild).music()
+            maximum = policy["max_seconds"]
+            selected = next(
+                (
+                    track
+                    for track in tracks
+                    if track.uri not in player.recent
+                    and (not maximum or 0 < track.length <= maximum * 1000)
+                ),
+                None,
+            )
             if (
                 selected
                 and not self._closing
@@ -192,7 +206,7 @@ class AudioCommands:
                 and generation == player._autoplay_generation
                 and not await self.bot.cog_disabled_in_guild(self, player.guild)
             ):
-                await player.enqueue([selected])
+                await player.enqueue([selected], max_seconds=maximum)
         except (MediaError, asyncio.TimeoutError):
             # Exhausted or unavailable suggestions fall back to the normal idle departure.
             pass
@@ -226,6 +240,7 @@ class AudioCommands:
 
     async def _track_started(self, player):
         self._skip_votes.pop(player.guild.id, None)
+        await self._record_listening_history(player)
         await self._update_panel(player)
         if player.guild.id not in self._panel_tasks and player.guild.id in self._panels:
 
@@ -508,6 +523,9 @@ class AudioCommands:
                 f"DJ role = {'<@&' + str(conf['dj_role']) + '>' if conf['dj_role'] else 'Open controls'}\n"
                 f"Vote skipping = {conf['vote_skip']}"
                 f"\nFair queue = {conf['fair_queue']}\nAutoplay = {conf['autoplay']}"
+                f"\nListening history = {conf['history']}"
+                f"\nMaximum song seconds = {conf['max_seconds']} (0 = unlimited)"
+                f"\nTracks per member = {conf['per_member']} (0 = unlimited)"
             )
             + f"\nUse `{ctx.clean_prefix}audioset setup` for guided settings.",
         )
@@ -553,6 +571,37 @@ class AudioCommands:
             player.autoplay = enabled
             player._autoplay_generation += 1
         await self._presentation.confirm(ctx)
+
+    @audioset.command(name="history")
+    async def audioset_history(self, ctx, enabled: bool):
+        """Collect recent music starts, or disable collection and erase history."""
+        section = self.config.guild(ctx.guild).music
+        async with section.get_lock():
+            await section.history.set(enabled)
+            if not enabled:
+                history = self.config.guild(ctx.guild).listening_history
+                async with history.get_lock():
+                    await history.set([])
+        await self._reply(
+            ctx, f"Listening history {'enabled' if enabled else 'disabled and cleared'}."
+        )
+
+    @audioset.command(name="limits")
+    async def audioset_limits(self, ctx, max_seconds: int = 0, per_member: int = 0):
+        """Limit song duration and active requests per member; zero disables a limit."""
+        if not 0 <= max_seconds <= 86400 or not 0 <= per_member <= MAX_TRACKS:
+            raise commands.BadArgument("Use 0 to 86400 seconds and 0 to 100 tracks per member.")
+        section = self.config.guild(ctx.guild).music
+        async with section.get_lock():
+            conf = await section()
+            conf.update(max_seconds=max_seconds, per_member=per_member)
+            await section.set(conf)
+        await self._reply(
+            ctx,
+            f"Maximum song length: {max_seconds or 'Unlimited'} seconds. "
+            f"Active tracks per member: {per_member or 'Unlimited'}. "
+            "The DJ role, Manage Server and bot owners are exempt. Existing tracks are retained.",
+        )
 
     @audioset.command(name="setup")
     async def audioset_setup(self, ctx):

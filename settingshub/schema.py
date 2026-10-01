@@ -100,6 +100,8 @@ ENUMS = {
     "features.channel_mode": {"all", "allowlist"},
 }
 RANGES = {
+    "music.max_seconds": (0, 86400),
+    "music.per_member": (0, 100),
     "continuity.empty_grace": (10, 3600),
     "community_tools.birthdays.hour": (0, 23),
     "progress_settings.daily_bonus": (0, 100),

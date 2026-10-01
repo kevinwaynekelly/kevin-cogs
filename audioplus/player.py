@@ -123,6 +123,7 @@ class GuildPlayer:
         self._restart = None
         self._idle_task = None
         self._queue_requests = 0
+        self.resuming = False
         self.lock = asyncio.Lock()
 
     @property
@@ -201,7 +202,7 @@ class GuildPlayer:
         await self.close()
         return True
 
-    async def enqueue(self, tracks, ctx=None):
+    async def enqueue(self, tracks, ctx=None, *, max_seconds=0, per_member=0):
         async with self.lock:
             if self.closed:
                 raise MediaError("The voice player disconnected. Join again before queueing music.")
@@ -209,9 +210,21 @@ class GuildPlayer:
                 raise MediaError(
                     f"The queue holds at most {MAX_TRACKS} upcoming tracks. Clear some tracks first."
                 )
+            uid = getattr(getattr(ctx, "author", None), "id", 0)
+            if max_seconds and any(not 0 < track.length <= max_seconds * 1000 for track in tracks):
+                raise MediaError(
+                    f"Each requested song must have a known duration of at most {max_seconds} seconds. No tracks were added."
+                )
+            active = self.current or (self._restart[0] if self._restart else None)
+            pending = list(self.queue) + ([active] if active else [])
+            if per_member and uid:
+                count = sum(self._requesters.get(id(track), 0) == uid for track in pending)
+                if count + len(tracks) > per_member:
+                    raise MediaError(
+                        f"You can have at most {per_member} requested tracks, including the current song. You already have {count}. No tracks were added."
+                    )
             self._cancel_idle()
             if ctx is not None:
-                uid = getattr(getattr(ctx, "author", None), "id", 0)
                 self._requesters.update({id(track): uid for track in tracks})
             self._recovery_cleared = False
             self.queue.extend(tracks)
@@ -294,6 +307,7 @@ class GuildPlayer:
         try:
             while not self.closed:
                 async with self.lock:
+                    self.resuming = self._restart is not None
                     if self._restart:
                         track, start, paused = self._restart
                         self._restart = None

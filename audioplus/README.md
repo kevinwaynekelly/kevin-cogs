@@ -259,7 +259,7 @@ New music controls have matching slash commands. Automatic now-playing panels ar
 
 `audioset` requires Red admin or Manage Server. Open controls remain the default. With a DJ role, DJs, members with Manage Server, and bot owners can manage playback; other members can still queue music. Vote skip requires at least half of current human listeners, rounded up, and each person counts once per track. Nonprivileged controls require sharing the bot's voice channel when a policy is enabled. A play request cannot move an active protected player to another channel. Private saved collections contain source URLs and track metadata, never extracted playback streams; they survive reloads, while the live queue remains transient.
 
-There are now 52 slash music/settings actions, including `/playlist list`, `/favorite list`, and `/audioset status`. After updating and reloading, run `[p]slash sync` to upload the additions.
+There are now 58 slash music/settings actions, including `/playlist list`, `/favorite list`, and `/audioset status`. After updating and reloading, run `[p]slash sync` to upload the additions.
 
 ## Daily YouTube playback checks
 
@@ -313,7 +313,7 @@ For bug reports, include Red/Discord.py versions, `[p]audiostatus`, `[p]playerst
 
 Legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The daily monitor adds an optional `watchdog` section, disabled by default, without changing those legacy values. Red initializes the added defaults on existing installations. It stores the recipient's Discord ID, test server/channel IDs, public test video URL, schedule/timezone, daily cursor, latest safe result, and pending failure alert/delivery state. User-data hooks export that recipient's monitor record or remove it and disable checking. Deletion does not remove already delivered Discord DMs.
 
-Guild Config additionally stores music panel/DJ/vote preferences, and member-specific saved playlists/favorites containing supplied public source URLs and track metadata. These are exported/deleted by the user's Red data hooks. The new sections use merged defaults, preserving all legacy values. The cog does not store extracted signed streams, listening histories, audio files, or yt-dlp disk caches. Normal command contexts, errors, live queues, volume, repeat settings, skip votes, and panel references stay in memory.
+Guild Config additionally stores music panel/DJ/vote preferences, and member-specific saved playlists/favorites containing supplied public source URLs and track metadata. These are exported/deleted by the user's Red data hooks. The new sections use merged defaults, preserving all legacy values. The cog does not store extracted signed streams, audio files, or yt-dlp disk caches. Normal command contexts, errors, live queues, volume, repeat settings, skip votes, and panel references stay in memory.
 
 Unload closes only AudioPlus's players and cancels the daily scheduler/probe, owned lookups/decoders, and idle timers. Other cogs' voice connections are left alone. Removing a guild also closes its player. Each cog remains independently installable through Downloader.
 
@@ -332,7 +332,7 @@ Use `[p]search <terms>` or `/search` for up to ten results with titles, authors,
 
 `[p]audioset fairqueue true` alternates requesters and preserves each person's song order. All requesters get a turn before another round. Queue edits and shuffle still respect fairness while it is enabled; disable it for an exact manual ordering. Requester associations survive reconnects in memory and disappear on unload.
 
-`[p]audioset autoplay true` searches for music by the previous artist/title when a track finishes and the queue is empty. It skips the last 50 source URLs, requires a human listener, and limits each suggestion lookup to 15 seconds. This is artist-based discovery rather than YouTube's personalized recommendations. Stop, unload, disconnect, and disabling autoplay invalidate pending suggestions. Unavailable or exhausted suggestions fall back to the usual 10-second idle departure. Both settings default to false and are also available in `/audioset` and its setup panel. No listening history is saved.
+`[p]audioset autoplay true` searches for music by the previous artist/title when a track finishes and the queue is empty. It skips the last 50 source URLs, requires a human listener, and limits each suggestion lookup to 15 seconds. This is artist-based discovery rather than YouTube's personalized recommendations. Stop, unload, disconnect, and disabling autoplay invalidate pending suggestions. Unavailable or exhausted suggestions fall back to the usual 10-second idle departure. Both settings default to false and are also available in `/audioset` and its setup panel. Autoplay uses a separate in-memory recent-source list; the bounded listening history below records actual playback starts.
 
 ## Continuity and collaborative playlists
 
@@ -340,3 +340,18 @@ Use `[p]search <terms>` or `/search` for up to ten results with titles, authors,
 - `[p]audioset emptypause true 60` pauses when the bot's channel has no humans, resumes only a pause it created when humans return, and disconnects after the configured 10 to 3600 second grace. Disabled by default. A recovery-enabled empty-room disconnect keeps its checkpoint. An exhausted queue still leaves after ten seconds.
 - `[p]audioset normalize true` enables FFmpeg loudness normalization targeting -16 LUFS with a -1.5 dB true-peak ceiling. Disabled by default and applies when the next decoder starts, including seeking/rejoining. Manual volume still applies afterward.
 - `[p]serverplaylist create <name>` creates a shared collection; members use `suggest <name> <query>`. DJs or Manage Server use `review`, `approve <name> <position> [true|false]`, `remove` and `delete`. Members use `show` and `play`. Limits: ten collections, 100 approved tracks and 100 pending suggestions each. Personal playlists remain separate. Slash equivalents are available.
+
+## Listening history, replay and request limits
+
+| Text command | Slash command | Purpose |
+| --- | --- | --- |
+| `[p]history [page]` | `/history list` | Browse ten recent music starts per page, with source links, requesters, times and stable replay IDs. |
+| `[p]replay <id>` | `/replay` | Queue a history song through normal voice selection, play permissions and request limits. |
+| `[p]history clear` | `/history clear` | Remove your own requests from retained history. |
+| `[p]history purge` | `/history purge` | Administrators erase this server's history. |
+| `[p]audioset history true|false` | `/audioset history` | Enable collection, or disable and erase the server history. |
+| `[p]audioset limits 600 3` | `/audioset limits` | Allow songs of at most 600 seconds and three active requests per person. |
+
+Listening history starts enabled on upgrade and records new playback starts, not queued or failed-to-start tracks. It retains at most 100 records, 512 KiB and 30 days per server, with startup/hourly and access-time pruning. Metadata contains the public source, title, uploader, duration, start time and requester ID; autoplay has no requester. Seeking, rejoining or resuming a recovery checkpoint does not duplicate the interrupted start. Repeating a song creates another start. History is visible to members who can use both `play` and `audio play`. User-data hooks export/delete that person's request records. Settings backups exclude history.
+
+Both request limits start at zero (disabled). Maximum duration accepts 0 to 86400 seconds; active tracks per member accepts 0 to 100. The per-member count includes the current/preparing song and upcoming requests, and is checked under the player lock. A playlist is accepted entirely or rejected entirely. Duration-limited requests require known duration; live or unknown-duration sources are rejected for nonexempt requesters. The configured DJ role, Manage Server and bot owners bypass both limits, while the server's 100-track upcoming queue cap remains. Limits cover play, search selection, replay, saved favorites and personal/shared playlists. Autoplay observes the duration limit. Changing policy retains already accepted tracks. Run `[p]audioset limits 0 0` to disable both limits.

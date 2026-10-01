@@ -19,8 +19,9 @@ from .command_support import prepare_hybrid
 from .continuity import CONTINUITY_DEFAULTS, AudioContinuity
 from .dependencies import VoiceDependencyRepair
 from .failures import log_failure, playback_stage
-from .features import DEFAULTS_GUILD, AudioCommands, check_control, vote_threshold
+from .features import DEFAULTS_GUILD, AudioCommands, check_control, privileged, vote_threshold
 from .interactive import close_views
+from .listening import ListeningCommands
 from .player import GuildPlayer
 from .presentation import Presentation
 from .resolver import MediaError, MediaResolver, normalize_query
@@ -37,7 +38,7 @@ log = logging.getLogger(__name__)
 GUILD_ONLY = commands.guild_only()
 
 
-class AudioPlus(AudioContinuity, AudioCommands, commands.Cog):
+class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog):
     """Music search, native Discord playback, queues, and voice diagnostics."""
 
     # Retain the old Config namespace/defaults for upgrades and rollbacks. These
@@ -644,7 +645,17 @@ class AudioPlus(AudioContinuity, AudioCommands, commands.Cog):
         player.fair_queue, player.autoplay = preferences["fair_queue"], preferences["autoplay"]
         player.normalize = (await self.config.guild(player.guild).continuity())["normalize"]
         try:
-            await player.enqueue(tracks, ctx)
+            exempt = (
+                await privileged(self, ctx.author, preferences)
+                if preferences["max_seconds"] or preferences["per_member"]
+                else False
+            )
+            await player.enqueue(
+                tracks,
+                ctx,
+                max_seconds=0 if exempt else preferences["max_seconds"],
+                per_member=0 if exempt else preferences["per_member"],
+            )
             await self._save_recovery(player)
         except MediaError as exc:
             raise commands.CommandError(str(exc)) from exc
@@ -1363,6 +1374,7 @@ class AudioPlus(AudioContinuity, AudioCommands, commands.Cog):
 
     async def red_delete_data_for_user(self, *, requester, user_id):
         await self._continuity_delete_user(user_id)
+        await self._delete_listening_user(user_id)
         if (await self.config.watchdog())["recipient_id"] == user_id:
             await self._watchdog.configure(**DEFAULT_WATCHDOG)
         for guild_id in await self.config.all_guilds():
@@ -1388,6 +1400,9 @@ class AudioPlus(AudioContinuity, AudioCommands, commands.Cog):
                 saved[str(guild_id)] = records
         if saved:
             data["collections"] = saved
+        history = await self._listening_user_data(user_id)
+        if history:
+            data["listening_history"] = history
         return {"audioplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
 
     @commands.Cog.listener()

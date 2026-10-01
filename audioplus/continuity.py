@@ -64,6 +64,7 @@ class AudioContinuity:
             return
         self._next_recovery_prune = time.monotonic() + 3600
         for gid, conf in (await self.config.all_guilds()).items():
+            await self._listening_records(self.config.guild_from_id(gid))
             recovery = conf.get("recovery", {})
             if recovery and time.time() - recovery.get("at", 0) > 7 * 86400:
                 section = self.config.guild_from_id(gid).recovery

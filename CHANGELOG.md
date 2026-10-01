@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Listening history and request limits
+
+- Add server listening history with stable replay IDs, request attribution, 30-day/count/byte retention and user-data hooks. Record playback starts without duplicating seek/reconnect/recovery resumes; repeat playback records a fresh start.
+- Add all-or-nothing duration and active-request limits under the player lock, covering search, playlists, favorites and replay with configured DJ, manager and owner exemptions. Defaults leave requests unrestricted.
+- Add text/slash controls, original play permission checks, backup range validation and mocked Discord/media regression coverage.
+
 ## 2026-10-01: Integration and command discovery
 
 - Apply server themes to live music and community card edits, PNG rank cards, daily playback/error DMs and log delivery retries. Keep base retry cards unchanged and reserve Unicode footer space within Discord limits.
