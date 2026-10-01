@@ -81,6 +81,7 @@ class GuildPlayer:
         source_factory=NativeSource,
         on_idle=None,
         on_start=None,
+        on_end=None,
     ):
         self.voice = voice
         self.resolver = resolver
@@ -88,6 +89,13 @@ class GuildPlayer:
         self.source_factory = source_factory
         self.on_idle = on_idle
         self.on_start = on_start
+        self.on_end = on_end
+        self.fair_queue = False
+        self.autoplay = False
+        self._autoplay_generation = 0
+        self._last_requester = 0
+        self._requesters = {}
+        self.recent = deque(maxlen=50)
         self.guild = voice.guild
         self.queue: deque[Track] = deque()
         self.current: Track | None = None
@@ -190,10 +198,42 @@ class GuildPlayer:
                     f"The queue holds at most {MAX_TRACKS} upcoming tracks. Clear some tracks first."
                 )
             self._cancel_idle()
+            if ctx is not None:
+                uid = getattr(getattr(ctx, "author", None), "id", 0)
+                self._requesters.update({id(track): uid for track in tracks})
             self.queue.extend(tracks)
+            self._balance_queue()
             if ctx is not None:
                 self.context = ctx
             self._start_worker()
+
+    def _balance_queue(self):
+        """Round robin requesters while preserving each requester's song order."""
+        active = {id(track) for track in self.queue}
+        if self.current:
+            active.add(id(self.current))
+        if self._restart:
+            active.add(id(self._restart[0]))
+        self._requesters = {key: value for key, value in self._requesters.items() if key in active}
+        if not self.fair_queue:
+            return
+        groups = {}
+        for track in self.queue:
+            groups.setdefault(self._requesters.get(id(track), 0), deque()).append(track)
+        ordered = deque()
+        previous = (
+            self._requesters.get(id(self.current), 0) if self.current else self._last_requester
+        )
+        turns = deque(groups)
+        if previous in turns:
+            turns.remove(previous)
+            turns.append(previous)
+        while turns:
+            uid = turns.popleft()
+            ordered.append(groups[uid].popleft())
+            if groups[uid]:
+                turns.append(uid)
+        self.queue = ordered
 
     async def _play_one(self, track, start=0, paused=False):
         self.preparing = True
@@ -244,11 +284,14 @@ class GuildPlayer:
                         track, start, paused = self._restart
                         self._restart = None
                     elif self.queue:
+                        self._balance_queue()
                         track, start, paused = self.queue.popleft(), 0, False
                     else:
                         self._schedule_idle()
                         return
                     self.current = track
+                    self._last_requester = self._requesters.get(id(track), 0)
+                    self.recent.append(track.uri)
                     self._track_task = asyncio.create_task(self._play_one(track, start, paused))
                 completed = False
                 try:
@@ -281,6 +324,11 @@ class GuildPlayer:
                                 self.queue.appendleft(track)
                             elif self.repeat == "queue":
                                 self.queue.append(track)
+                if completed and not self.closed and not self.queue and self.on_end:
+                    try:
+                        await self.on_end(self, track)
+                    except Exception:
+                        log.warning("AudioPlus autoplay lookup failed", exc_info=True)
         finally:
             self.current = None
 
@@ -300,6 +348,7 @@ class GuildPlayer:
 
     async def stop(self):
         async with self.lock:
+            self._autoplay_generation += 1
             self.queue.clear()
             self._restart = None
             self._cancel_track()
@@ -323,6 +372,7 @@ class GuildPlayer:
             items = list(self.queue)
             selected = items.pop(position - 1)
             self.queue = deque(items)
+            self._balance_queue()
             return selected
 
     async def move(self, source, destination):
@@ -333,6 +383,7 @@ class GuildPlayer:
             selected = items.pop(source - 1)
             items.insert(destination - 1, selected)
             self.queue = deque(items)
+            self._balance_queue()
             return selected
 
     async def seek(self, position):
@@ -358,6 +409,7 @@ class GuildPlayer:
     async def close(self, *, disconnect=True):
         self.closed = True
         self.queue.clear()
+        self._requesters.clear()
         self._restart = None
         idle = self._cancel_idle()
         self._cancel_track()

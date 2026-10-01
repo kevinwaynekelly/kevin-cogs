@@ -304,3 +304,11 @@ Regression tests cover Red Config/command compatibility, real Red hybrid command
 - [yt-dlp JavaScript runtime setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS)
 - [Discord.py voice example](https://github.com/Rapptz/discord.py/blob/master/examples/basic_voice.py)
 - [PhasecoreX Red image](https://github.com/PhasecoreX/docker-red-discordbot)
+
+## Search selection, fair queues, and autoplay
+
+Use `[p]search <terms>` or `/search` for up to ten results with titles, authors, and durations. The requester-only picker expires after three minutes, repeats current command permissions, and joins voice only after a successful choice. Selection queues one track and closes the picker.
+
+`[p]audioset fairqueue true` alternates requesters and preserves each person's song order. All requesters get a turn before another round. Queue edits and shuffle still respect fairness while it is enabled; disable it for an exact manual ordering. Requester associations survive reconnects in memory and disappear on unload.
+
+`[p]audioset autoplay true` searches for music by the previous artist/title when a track finishes and the queue is empty. It skips the last 50 source URLs, requires a human listener, and limits each suggestion lookup to 15 seconds. This is artist-based discovery rather than YouTube's personalized recommendations. Stop, unload, disconnect, and disabling autoplay invalidate pending suggestions. Unavailable or exhausted suggestions fall back to the usual 10-second idle departure. Both settings default to false and are also available in `/audioset` and its setup panel. No listening history is saved.

@@ -412,21 +412,35 @@ class AudioPlus(AudioCommands, commands.Cog):
         resume = player._restart
         if resume is None and player.current:
             resume = (player.current, player.position, player.paused)
-        return resume, list(player.queue), player.volume, player.repeat, player.context
+        return (
+            resume,
+            list(player.queue),
+            player.volume,
+            player.repeat,
+            player.context,
+            (dict(player._requesters), player._last_requester, list(player.recent)),
+        )
 
     @staticmethod
     def _retain(player, snapshot):
-        resume, queued, player.volume, player.repeat, player.context = snapshot
+        resume, queued, player.volume, player.repeat, player.context, extras = snapshot
         player.closed = True
         player.queue.clear()
         player.queue.extend(queued)
         player._restart = resume
+        player._requesters, player._last_requester, recent = extras
+        player.recent.clear()
+        player.recent.extend(recent)
 
     async def _restore(self, player, snapshot):
-        resume, queued, player.volume, player.repeat, player.context = snapshot
+        resume, queued, player.volume, player.repeat, player.context, extras = snapshot
+        player._requesters, player._last_requester, recent = extras
+        player.recent.extend(recent)
+        preferences = await self.config.guild(player.guild).music()
+        player.fair_queue, player.autoplay = preferences["fair_queue"], preferences["autoplay"]
         if resume:
             await player.restart(resume[0], start=resume[1], paused=resume[2])
-        await player.enqueue(queued, player.context)
+        await player.enqueue(queued)
 
     @staticmethod
     def _busiest_voice_channel(guild):
@@ -505,6 +519,7 @@ class AudioPlus(AudioCommands, commands.Cog):
                         self._report_playback_failure,
                         on_idle=self._disconnect_idle_player,
                         on_start=self._track_started,
+                        on_end=self._autoplay_next,
                     )
                     self._players[ctx.guild.id] = player
                     if snapshot:
@@ -552,6 +567,8 @@ class AudioPlus(AudioCommands, commands.Cog):
             self._lookups.discard(task)
 
     async def _enqueue(self, player, tracks, ctx):
+        preferences = await self.config.guild(player.guild).music()
+        player.fair_queue, player.autoplay = preferences["fair_queue"], preferences["autoplay"]
         try:
             await player.enqueue(tracks, ctx)
         except MediaError as exc:
@@ -628,6 +645,7 @@ class AudioPlus(AudioCommands, commands.Cog):
                     self._report_playback_failure,
                     on_idle=self._disconnect_idle_player,
                     on_start=self._track_started,
+                    on_end=self._autoplay_next,
                 )
                 self._players[guild.id] = player
                 await self._restore(player, snapshot)

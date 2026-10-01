@@ -46,7 +46,7 @@ CONTROLS = {
     "remove",
     "move",
 }
-NEW_GROUPS = {"audioset", "playlist", "favorite"}
+NEW_GROUPS = {"search", "audioset", "playlist", "favorite"}
 
 
 @pytest.fixture

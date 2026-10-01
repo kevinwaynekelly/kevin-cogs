@@ -15,7 +15,13 @@ from .presentation import clip, settings
 from .resolver import MAX_TRACKS, MediaError, Track, http_url
 
 DEFAULTS_GUILD = {
-    "music": {"panel": True, "dj_role": None, "vote_skip": False},
+    "music": {
+        "panel": True,
+        "dj_role": None,
+        "vote_skip": False,
+        "fair_queue": False,
+        "autoplay": False,
+    },
     "playlists": {},
     "favorites": {},
 }
@@ -112,7 +118,112 @@ def vote_threshold(channel):
     return max(1, math.ceil(len([member for member in channel.members if not member.bot]) / 2))
 
 
+class SearchView(discord.ui.View):
+    def __init__(self, cog, ctx, tracks):
+        super().__init__(timeout=180)
+        self.cog, self.owner_id, self.guild_id = cog, ctx.author.id, ctx.guild.id
+        self.tracks, self.message, self.used = tracks, None, False
+        self.lock = asyncio.Lock()
+        selector = discord.ui.Select(
+            placeholder="Choose a song",
+            options=[
+                discord.SelectOption(
+                    label=clip(track.title, 100),
+                    value=str(index),
+                    description=clip(track.author + " · " + cog._duration(track.length), 100),
+                )
+                for index, track in enumerate(tracks)
+            ],
+        )
+
+        async def select(interaction):
+            try:
+                if interaction.guild_id != self.guild_id or cog._closing:
+                    raise commands.CheckFailure("This search picker expired.")
+                context = await component_context(
+                    cog, interaction, "search", owner_id=self.owner_id
+                )
+                async with self.lock:
+                    if self.used or self.is_finished():
+                        raise commands.CommandError(
+                            "This search picker already finished. Search again."
+                        )
+                    await cog._queue_saved(context, [self.tracks[int(selector.values[0])]])
+                    self.used = True
+                    self.stop()
+                    await self.on_timeout()
+            except commands.CommandError as error:
+                await component_error(interaction, error)
+
+        selector.callback = select
+        self.add_item(selector)
+        cog._views.add(self)
+
+    async def on_timeout(self):
+        self.cog._views.discard(self)
+        if self.message:
+            with suppress(discord.HTTPException):
+                await self.message.edit(view=None)
+
+    async def on_error(self, interaction, error, item):
+        await component_error(interaction, error)
+
+
 class AudioCommands:
+    async def _autoplay_next(self, player, previous):
+        if self._closing or player.closed or not player.autoplay or player.queue:
+            return
+        if await self.bot.cog_disabled_in_guild(self, player.guild):
+            return
+        if not any(not member.bot for member in player.voice.channel.members):
+            return
+        generation = player._autoplay_generation
+        player.begin_queue_request()
+        try:
+            terms = previous.author if previous.author != "Unknown" else previous.title
+            tracks = await asyncio.wait_for(self._resolver.search(terms + " audio", limit=10), 15)
+            selected = next((track for track in tracks if track.uri not in player.recent), None)
+            if (
+                selected
+                and not self._closing
+                and not player.closed
+                and player.autoplay
+                and not player.queue
+                and generation == player._autoplay_generation
+                and not await self.bot.cog_disabled_in_guild(self, player.guild)
+            ):
+                await player.enqueue([selected])
+        except (MediaError, asyncio.TimeoutError):
+            # Exhausted or unavailable suggestions fall back to the normal idle departure.
+            pass
+        finally:
+            player.end_queue_request()
+
+    @commands.hybrid_command(name="search")
+    @commands.guild_only()
+    @commands.cooldown(1, 5, commands.BucketType.member)
+    async def search(self, ctx, *, query: str):
+        """Choose a song from search results before joining voice."""
+        task = asyncio.create_task(self._resolver.search(query, limit=10))
+        self._lookups.add(task)
+        try:
+            tracks = (await task)[:10]
+        except MediaError as error:
+            raise commands.CommandError(str(error)) from error
+        finally:
+            self._lookups.discard(task)
+        if self._closing:
+            raise commands.CommandError("AudioPlus is unloading.")
+        if not tracks:
+            return await self._reply(ctx, "No results. Try another search.", tone="warning")
+        view = SearchView(self, ctx, tracks)
+        view.message = await self._reply(
+            ctx,
+            "Choose a song below. Only you can use this picker, and it expires in three minutes.",
+            title="Search results",
+            view=view,
+        )
+
     async def _track_started(self, player):
         self._skip_votes.pop(player.guild.id, None)
         await self._update_panel(player)
@@ -373,6 +484,14 @@ class AudioCommands:
         group = self.config.guild(guild).music
         async with group.get_lock():
             await group.get_attr(key).set(value)
+        player = self._get_player(guild)
+        if player and key in {"fair_queue", "autoplay"}:
+            async with player.lock:
+                setattr(player, key, value)
+                if key == "fair_queue":
+                    player._balance_queue()
+                else:
+                    player._autoplay_generation += 1
 
     @commands.hybrid_group(name="audioset", invoke_without_command=True, fallback="status")
     @commands.guild_only()
@@ -386,6 +505,7 @@ class AudioCommands:
                 f"Player panel = {conf['panel']}\n"
                 f"DJ role = {'<@&' + str(conf['dj_role']) + '>' if conf['dj_role'] else 'Open controls'}\n"
                 f"Vote skipping = {conf['vote_skip']}"
+                f"\nFair queue = {conf['fair_queue']}\nAutoplay = {conf['autoplay']}"
             )
             + f"\nUse `{ctx.clean_prefix}audioset setup` for guided settings.",
         )
@@ -411,6 +531,27 @@ class AudioCommands:
         self._skip_votes.pop(ctx.guild.id, None)
         await self._presentation.confirm(ctx)
 
+    @audioset.command(name="fairqueue")
+    async def audioset_fairqueue(self, ctx, enabled: bool):
+        """Alternate requesters while preserving each person's song order."""
+        await self._set_music_setting(ctx.guild, "fair_queue", enabled)
+        player = self._get_player(ctx.guild)
+        if player:
+            async with player.lock:
+                player.fair_queue = enabled
+                player._balance_queue()
+        await self._presentation.confirm(ctx)
+
+    @audioset.command(name="autoplay")
+    async def audioset_autoplay(self, ctx, enabled: bool):
+        """Suggest more music after the queue ends, or retain the idle departure."""
+        await self._set_music_setting(ctx.guild, "autoplay", enabled)
+        player = self._get_player(ctx.guild)
+        if player:
+            player.autoplay = enabled
+            player._autoplay_generation += 1
+        await self._presentation.confirm(ctx)
+
     @audioset.command(name="setup")
     async def audioset_setup(self, ctx):
         """Choose music settings in a guided panel."""
@@ -429,6 +570,8 @@ class AudioCommands:
                 ("dj_role", "DJ role", "role"),
                 ("panel", "player panel", "toggle"),
                 ("vote_skip", "vote skip", "toggle"),
+                ("fair_queue", "fair queue", "toggle"),
+                ("autoplay", "autoplay", "toggle"),
             ],
             update,
         )

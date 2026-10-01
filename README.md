@@ -8,7 +8,7 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 
 | Cog | What it does | Commands | Guide |
 | --- | --- | --- | --- |
-| AudioPlus | Native music playback, player controls, saved playlists/favorites, DJ policies, and daily checks | `[p]play`, `/play`, `[p]audio` | [Setup and commands](audioplus/README.md) |
+| AudioPlus | Native music, search picks, fair queues/autoplay, saved music, DJ policies, and daily checks | `[p]play`, `/play`, `[p]audio` | [Setup and commands](audioplus/README.md) |
 | CommunityPlus | Self-service/automatic roles, welcomes, solo voice controls, voice time, and weekly summaries | `[p]community`, `[p]seen`, `/activity` | [Setup and commands](communityplus/README.md) |
 | LevelPlus | XP, reward roles, calendar/season rankings, earned-XP boosts, and farming controls | `[p]level`, `[p]rank`, `/leaderboard` | [Setup and commands](levelplus/README.md) |
 | LogPlus | Event logs, permission diffs, category routing, uncached messages, and delivery recovery | `[p]log`, `[p]logchannel`, `/log event` | [Setup and commands](logplus/README.md) |
@@ -28,7 +28,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | LogPlus | `[p]log setup` or `/log setup` | Administrator event routing, exemptions, permission diffs, raw-event coverage, and delivery status/retries. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The five cogs expose 202 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
+The five cogs expose 205 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
 
 ## Discord presentation
 

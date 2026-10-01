@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Music discovery and fair queues
+
+- Add a requester-bound search-results picker with fresh permission checks and matching slash commands. Selection joins voice only after choosing a track.
+- Add optional round-robin requester queues and artist-based autoplay, both disabled by default. Preserve requester order through reconnects, exclude recent sources, bound lookups, and invalidate late suggestions on stop/disconnect/unload.
+
+
 ## 2026-10-01: Community reload timer guard
 
 - Prevent late voice events and settings callbacks from creating solo timers after the cog unloads. Mark the instance closed before cancelling owned tasks and guard every timer creation.

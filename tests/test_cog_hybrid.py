@@ -118,7 +118,7 @@ async def test_all_cogs_register_with_core_and_serialize_slash_payloads(command_
             "LogPlus",
             "OwoPlus",
         )
-    } == {"AudioPlus": 36, "CommunityPlus": 51, "LevelPlus": 59, "LogPlus": 23, "OwoPlus": 33}
+    } == {"AudioPlus": 39, "CommunityPlus": 51, "LevelPlus": 59, "LogPlus": 23, "OwoPlus": 33}
 
     def check_options(payload, depth=0):
         # Discord.py does not validate unrenamed callback parameter names at registration.

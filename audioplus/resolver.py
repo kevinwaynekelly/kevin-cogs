@@ -188,8 +188,10 @@ class MediaResolver:
                     await self._kill(process)
                 self._processes.discard(process)
 
-    async def search(self, query: str) -> list[Track]:
+    async def search(self, query: str, *, limit: int = 1) -> list[Track]:
         query = normalize_query(query)
+        if query.startswith(("ytsearch1:", "scsearch1:")):
+            query = query.replace("search1:", f"search{max(1, min(10, limit))}:", 1)
         if query.startswith(("http://", "https://")):
             path = PurePosixPath(urlsplit(query).path)
             if path.suffix.lower() in DIRECT_EXTENSIONS:
