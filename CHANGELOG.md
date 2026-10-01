@@ -2,6 +2,12 @@
 
 Changes recorded here start with the repository's documentation and metadata pass. Earlier implementation history is available in Git commits.
 
+## 2026-10-01: AudioPlus command loading checks
+
+- Exercise prefix messages through Red's actual context parser, permission requirements, and command handler for owners and ordinary members. Check query errors, aliases, converted volume arguments, playback controls, and registration after removing and replacing the cog.
+- Document explicit reloading when Downloader reports that installed files are already current, plus `help play` and repository/path checks for silent unrecognized commands. Prefix controls do not depend on slash enablement.
+- Discord/media transport remains mocked. These checks verify current source behavior and do not identify which version or configuration is running on a remote bot.
+
 ## 2026-10-01: AudioPlus direct and slash commands
 
 - Add 20 direct playback, voice, and diagnostic controls with matching slash commands, including `play`, `skip`, `pause`, `np`, and `queue`. Both interfaces use the existing player and themed track confirmations.

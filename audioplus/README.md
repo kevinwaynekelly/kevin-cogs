@@ -57,6 +57,20 @@ Install the container dependencies below before testing playback. If Downloader 
 
 Restart Red after that command. When dependencies are already installed, `[p]cog update True audioplus` can update and reload the cog directly.
 
+### If new prefix commands do not respond
+
+As the bot owner, update the installed files, explicitly reload the cog, and verify that Red recognizes `play`:
+
+```text
+[p]cog update True audioplus
+[p]reload audioplus
+[p]help play
+```
+
+Downloader only offers or performs its automatic reload when an update is installed during that command. If it reports that the cog is already up to date, an older copy can still be active in memory; the explicit `reload` handles that case. Red normally stays silent for unrecognized commands when fuzzy help is disabled.
+
+`[p]help play` should show AudioPlus's song/URL query argument. If reloading fails, keep the full reload reply and matching console error. If `play` remains missing after a successful reload, check `[p]repo info kevin-cogs` for the repository URL and `main` branch, plus `[p]paths` for another copy of AudioPlus. Use your actual repository name if it differs. Updating repository files alone does not update an installed cog. Prefix commands do not require slash enablement or synchronization.
+
 Saved Config identifiers and defaults remain compatible. The old host, port, password, TLS flag, and resume timeout stay saved for rollback but are **ignored by native playback**. In-memory queues reset on reload or restart, as before. Existing commands, aliases, arguments, and permission checks remain registered. Direct controls and slash commands are additional entry points to the same player. Red treats direct controls as new command names, so custom command permission rules on legacy `[p]audio ...` commands should also be applied to the corresponding direct controls.
 
 The old node commands remain available with documented new behavior:
