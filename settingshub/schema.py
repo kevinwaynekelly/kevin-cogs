@@ -27,6 +27,7 @@ FIELDS = {
         "cya",
         "vcsolo",
         "seen",
+        "community_tools",
         "features",
     ),
     "LevelPlus": (
@@ -73,7 +74,12 @@ ROLE_LISTS = {
     "features.solo_roles",
     "restrictions.no_roles",
 }
-ROLE_FIELDS = {"music.dj_role", "autorole.role_id"}
+ROLE_FIELDS = {
+    "music.dj_role",
+    "autorole.role_id",
+    "community_tools.onboarding.role",
+    "community_tools.birthdays.role",
+}
 MAP_PATHS = {
     "overrides",
     "rewards.roles",
@@ -90,6 +96,7 @@ ENUMS = {
 }
 RANGES = {
     "continuity.empty_grace": (10, 3600),
+    "community_tools.birthdays.hour": (0, 23),
     "multiplier": (0.1, 10),
     "voice.min_members": (1, 99),
     "message.cooldown": (0, 3600),
@@ -284,12 +291,25 @@ def validate_fields(guild, expected, incoming, path=""):
             )
     elif expected is None:
         if incoming is not None:
+            channel_types = {
+                "community_tools.voice_hub": discord.VoiceChannel,
+                "community_tools.voice_category": discord.CategoryChannel,
+            }
+            if path in channel_types and not isinstance(
+                guild.get_channel(incoming), channel_types[path]
+            ):
+                fail(path)
             server_id(
                 guild,
                 incoming,
                 path,
                 role=path in ROLE_FIELDS,
-                grant=path == "autorole.role_id",
+                grant=path
+                in {
+                    "autorole.role_id",
+                    "community_tools.onboarding.role",
+                    "community_tools.birthdays.role",
+                },
                 text=path
                 in {
                     "log_channel",
@@ -297,6 +317,7 @@ def validate_fields(guild, expected, incoming, path=""):
                     "cya.channel_id",
                     "levelup.channel_id",
                     "features.summary.channel",
+                    "community_tools.birthdays.channel",
                 },
             )
     elif isinstance(expected, bool):

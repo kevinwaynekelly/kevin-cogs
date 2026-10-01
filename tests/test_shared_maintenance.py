@@ -72,7 +72,7 @@ async def test_theme_and_browser_use_real_red_commands(hub_runtime):
     await invoke("!theme color error #123456")
     assert bot._kevin_cogs_themes[member.guild.id]["colors"]["error"] == 0x123456
     await invoke("!theme footer Scarlet")
-    ctx = await invoke("!commandbrowser birthday")
+    ctx = await invoke("!commandbrowser nonexistentfeature")
     assert "No available commands" in ctx.send.call_args.kwargs["embed"].description
     ctx = await invoke("!commandbrowser level show")
     assert "level show" in ctx.send.call_args.kwargs["embed"].description

@@ -10,7 +10,12 @@ __red_end_user_data_statement__ = (
     "message/voice/join/leave/presence, presence status history (last online/offline), and counters for messages sent, "
     "voice joins/moves/leaves, stream/video starts, activity starts (playing/streaming/listening/watching/competing/custom), "
     "and per-game launch counts. It also stores lifetime voice seconds and bounded daily participation totals, "
-    "self-role menu IDs, solo exemptions, and weekly digest settings. No message contents are stored."
+    "self-role menu IDs, solo exemptions, and weekly digest settings. Server settings include room hubs, "
+    "onboarding rule text and safe roles, and birthday announcement policy. Temporary room records store "
+    "owner IDs and creation timestamps (up to 50 rooms); user deletion anonymizes ownership. Member "
+    "celebration records store opted-in birthday month/day, annual delivery markers, temporary role expiry "
+    "and accepted-rules hash/timestamp. User hooks export/delete these records. Ordinary message contents "
+    "are not stored. Poll/event records additionally retain their documented bounded participation data."
 )
 
 DEFAULTS_GUILD = {

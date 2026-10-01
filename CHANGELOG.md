@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Community rooms and participation tools
+
+- Add bounded join-to-create voice rooms with owner admission/name/capacity controls, restart cleanup and a creation guard for delayed voice state updates.
+- Add explicit rules acceptance with safe member roles and opt-in month/day birthday notices with tracked temporary roles and user-data hooks.
+- Add capacity waitlists and recurring events that promote cancelled slots and advance missed dates without replaying old attendance or reminders.
+
 ## 2026-10-01: Audio continuity and shared playlists
 
 - Add opt-in seven-day queue checkpoints, explicit DJ recovery, empty-room auto-pause/graceful departure and FFmpeg loudness normalization. Preserve the exhausted-queue ten-second departure and manual pause decisions.

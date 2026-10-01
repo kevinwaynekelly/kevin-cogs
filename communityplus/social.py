@@ -13,6 +13,34 @@ from .interactive import component_context, component_error
 from .presentation import clip
 
 SOCIAL_DEFAULTS = {"polls": {}, "events": {}}
+
+
+def attendance_choice(record, uid, value):
+    choices = record["rsvps"]
+    capacity = record.get("capacity", 0)
+    if (
+        value == "yes"
+        and capacity
+        and sum(v == "yes" for key, v in choices.items() if key != uid) >= capacity
+    ):
+        value = "wait"
+    choices[uid] = value
+    promote_waitlist(record)
+
+
+def promote_waitlist(record):
+    choices = record["rsvps"]
+    capacity = record.get("capacity", 0)
+    if capacity:
+        vacancies = max(0, capacity - sum(v == "yes" for v in choices.values()))
+        for key, value in choices.items():
+            if not vacancies:
+                break
+            if value == "wait":
+                choices[key] = "yes"
+                vacancies -= 1
+
+
 MAX_RECORDS = 20
 MAX_PARTICIPANTS = 1000
 MAX_REMINDERS = 100
@@ -60,12 +88,18 @@ def social_embed(cog, kind, key, record):
         totals = Counter(record["rsvps"].values())
         embed.add_field(
             name="Attendance",
-            value=f"Going {totals['yes']} · Maybe {totals['maybe']} · Not going {totals['no']}",
+            value=f"Going {totals['yes']} · Waitlist {totals['wait']} · Maybe {totals['maybe']} · Not going {totals['no']}",
             inline=False,
         )
         embed.add_field(
             name="Reminders",
             value="Opt in with `event remind <ID> true`. Reminders arrive privately before the start.",
+            inline=False,
+        )
+    if kind == "events" and record.get("repeat_days"):
+        embed.add_field(
+            name="Schedule",
+            value=f"Every {record['repeat_days']} days · Capacity {record.get('capacity') or 'unlimited'}",
             inline=False,
         )
     return embed
@@ -227,7 +261,10 @@ class CommunitySocial:
             uid = str(ctx.author.id)
             if uid not in choices and len(choices) >= MAX_PARTICIPANTS:
                 raise commands.BadArgument("This entry reached its 1,000-participant limit.")
-            choices[uid] = value
+            if kind == "events":
+                attendance_choice(record, uid, value)
+            else:
+                choices[uid] = value
         await self._social_refresh(ctx.guild, kind, key)
 
     async def _social_close(self, ctx, kind, key):
@@ -332,11 +369,39 @@ class CommunitySocial:
             },
         )
 
+    @event.command(name="policy")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def event_policy(self, ctx, event_id: str, capacity: int = 0, repeat_days: int = 0):
+        """Set capacity and a recurring interval in days; zero disables either."""
+        if not 0 <= capacity <= 1000 or not 0 <= repeat_days <= 365:
+            raise commands.BadArgument("Choose capacity 0 to 1000 and repeat days 0 to 365.")
+        async with self.config.guild(ctx.guild).social() as data:
+            record = data["events"].get(event_id)
+            if not record or record["closed"] or record["at"] <= self._now_ts():
+                raise commands.BadArgument("Choose an open future event.")
+            if capacity and sum(v == "yes" for v in record["rsvps"].values()) > capacity:
+                raise commands.BadArgument("Capacity cannot be smaller than confirmed attendance.")
+            record.update(capacity=capacity, repeat_days=repeat_days)
+            for uid, value in list(record["rsvps"].items()):
+                if value == "wait":
+                    attendance_choice(record, uid, "yes")
+        await self._social_refresh(ctx.guild, "events", event_id)
+        await self._reply(
+            ctx,
+            "Event capacity and recurring schedule saved. Attendance and reminder opt-ins reset for each occurrence.",
+        )
+
     @event.command(name="rsvp")
     async def event_rsvp(self, ctx, event_id: str, attendance: str):
         """Set attendance to yes, maybe, or no."""
         await self._social_choice(ctx, "events", event_id, attendance.lower())
-        await self._presentation.confirm(ctx)
+        record = await self._social_record(ctx.guild, "events", event_id)
+        choice = record["rsvps"].get(str(ctx.author.id), attendance.lower())
+        await self._reply(
+            ctx,
+            "Your attendance: "
+            + {"yes": "Going", "wait": "Waitlisted", "maybe": "Maybe", "no": "Not going"}[choice],
+        )
 
     @event.command(name="remind")
     async def event_remind(self, ctx, event_id: str, enabled: bool = True):
@@ -373,7 +438,9 @@ class CommunitySocial:
         group = self.config.guild(guild).social
         for kind, rows in (await group()).items():
             for key, record in rows.items():
-                if record["at"] < self._now_ts() - RETENTION:
+                if record["at"] < self._now_ts() - RETENTION and (
+                    record["closed"] or not record.get("repeat_days")
+                ):
                     await self._social_refresh(guild, kind, key)
                     async with group() as data:
                         data[kind].pop(key, None)
@@ -384,8 +451,23 @@ class CommunitySocial:
                     continue
                 if not record["closed"] and record["at"] <= self._now_ts():
                     async with group() as data:
-                        if key in data[kind]:
-                            data[kind][key]["closed"] = True
+                        current = data[kind].get(key)
+                        if current and not current["closed"] and current["at"] <= self._now_ts():
+                            step = current.get("repeat_days", 0) * 86400 if kind == "events" else 0
+                            if step:
+                                delay = current["at"] - current["reminder_at"]
+                                current["at"] += step * (
+                                    (self._now_ts() - current["at"]) // step + 1
+                                )
+                                current.update(
+                                    rsvps={},
+                                    remind={},
+                                    notified=[],
+                                    announced=False,
+                                    reminder_at=current["at"] - delay,
+                                )
+                            else:
+                                current["closed"] = True
                     await self._social_refresh(guild, kind, key)
                 elif (
                     kind == "events"
@@ -466,6 +548,7 @@ class CommunitySocial:
                             if row["creator"] == user_id:
                                 row["creator"] = None
                             if kind == "events":
+                                promote_waitlist(row)
                                 row["notified"] = [
                                     value for value in row["notified"] if value != uid
                                 ]

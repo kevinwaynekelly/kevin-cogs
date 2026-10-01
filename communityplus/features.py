@@ -317,6 +317,9 @@ class CommunityFeatures:
                         await self._track_voice(member, channel)
             await self._digest_tick(guild)
             await self._social_tick(guild)
+            async with self._room_locks[guild.id]:
+                await self._clean_rooms(guild)
+            await self._birthday_tick(guild)
         for key in set(self._voice_sessions) - observed:
             guild = self.bot.get_guild(key[0])
             member = guild.get_member(key[1]) if guild else None

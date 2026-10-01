@@ -78,6 +78,11 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
 
         assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS
         assert defaults["MEMBER"].pop("participation") == PARTICIPATION_DEFAULTS
+        from communityplus.community_tools import CELEBRATION_DEFAULTS, TOOLS_DEFAULTS
+
+        assert defaults["GUILD"].pop("community_tools") == TOOLS_DEFAULTS
+        assert defaults["GUILD"].pop("voice_rooms") == {}
+        assert defaults["MEMBER"].pop("celebrations") == CELEBRATION_DEFAULTS
     if package == "logplus":
         from logplus.history import HISTORY_DEFAULTS
 

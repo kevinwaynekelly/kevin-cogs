@@ -20,6 +20,7 @@ from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import humanize_number
 
 from .command_support import attach_prefix_groups, invoke_shortcut, prefix_group, prepare_hybrid
+from .community_tools import CELEBRATION_DEFAULTS, TOOLS_DEFAULTS, CommunityTools
 from .constants import DEFAULTS_GUILD, DEFAULTS_MEMBER, EVENT_COLOR
 from .events import guild_enabled
 from .features import (
@@ -43,7 +44,7 @@ log = logging.getLogger(__name__)
 # ------------------------ defaults ------------------------
 
 
-class CommunityPlus(CommunityFeatures, CommunitySocial, redcommands.Cog):
+class CommunityPlus(CommunityTools, CommunityFeatures, CommunitySocial, redcommands.Cog):
     """Community roles, notices, voice cleanup, and member activity."""
 
     async def cog_command_error(self, ctx, error):
@@ -58,9 +59,17 @@ class CommunityPlus(CommunityFeatures, CommunitySocial, redcommands.Cog):
         self._presentation = Presentation("CommunityPlus", "community")
         self.config: Config = Config.get_conf(self, identifier=0xC0DE505, force_registration=True)
         self.config.register_guild(
-            **DEFAULTS_GUILD, features=FEATURE_DEFAULTS, social=SOCIAL_DEFAULTS
+            **DEFAULTS_GUILD,
+            features=FEATURE_DEFAULTS,
+            social=SOCIAL_DEFAULTS,
+            community_tools=TOOLS_DEFAULTS,
+            voice_rooms={},
         )
-        self.config.register_member(**DEFAULTS_MEMBER, participation=PARTICIPATION_DEFAULTS)
+        self.config.register_member(
+            **DEFAULTS_MEMBER,
+            participation=PARTICIPATION_DEFAULTS,
+            celebrations=CELEBRATION_DEFAULTS,
+        )
         self._solo_tasks = {}
         self._startup_task = None
         self._maintenance_task = None
@@ -73,6 +82,8 @@ class CommunityPlus(CommunityFeatures, CommunitySocial, redcommands.Cog):
         self._closing = False
         self._social_views = {}
         self._social_locks = defaultdict(asyncio.Lock)
+        self._room_locks = defaultdict(asyncio.Lock)
+        self._birthday_slots = {}
         self._settings_cache = {}
         self._settings_locks = defaultdict(asyncio.Lock)
 
@@ -1511,6 +1522,7 @@ class CommunityPlus(CommunityFeatures, CommunitySocial, redcommands.Cog):
     @commands.Cog.listener()
     @guild_enabled
     async def on_voice_state_update(self, member, before, after):
+        await self._room_voice(member, before, after)
         settings = await self._settings(member.guild)
         if not member.bot and before.channel != after.channel:
             await self._track_voice(member, after.channel)
@@ -1626,6 +1638,7 @@ class CommunityPlus(CommunityFeatures, CommunitySocial, redcommands.Cog):
                 task.cancel()
 
     async def red_delete_data_for_user(self, *, requester, user_id):
+        await self._tools_user_data(user_id, delete=True)
         await self._social_user_data(user_id, delete=True)
         for guild_id in await self.config.all_members():
             group = self.config.member_from_ids(guild_id, user_id)
@@ -1643,6 +1656,9 @@ class CommunityPlus(CommunityFeatures, CommunitySocial, redcommands.Cog):
             for gid, members in (await self.config.all_members()).items()
             if user_id in members
         }
+        rooms = await self._tools_user_data(user_id)
+        if rooms:
+            data["voice_rooms"] = rooms
         social = await self._social_user_data(user_id)
         if social:
             data["social"] = social
