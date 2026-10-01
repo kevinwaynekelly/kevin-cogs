@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Audio continuity and shared playlists
+
+- Add opt-in seven-day queue checkpoints, explicit DJ recovery, empty-room auto-pause/graceful departure and FFmpeg loudness normalization. Preserve the exhausted-queue ten-second departure and manual pause decisions.
+- Add bounded collaborative server playlists with member proposals, DJ approval/rejection and requester-aware privacy hooks. Keep resolved stream URLs out of persisted records.
+- Validate real FFmpeg decoding with normalization, Red command registration and mocked Discord recovery paths; live deployment remains unverified.
+
 ## 2026-10-01: Shared themes and configuration checkpoints
 
 - Add server-wide semantic theme colors and footer branding through an optional runtime protocol; source cogs retain independent installation and default presentation.

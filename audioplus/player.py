@@ -8,6 +8,7 @@ import logging
 import os
 import random
 import shlex
+import threading
 from collections import deque
 
 import discord
@@ -20,7 +21,7 @@ IDLE_DISCONNECT_SECONDS = 10
 
 
 class NativeSource(discord.AudioSource):
-    def __init__(self, stream: Stream, *, volume: int, start: int = 0):
+    def __init__(self, stream: Stream, *, volume: int, start: int = 0, normalize: bool = False):
         before = "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 15000000 -protocol_whitelist http,https,tcp,tls,crypto,pipe"
         if stream.headers:
             headers = "".join(f"{key}: {value}\r\n" for key, value in stream.headers.items())
@@ -32,7 +33,8 @@ class NativeSource(discord.AudioSource):
             self._audio = discord.FFmpegPCMAudio(
                 stream.url,
                 before_options=before,
-                options="-vn -loglevel error",
+                options="-vn -loglevel error"
+                + (" -af loudnorm=I=-16:TP=-1.5:LRA=11" if normalize else ""),
                 stderr=self._stderr,
             )
         except BaseException:
@@ -42,6 +44,7 @@ class NativeSource(discord.AudioSource):
         self.start = start
         self.frames = 0
         self._cleaned = False
+        self._cleanup_lock = threading.Lock()
 
     @property
     def position(self):
@@ -64,12 +67,18 @@ class NativeSource(discord.AudioSource):
         return False
 
     def cleanup(self):
-        if not getattr(self, "_cleaned", True):
-            self._cleaned = True
+        if getattr(self, "_cleaned", True):
+            return
+        # Discord's audio thread and the event loop can both request cleanup.
+        # A completed flag must mean the child is reaped, not merely claimed.
+        with self._cleanup_lock:
+            if self._cleaned:
+                return
             try:
                 self._audio.cleanup()
             finally:
                 self._stderr.close()
+                self._cleaned = True
 
 
 class GuildPlayer:
@@ -102,6 +111,8 @@ class GuildPlayer:
         self.current: Track | None = None
         self.context = None
         self.volume = 100
+        self.normalize = False
+        self._recovery_cleared = False
         self.repeat = "off"
         self.source = None
         self.preparing = False
@@ -202,6 +213,7 @@ class GuildPlayer:
             if ctx is not None:
                 uid = getattr(getattr(ctx, "author", None), "id", 0)
                 self._requesters.update({id(track): uid for track in tracks})
+            self._recovery_cleared = False
             self.queue.extend(tracks)
             self._balance_queue()
             if ctx is not None:
@@ -243,7 +255,8 @@ class GuildPlayer:
             stream = await self.resolver.resolve(track)
             if not self.voice.is_connected():
                 raise MediaError("Discord voice disconnected. Use audio rejoin or audio join.")
-            source = self.source_factory(stream, volume=self.volume, start=start)
+            options = {"normalize": True} if self.normalize else {}
+            source = self.source_factory(stream, volume=self.volume, start=start, **options)
             self.source = source
             loop = asyncio.get_running_loop()
             ended = loop.create_future()
@@ -345,6 +358,7 @@ class GuildPlayer:
 
     async def stop(self):
         async with self.lock:
+            self._recovery_cleared = True
             self._autoplay_generation += 1
             self.queue.clear()
             self._restart = None

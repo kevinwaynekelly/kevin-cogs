@@ -581,3 +581,25 @@ class AudioCommands:
             title="Music setup",
             view=view,
         )
+
+    @audioset.command(name="recovery")
+    async def audioset_recovery(self, ctx, enabled: bool):
+        """Save queue checkpoints for explicit recovery after a restart."""
+        await self._set_continuity(ctx, "recovery", enabled)
+
+    @audioset.command(name="emptypause")
+    async def audioset_empty_pause(self, ctx, enabled: bool, grace: int = 60):
+        """Pause empty voice rooms and leave after 10 to 3600 seconds."""
+        if not 10 <= grace <= 3600:
+            raise commands.BadArgument("Choose a grace period of 10 to 3600 seconds.")
+        section = self.config.guild(ctx.guild).continuity
+        async with section.get_lock():
+            state = await section()
+            state.update(empty_grace=grace)
+            await section.set(state)
+        await self._set_continuity(ctx, "empty_pause", enabled)
+
+    @audioset.command(name="normalize")
+    async def audioset_normalize(self, ctx, enabled: bool):
+        """Normalize loudness on subsequent FFmpeg decoders."""
+        await self._set_continuity(ctx, "normalize", enabled)

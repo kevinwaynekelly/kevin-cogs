@@ -393,12 +393,13 @@ async def media_server():
         await runner.cleanup()
 
 
-async def test_real_ytdlp_generic_extraction_and_ffmpeg_pcm(media_server):
+@pytest.mark.parametrize("normalize", [False, True])
+async def test_real_ytdlp_generic_extraction_and_ffmpeg_pcm(media_server, normalize):
     resolver = MediaResolver(timeout=20)
     tracks = await resolver.search(media_server)
     assert len(tracks) == 1
     stream = await resolver.resolve(tracks[0])
-    source = NativeSource(stream, volume=100)
+    source = NativeSource(stream, volume=100, normalize=normalize)
     process = source._audio._process
     try:
         chunks = []

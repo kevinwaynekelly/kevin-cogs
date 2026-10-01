@@ -45,8 +45,9 @@ CONTROLS = {
     "seek",
     "remove",
     "move",
+    "recoverqueue",
 }
-NEW_GROUPS = {"search", "audioset", "playlist", "favorite"}
+NEW_GROUPS = {"search", "audioset", "playlist", "favorite", "serverplaylist"}
 
 
 @pytest.fixture

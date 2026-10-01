@@ -18,7 +18,7 @@ TARGETS = {
     "OwoPlus": ("owo", "owo setup"),
 }
 FIELDS = {
-    "AudioPlus": ("music",),
+    "AudioPlus": ("music", "continuity"),
     "CommunityPlus": (
         "embeds",
         "autorole",
@@ -89,6 +89,7 @@ ENUMS = {
     "features.channel_mode": {"all", "allowlist"},
 }
 RANGES = {
+    "continuity.empty_grace": (10, 3600),
     "multiplier": (0.1, 10),
     "voice.min_members": (1, 99),
     "message.cooldown": (0, 3600),

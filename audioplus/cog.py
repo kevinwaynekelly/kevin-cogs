@@ -16,6 +16,7 @@ from redbot.core.bot import Red
 
 from .backend import diagnostics, require_voice
 from .command_support import prepare_hybrid
+from .continuity import CONTINUITY_DEFAULTS, AudioContinuity
 from .dependencies import VoiceDependencyRepair
 from .failures import log_failure, playback_stage
 from .features import DEFAULTS_GUILD, AudioCommands, check_control, vote_threshold
@@ -36,7 +37,7 @@ log = logging.getLogger(__name__)
 GUILD_ONLY = commands.guild_only()
 
 
-class AudioPlus(AudioCommands, commands.Cog):
+class AudioPlus(AudioContinuity, AudioCommands, commands.Cog):
     """Music search, native Discord playback, queues, and voice diagnostics."""
 
     # Retain the old Config namespace/defaults for upgrades and rollbacks. These
@@ -54,7 +55,9 @@ class AudioPlus(AudioCommands, commands.Cog):
         self._presentation = Presentation("AudioPlus", "audio")
         self.config = Config.get_conf(self, identifier=0xA10DEFAB, force_registration=True)
         self.config.register_global(**self.default_global, watchdog=DEFAULT_WATCHDOG)
-        self.config.register_guild(**DEFAULTS_GUILD)
+        self.config.register_guild(
+            **DEFAULTS_GUILD, continuity=CONTINUITY_DEFAULTS, recovery={}, server_playlists={}
+        )
         self._resolver = MediaResolver()
         self._voice_repair = VoiceDependencyRepair()
         self._players = {}
@@ -66,6 +69,11 @@ class AudioPlus(AudioCommands, commands.Cog):
         self._panels = {}
         self._panel_tasks = {}
         self._skip_votes = {}
+        self._empty_since = {}
+        self._empty_paused = set()
+        self._recovery_locks = defaultdict(asyncio.Lock)
+        self._continuity_task = None
+        self._next_recovery_prune = 0
         self._watchdog = PlaybackWatchdog(
             self.config, self._check_ready, self._probe_playback, self._notify_check_failure
         )
@@ -90,9 +98,18 @@ class AudioPlus(AudioCommands, commands.Cog):
         # Setup/help remain available when the container needs dependencies.
         self._closing = False
         self._watchdog.start()
+        self._continuity_task = asyncio.create_task(self._continuity_loop())
 
     async def cog_unload(self):
         self._closing = True
+        if self._continuity_task:
+            self._continuity_task.cancel()
+            await asyncio.gather(self._continuity_task, return_exceptions=True)
+        for player in tuple(self._players.values()):
+            try:
+                await self._save_recovery(player)
+            except Exception:
+                log.exception("Could not checkpoint queue on unload")
         await self._voice_repair.close()
         await self._watchdog.close()
         await close_views(self)
@@ -388,10 +405,16 @@ class AudioPlus(AudioCommands, commands.Cog):
         except discord.HTTPException:
             return False
 
-    async def _dispose_player(self, guild_id, *, disconnect=True):
+    async def _dispose_player(self, guild_id, *, disconnect=True, preserve_recovery=False):
         await self._close_panel(guild_id)
         self._skip_votes.pop(guild_id, None)
         player = self._players.pop(guild_id, None)
+        self._empty_since.pop(guild_id, None)
+        self._empty_paused.discard(guild_id)
+        if player and not preserve_recovery:
+            section = self.config.guild_from_id(guild_id).recovery
+            async with section.get_lock():
+                await section.set({})
         if player:
             await player.close(disconnect=disconnect)
 
@@ -406,6 +429,8 @@ class AudioPlus(AudioCommands, commands.Cog):
                     self._players.pop(player.guild.id)
                 await self._close_panel(player.guild.id)
                 self._skip_votes.pop(player.guild.id, None)
+                async with self.config.guild(player.guild).recovery.get_lock():
+                    await self.config.guild(player.guild).recovery.set({})
 
     async def _open_voice(self, channel):
         owned = None
@@ -482,6 +507,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         player.recent.extend(recent)
         preferences = await self.config.guild(player.guild).music()
         player.fair_queue, player.autoplay = preferences["fair_queue"], preferences["autoplay"]
+        player.normalize = (await self.config.guild(player.guild).continuity())["normalize"]
         if resume:
             await player.restart(resume[0], start=resume[1], paused=resume[2])
         await player.enqueue(queued)
@@ -565,6 +591,9 @@ class AudioPlus(AudioCommands, commands.Cog):
                         on_start=self._track_started,
                         on_end=self._autoplay_next,
                     )
+                    player.normalize = (await self.config.guild(ctx.guild).continuity())[
+                        "normalize"
+                    ]
                     self._players[ctx.guild.id] = player
                     if snapshot:
                         await self._restore(player, snapshot)
@@ -613,8 +642,10 @@ class AudioPlus(AudioCommands, commands.Cog):
     async def _enqueue(self, player, tracks, ctx):
         preferences = await self.config.guild(player.guild).music()
         player.fair_queue, player.autoplay = preferences["fair_queue"], preferences["autoplay"]
+        player.normalize = (await self.config.guild(player.guild).continuity())["normalize"]
         try:
             await player.enqueue(tracks, ctx)
+            await self._save_recovery(player)
         except MediaError as exc:
             raise commands.CommandError(str(exc)) from exc
 
@@ -1014,6 +1045,9 @@ class AudioPlus(AudioCommands, commands.Cog):
             return await self._reply(ctx, "Not connected.", tone="warning")
         await check_control(self, ctx)
         await player.stop()
+        self._empty_paused.discard(ctx.guild.id)
+        async with self.config.guild(ctx.guild).recovery.get_lock():
+            await self.config.guild(ctx.guild).recovery.set({})
         await self._reply(ctx, "Stopped and cleared the queue.", tone="success")
 
     @audio.command(name="pause")
@@ -1024,6 +1058,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         if not player or not player.current or player.preparing:
             return await self._reply(ctx, "No track is ready to pause.", tone="warning")
         await check_control(self, ctx)
+        self._empty_paused.discard(ctx.guild.id)
         player.voice.pause()
         await self._reply(ctx, "Paused.", tone="success")
 
@@ -1035,6 +1070,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         if not player or not player.paused:
             return await self._reply(ctx, "No paused track.", tone="warning")
         await check_control(self, ctx)
+        self._empty_paused.discard(ctx.guild.id)
         player.voice.resume()
         await self._reply(ctx, "Resumed.", tone="success")
 
@@ -1326,6 +1362,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         return await self._invoke_control(ctx, self.audio_rejoin)
 
     async def red_delete_data_for_user(self, *, requester, user_id):
+        await self._continuity_delete_user(user_id)
         if (await self.config.watchdog())["recipient_id"] == user_id:
             await self._watchdog.configure(**DEFAULT_WATCHDOG)
         for guild_id in await self.config.all_guilds():
@@ -1337,6 +1374,9 @@ class AudioPlus(AudioCommands, commands.Cog):
     async def red_get_data_for_user(self, *, user_id):
         state = await self.config.watchdog()
         data = {"watchdog": state} if state["recipient_id"] == user_id else {}
+        data["shared_music"] = await self._continuity_user_data(user_id)
+        if not data["shared_music"]:
+            data.pop("shared_music")
         saved = {}
         for guild_id, conf in (await self.config.all_guilds()).items():
             records = {
@@ -1357,6 +1397,14 @@ class AudioPlus(AudioCommands, commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
+        player = self._players.get(member.guild.id)
+        if (
+            player
+            and member.id != getattr(self.bot.user, "id", None)
+            and not getattr(member, "bot", False)
+            and (before.channel == player.voice.channel or after.channel == player.voice.channel)
+        ):
+            await self._empty_room(player)
         if member.id != getattr(self.bot.user, "id", None) or after.channel is not None:
             return
         player = self._players.get(member.guild.id)

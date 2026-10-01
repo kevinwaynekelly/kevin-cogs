@@ -50,8 +50,12 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
         # The opt-in watchdog adds one Config section. All legacy defaults stay exact.
         assert "watchdog" in defaults["GLOBAL"]
         defaults["GLOBAL"].pop("watchdog")
+        from audioplus.continuity import CONTINUITY_DEFAULTS
         from audioplus.features import DEFAULTS_GUILD
 
+        assert defaults["GUILD"].pop("continuity") == CONTINUITY_DEFAULTS
+        assert defaults["GUILD"].pop("recovery") == {}
+        assert defaults["GUILD"].pop("server_playlists") == {}
         assert defaults.pop("GUILD") == DEFAULTS_GUILD
     if package == "levelplus":
         from levelplus.milestones import MILESTONE_DEFAULTS
