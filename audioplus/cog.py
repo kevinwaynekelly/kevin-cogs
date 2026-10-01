@@ -709,6 +709,14 @@ class AudioPlus(AudioCommands, commands.Cog):
                 log.warning("AudioPlus voice rejoin failed in guild %s", guild.id)
                 return False
 
+    async def diagnostic_report(self, guild_id=None):
+        """Safe maintenance report for optional dashboard integrations."""
+        report = await diagnostics(voice_guard=self._voice_maintenance_error)
+        watchdog = await self.config.watchdog()
+        if watchdog["guild_id"] == guild_id:
+            report["last_playback_check"] = watchdog["last_result"]
+        return report
+
     async def _diagnostic_reply(self, ctx):
         state = await diagnostics(voice_guard=self._voice_maintenance_error)
         lines = [

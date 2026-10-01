@@ -2,12 +2,7 @@
 
 from .cog import SettingsHub
 
-__red_end_user_data_statement__ = (
-    "This cog does not persist records. Requester/server IDs and restore previews are held "
-    "in memory for up to three minutes. Backups export selected server settings from loaded "
-    "cogs, excluding member records, message histories, credentials, and runtime cursors. "
-    "Files and dashboard messages posted to Discord remain managed there."
-)
+__red_end_user_data_statement__ = "Stores server theme preferences and up to ten bounded configuration snapshots per server. Snapshots exclude member records, message histories, credentials and runtime cursors. Requester IDs and restore previews are kept in memory for up to three minutes. Files and messages posted to Discord remain managed there."
 
 
 async def setup(bot):

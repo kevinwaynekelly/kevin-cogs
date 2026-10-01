@@ -211,6 +211,22 @@ class Presentation:
         use_embeds = True
         channel = getattr(target, "channel", target)
         guild = getattr(target, "guild", None)
+        bot = getattr(target, "bot", None)
+        if bot is None:
+            state = getattr(channel, "_state", None)
+            client = getattr(state, "_get_client", None)
+            bot = client() if callable(client) else None
+        themes = getattr(bot, "_kevin_cogs_themes", None)
+        theme = themes.get(guild.id) if guild and isinstance(themes, dict) else None
+        if isinstance(theme, dict):
+            selected = tone or LEGACY_COLORS.get(getattr(embed.color, "value", None), "info")
+            color = theme.get("colors", {}).get(selected)
+            if type(color) is int and 0 <= color <= 0xFFFFFF:
+                embed.color = color
+            brand = theme.get("footer")
+            if isinstance(brand, str) and 1 <= len(brand) <= 80:
+                suffix = (embed.footer.text or "").partition(" · ")[2]
+                embed.set_footer(text=clip(brand + (" · " + suffix if suffix else ""), 1900))
         if guild and hasattr(channel, "permissions_for"):
             use_embeds = channel.permissions_for(guild.me).embed_links
         # Respect Red's server/user embed preference as well as Discord permissions.

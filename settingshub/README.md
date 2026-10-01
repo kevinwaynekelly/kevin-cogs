@@ -13,7 +13,7 @@ Use your Red repository name in place of `kevin-cogs`:
 [p]slash sync
 ```
 
-All commands require Red administrator access or Manage Server and run in a server. The bot needs Send Messages; Embed Links enables themed cards, and Attach Files is required for backups. `[p]` means your bot prefix.
+Maintenance commands require Red administrator access or Manage Server and run in a server. `commandbrowser` is available to members and only shows commands they can currently run. The bot needs Send Messages; Embed Links enables themed cards, and Attach Files is required for backups. `[p]` means your bot prefix.
 
 | Text command | Slash command | Behavior |
 | --- | --- | --- |
@@ -36,4 +36,12 @@ Restore clears settings caches, updates live audio fair-queue/autoplay preferenc
 
 ## Stored data
 
-SettingsHub has no persistent Config records. Requester/server IDs and restore previews are held in memory for up to three minutes and discarded on timeout/unload or a user-data deletion request. It exports no additional personal records. Dashboard messages and backup files posted to Discord remain managed there. The five source cogs retain their own documented data hooks.
+SettingsHub persists server themes and up to ten configuration snapshots, each capped at 256 KiB. Snapshots contain the same selected settings as manual backups and exclude personal records. Requester/server IDs and restore previews are held in memory for up to three minutes and discarded on timeout/unload or a user-data deletion request. It exports no additional personal records. Dashboard messages and backup files posted to Discord remain managed there. The five source cogs retain their own documented data hooks.
+
+## Themes and maintenance
+
+- `[p]theme color <info|success|warning|error> <#RRGGBB>`, `[p]theme footer <text>`, and `[p]theme reset` customize all loaded Kevin cogs in this server. The footer is limited to 80 characters. Themes return to defaults while SettingsHub is unloaded and reappear when loaded.
+- `[p]commandbrowser <search>` finds up to 25 available commands with descriptions and usage. Searches are case-insensitive and repeat current parent and cog permission checks.
+- `[p]settings diagnostics` downloads package/native API diagnostics, current channel permissions, loaded cog identifiers and the latest configured playback check. It excludes full settings, secrets, signed URLs and message history.
+- `[p]snapshots auto true 6` enables automatic snapshots every six hours; `false` disables them. Intervals range from 1 to 168 hours, disabled by default. Unchanged settings are skipped.
+- `[p]snapshots create`, `[p]snapshots`, `[p]snapshots diff <id>`, `[p]snapshots restore <id>` and `[p]snapshots delete <id|all>` manage checkpoints. Automatic capture excludes disabled cogs. Restore repeats current source permissions and live role/channel validation, then requires the same requester-bound preview button as manual restore. Slash equivalents are available.

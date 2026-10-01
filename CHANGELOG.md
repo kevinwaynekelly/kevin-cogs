@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-01: Shared themes and configuration checkpoints
+
+- Add server-wide semantic theme colors and footer branding through an optional runtime protocol; source cogs retain independent installation and default presentation.
+- Add permission-aware command search, safe diagnostic downloads, and opt-in automatic snapshots with ten-record retention, unchanged-setting detection, comparisons, deletion and validated previewed restoration.
+- Exercise Red command registration and Config locks with mocked Discord transport; live Scarlet deployment remains unverified.
+
 ## 2026-10-01: Incompatible native voice API repair
 
 - Reject importable but incomplete native voice libraries before connecting, including the reported missing `davey.DAVE_PROTOCOL_VERSION`. Validate Discord's cached library references as well as current imports without reloading Discord classes or disabling DAVE encryption.

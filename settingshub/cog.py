@@ -14,6 +14,7 @@ from redbot.core import Config, commands
 
 from .command_support import check_command, prepare_hybrid
 from .interactive import close_views, component_context, component_error
+from .maintenance import HUB_DEFAULTS, MaintenanceCommands
 from .presentation import Presentation
 from .schema import (
     FIELDS,
@@ -138,7 +139,7 @@ class RestoreView(DashboardView):
         self.add_item(cancel)
 
 
-class SettingsHub(commands.Cog):
+class SettingsHub(MaintenanceCommands, commands.Cog):
     """Shared setup, health, and server settings backup."""
 
     def __init__(self, bot):
@@ -146,6 +147,10 @@ class SettingsHub(commands.Cog):
         self._presentation = Presentation("Settings", "settings")
         self._views = set()
         self._closing = False
+        self.config = Config.get_conf(self, identifier=702034990, force_registration=True)
+        self.config.register_guild(**HUB_DEFAULTS)
+        self._maintenance_task = None
+        self._maintenance_log = log
 
     async def _reply(self, ctx, content=None, **kwargs):
         return await self._presentation.send(ctx, content, **kwargs)
@@ -164,8 +169,18 @@ class SettingsHub(commands.Cog):
     async def cog_before_invoke(self, ctx):
         await prepare_hybrid(ctx)
 
+    async def cog_load(self):
+        for guild in self.bot.guilds:
+            await self._cache_theme(guild.id)
+        self._maintenance_task = asyncio.create_task(self._maintenance_loop())
+
     async def cog_unload(self):
         self._closing = True
+        if self._maintenance_task:
+            self._maintenance_task.cancel()
+            await asyncio.gather(self._maintenance_task, return_exceptions=True)
+        if isinstance(getattr(self.bot, "_kevin_cogs_themes", None), dict):
+            self.bot._kevin_cogs_themes.clear()
         await close_views(self)
 
     def _loaded(self):
@@ -368,6 +383,12 @@ class SettingsHub(commands.Cog):
             "These checks do not test live voice or YouTube extraction. Run audiostatus or the opt-in audio monitor for playback checks."
         )
         await self._reply(ctx, "\n".join(lines), title="Health")
+
+    @settings.command(name="diagnostics")
+    @commands.bot_has_permissions(attach_files=True)
+    async def diagnostic_export(self, ctx):
+        """Download dependency, permission, cog and failure diagnostics."""
+        await self._download_diagnostics(ctx)
 
     @settings.command(name="backup")
     @commands.bot_has_permissions(attach_files=True)
