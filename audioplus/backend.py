@@ -29,8 +29,9 @@ def _load_voice_libraries():
             import_module("nacl.utils")
         except (ImportError, OSError) as exc:
             raise MediaError(
-                "PyNaCl could not be imported by Red. Reinstall AudioPlus's Python "
-                "dependencies and restart Red, then run audio pingnode."
+                "PyNaCl could not be imported by Red. Install PyNaCl>=1.5.0,<1.6 "
+                "in Red's Python environment and restart Red, then run audiostatus. "
+                "See AudioPlus's container setup guide."
             ) from exc
         client.nacl = nacl
         client.has_nacl = True
@@ -41,8 +42,9 @@ def _load_voice_libraries():
             davey = import_module("davey")
         except (ImportError, OSError) as exc:
             raise MediaError(
-                "davey could not be imported by Red. Reinstall AudioPlus's Python "
-                "dependencies and restart Red, then run audio pingnode."
+                "davey could not be imported by Red. Install davey>=0.1.6 "
+                "in Red's Python environment and restart Red, then run audiostatus. "
+                "See AudioPlus's container setup guide."
             ) from exc
         for module in (client, discord.voice_state, discord.gateway):
             module.davey = davey

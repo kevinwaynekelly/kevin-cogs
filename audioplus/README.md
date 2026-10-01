@@ -7,12 +7,13 @@ Music search, playback, queues, and Discord voice control inside Red. AudioPlus 
 ## Requirements
 
 - Red **3.5.24 or newer**, with a Discord.py version that supports DAVE voice. Development checks use Red 3.5.24 and Discord.py 2.7.1 on Python 3.10/3.11.
-- Python packages declared in `info.json`: `yt-dlp[default]>=2026.8.19`, `PyNaCl>=1.5.0,<1.6`, and `davey>=0.1.6`. The yt-dlp default extra includes its matching `yt-dlp-ejs` challenge solver.
+- Downloader-managed Python package: `yt-dlp[default]>=2026.8.19`, declared in `info.json`. The default extra includes its matching `yt-dlp-ejs` challenge solver.
+- Required native voice libraries: `PyNaCl>=1.5.0,<1.6` and `davey>=0.1.6`, installed once in **Red's Python environment** using the instructions below. Working copies already installed by Downloader remain supported. Cog updates do not reinstall these libraries.
 - The **FFmpeg executable** and **libopus** in the Red container or host. Installing a Python package named ffmpeg does not install the executable.
 - A supported JavaScript runtime in Red's `PATH`, preferably **Deno 2.3+** or **Node.js 22+**, for full YouTube extraction. AudioPlus enables detected Deno, Node, and QuickJS runtimes in yt-dlp.
 - Network access from the **Red container** to media providers and Discord voice, including UDP. Playback no longer uses the Lavalink container's network connection.
 
-Downloader installs the Python dependencies; it cannot install container system packages. Red imports Discord.py before exposing Downloader's package folder. AudioPlus initializes those optional voice imports before diagnostics or playback, without reloading Discord.py or replacing its classes. **Restart Red when upgrading voice libraries that are already loaded.** Package versions listed in diagnostics describe installed files; the separate **Discord voice** status reports whether native playback prerequisites can actually load.
+Downloader installs the media extractor; it cannot install container system packages. Native voice libraries belong to the bot environment and are set up separately so updating command files does not overwrite working native packages. Red imports Discord.py before exposing Downloader's package folder. AudioPlus also initializes voice imports found there before diagnostics or playback, without reloading Discord.py or replacing its classes. **Restart Red after changing voice libraries.** Package versions listed in diagnostics describe installed files; the separate **Discord voice** status reports whether native playback prerequisites can actually load.
 
 AudioPlus can load with missing system dependencies so its help and diagnostics remain available. It uses the `audio` command group, which conflicts with Red's bundled Audio cog. Unload the bundled cog before loading AudioPlus:
 
@@ -21,7 +22,7 @@ AudioPlus can load with missing system dependencies so its help and diagnostics 
 [p]cog install kevin-cogs audioplus
 ```
 
-Restart Red after dependency installation, then run:
+Install missing voice libraries and container dependencies using the setup below, restart Red after changing voice libraries, then run:
 
 ```text
 [p]load audioplus
@@ -49,13 +50,30 @@ Update AudioPlus from this repository, then restart Red:
 [p]cog update False audioplus
 ```
 
-Install the container dependencies below before testing playback. If Downloader reports a dependency installation failure, resolve it before proceeding. The bot owner can reinstall Python packages with:
+Install the voice libraries and container dependencies below before testing playback. The bot owner can update media-extraction packages with:
 
 ```text
-[p]pipinstall yt-dlp[default]>=2026.8.19 PyNaCl>=1.5.0,<1.6 davey>=0.1.6
+[p]pipinstall yt-dlp[default]>=2026.8.19
 ```
 
-Restart Red after that command. When dependencies are already installed, `[p]cog update True audioplus` can update and reload the cog directly.
+When voice dependencies are already usable, `[p]cog update True audioplus` can update and reload the cog directly. No voice-library reinstall or bot restart is required for a source-only update.
+
+### If Downloader fails to install PyNaCl or davey during an update
+
+Red aborts an update before copying cog files when any declared requirement fails, even if an existing version of that package already works for playback. Current AudioPlus keeps working voice libraries and declares only the media extractor for Downloader to manage.
+
+If native playback already works, leave those libraries in place and install the current AudioPlus revision. For a repository added to Red under the name `kevin`, run as the bot owner:
+
+```text
+[p]cog updatetoversion True kevin origin/main audioplus
+[p]reload audioplus
+[p]help play
+[p]audiostatus
+[p]slash enablecog audioplus
+[p]slash sync
+```
+
+Use your actual Red repository name if it differs. If this still reports PyNaCl or davey as failed **requirements**, Downloader is reading older repository metadata; check `[p]repo info kevin` for this repository and its `main` branch. If diagnostics report a missing or unimportable voice library, follow the one-time setup below. For other requirement failures, keep the matching pip `ERROR` lines from the Red container log; Downloader's short failure reply does not contain the underlying reason.
 
 ### If new prefix commands do not respond
 
@@ -91,6 +109,28 @@ apt-get update
 apt-get install -y --no-install-recommends ffmpeg libopus0
 ```
 
+### One-time native voice library setup
+
+Skip this step if `[p]audiostatus` reports usable Discord voice and playback already works. PyNaCl and davey remain required; a source update simply leaves their installed copies alone.
+
+[PhasecoreX's image](https://github.com/PhasecoreX/docker-red-discordbot#extending-this-image) runs Red in `/data/venv`. Run the following in that container as the user running Red, matching its `PUID`/`PGID`:
+
+```sh
+/data/venv/bin/python -m pip install --only-binary=:all: 'PyNaCl>=1.5.0,<1.6' 'davey>=0.1.6'
+```
+
+Alternatively, run it from the Docker host with `docker exec`. This example assumes a container named `red-discordbot` and UID/GID `1000:1000`; substitute your container name and configured user IDs:
+
+```sh
+docker exec --user 1000:1000 red-discordbot /data/venv/bin/python -m pip install --only-binary=:all: 'PyNaCl>=1.5.0,<1.6' 'davey>=0.1.6'
+```
+
+Using the bot's interpreter installs into its own environment instead of Downloader's shared target folder. Binary wheels avoid compiling Rust/C dependencies in the running container. The command does not force an upgrade of versions already satisfying the requirements. If no compatible wheel is available for your platform, retain the pip error and use a supported Python/container architecture or build the libraries in your image's build environment.
+
+Restart Red, then run `[p]audiostatus` and `[p]tone`. Do not delete Downloader's existing libraries or install packages into the host's unrelated Python environment. For other images or a non-container installation, substitute the interpreter used to launch Red. The PhasecoreX environment persists on `/data`; repeat setup if an image upgrade recreates that environment for a different Python version.
+
+### FFmpeg, Opus, and JavaScript runtime
+
 Install Node.js **22 or newer** or Deno **2.3 or newer** using its official distribution. An older Debian Node package may not meet that requirement. Confirm the executable is available to the user running Red:
 
 ```sh
@@ -109,7 +149,7 @@ deno --version
 
 This places Deno in `/usr/local/bin`, rather than root's private home directory, so Red can find it. Only one supported JavaScript runtime is needed. Node.js and QuickJS may still show `missing` when Deno is available. Run `[p]audiostatus` again, then test `[p]tone` and a YouTube search. These console changes survive a container restart but can disappear when the container is recreated.
 
-The included [Dockerfile](Dockerfile) builds a persistent image for **PhasecoreX's Debian-based Red image family**, carrying FFmpeg, libopus, and Node.js 22. It inherits the existing image's entrypoint, `/data` volume, and bot startup command.
+The included [Dockerfile](Dockerfile) builds a persistent image for **PhasecoreX's Debian-based Red image family**, carrying FFmpeg, libopus, and Node.js 22. It inherits the existing image's entrypoint, `/data` volume, and bot startup command. Install voice libraries once in the running bot environment as described above; the `/data` volume is created or mounted at runtime and cannot be populated by an image-build pip command.
 
 From a checkout of this repository on your Docker host:
 
@@ -175,7 +215,7 @@ Use `[p]audio` for the themed overview or `[p]help AudioPlus` for Red's full com
 
 ## Troubleshooting
 
-1. Run `[p]audiostatus`. Install missing packages/binaries in the Red environment. AudioPlus loads newly available Downloader voice dependencies automatically; restart Red after upgrading a library already loaded in the process. If a native library cannot import, diagnostics identify PyNaCl or davey separately. These checks verify dependencies, not live provider access or voice delivery.
+1. Run `[p]audiostatus`. Install missing packages/binaries in the Red environment using the setup above. AudioPlus also supports existing Downloader voice libraries; restart Red after changing a voice library. If a native library cannot import, diagnostics identify PyNaCl or davey separately. These checks verify dependencies, not live provider access or voice delivery.
 2. Run `[p]stop`, then `[p]tone`. If it fails, inspect Red's voice permissions, UDP egress, FFmpeg/Opus availability, and access to the MP3 source.
 3. If direct audio works but YouTube fails, update yt-dlp and its matching EJS package, verify Deno/Node meets the required version, and retry a public track. Some provider requests can require authentication or be denied by a provider even with current extraction software. This cog does not automatically collect browser cookies or bypass authentication.
 4. Test SoundCloud independently with `[p]play scsearch:artist and song`. SoundCloud access is independent of YouTube access.

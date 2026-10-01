@@ -2,6 +2,12 @@
 
 Changes recorded here start with the repository's documentation and metadata pass. Earlier implementation history is available in Git commits.
 
+## 2026-10-01: AudioPlus updates with existing voice libraries
+
+- Treat PyNaCl and davey as required bot-level voice prerequisites instead of reinstalling them into Downloader's package folder on every cog update. Downloader still installs yt-dlp and its matching EJS package. Existing usable voice libraries, including copies installed by Downloader, remain supported.
+- Document one-time installation into Red's Python environment, the verified PhasecoreX `/data/venv` path, and recovery from a requirements failure that prevents updated cog files from being copied. Missing or unimportable voice libraries still block playback and diagnostics explain what to install.
+- Check Red's actual requirement/update/copy flow with a failing native-package installer and verify that a media-package installation failure still stops an update. No changes to Red's installer or to a running user's container are made by this update.
+
 ## 2026-10-01: AudioPlus command loading checks
 
 - Exercise prefix messages through Red's actual context parser, permission requirements, and command handler for owners and ordinary members. Check query errors, aliases, converted volume arguments, playback controls, and registration after removing and replacing the cog.

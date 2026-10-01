@@ -10,4 +10,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Keep the base image's entrypoint, startup command, and /data volume.
-# Red Downloader installs yt-dlp, its EJS scripts, PyNaCl, and davey.
+# Red Downloader installs yt-dlp and its EJS scripts.
+# Install PyNaCl and davey once in the running bot's /data/venv (see README).
+# Installing them here would be hidden by PhasecoreX's /data volume at runtime.

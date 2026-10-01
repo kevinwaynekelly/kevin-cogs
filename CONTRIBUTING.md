@@ -54,7 +54,7 @@ Repository metadata lives in root `info.json`. See [Red's publishing guide](http
 - Match command names, arguments, and aliases to the implementation.
 - Document defaults that take effect when a cog loads and behavior changes on upgrade.
 - Update data statements and Red data hooks whenever persistent records change. Distinguish Config records from content posted to Discord.
-- Declare required pip packages in the cog's `requirements`; document optional packages separately.
+- Declare cog-managed pip packages in the cog's `requirements`; document optional packages separately. AudioPlus treats PyNaCl and davey as required bot-level voice prerequisites, installed once in Red's Python environment. Keep them out of Downloader's per-update requirement reinstall and retain explicit setup instructions and runtime import checks.
 - Keep root and cog guides consistent, use `[p]` for the bot prefix, and record meaningful changes in [CHANGELOG.md](CHANGELOG.md).
 
 For bug reports, include the cog, command or event, expected and actual behavior, relevant logs, and runtime versions. Remove bot tokens, cookies, passwords, and signed media URLs from logs before posting.
