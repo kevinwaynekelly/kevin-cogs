@@ -51,7 +51,7 @@ Changing a curve recalculates displayed levels from existing XP. The multiplier 
 
 These are member commands. Administrator settings stay under `level`, with the existing checks. Direct shortcuts also honor Red permission and disabled-command rules on the original grouped command.
 
-Enable the 59 slash actions once as the bot owner:
+Enable the 66 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog levelplus
@@ -154,7 +154,7 @@ Administrator checks protect changes and role synchronization. `periodboard` and
 
 Boosts affect earned event XP, unlike the original threshold multiplier. The highest matching boost applies, up to five active boosts, and expired boosts stop applying without a restart. Daily caps cover message/reaction/voice/slash XP together, persist across reloads, and apply after boosting. Administrative additions/imports bypass earned-XP policies and do not increase calendar/season totals. Message/reaction duplicate caches are bounded in memory and reset on reload; daily caps do not reset on reload. Short rejected messages do not consume message cooldowns.
 
-Calendar records retain 35 daily buckets and the current season. Archives retain five seasons' top 50 only. Install a timezone database or `tzdata` if the container lacks America/Chicago; collection falls back to UTC when the configured zone is unavailable. New `/periodboard`, `/level rewards ...`, `/level season ...`, `/level boost`, `/level guard ...`, and `/level setup` bring this cog to 59 slash actions. Reload and `slash sync` after updating.
+Calendar records retain 35 daily buckets and the current season. Archives retain five seasons' top 50 only. Install a timezone database or `tzdata` if the container lacks America/Chicago; collection falls back to UTC when the configured zone is unavailable. New `/periodboard`, `/level rewards ...`, `/level season ...`, `/level boost`, `/level guard ...`, and `/level setup` bring this cog to 66 slash actions. Reload and `slash sync` after updating.
 
 ## Stored data and current limits
 

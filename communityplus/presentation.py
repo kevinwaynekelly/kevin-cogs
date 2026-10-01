@@ -46,6 +46,13 @@ LABELS = {
     "owooptout": "Your transformation preference",
     "owoify": "Manual transformation",
     "syllables": "Pronunciation corrections",
+    "fairqueue": "Fair queues",
+    "autoplay": "Autoplay",
+    "rankcard": "Rank card",
+    "achievements": "Achievements",
+    "logsearch": "Search history",
+    "logexport": "History export",
+    "stylize": "Style preview",
 }
 LEGACY_COLORS = {
     **{color: tone for tone, color in COLORS.items()},
@@ -195,6 +202,8 @@ class Presentation:
         embed = self.style(embed, prefix=prefix, tone=tone)
         if prefix is not None and embed.footer.text == "Kevin's Cogs":
             help_command = f"help {self.cog}" if self.command == "audio" else f"{self.command} help"
+            if self.command == "settings":
+                help_command = "help settings"
             hint = f"Use {prefix}{help_command} for commands"
             if self.command == "audio" and getattr(target, "interaction", None) is not None:
                 hint = "Use /play to queue music"

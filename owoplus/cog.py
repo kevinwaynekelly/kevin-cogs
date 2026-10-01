@@ -692,6 +692,11 @@ class OwoPlus(redcommands.Cog):
             inline=False,
         )
         e.add_field(
+            name="Channel styles",
+            value=f"`{p}owo style set #channel <owo|pirate|robot> [minutes]` · `{p}owo style clear #channel`\n`{p}stylize <style> <text>`",
+            inline=False,
+        )
+        e.add_field(
             name="Member commands",
             value=f"`{p}owooptout [enabled]` · `{p}owoify <text>` · `{p}haiku <text>`",
             inline=False,
@@ -1478,6 +1483,10 @@ class OwoPlus(redcommands.Cog):
         async with self.config.guild(channel.guild).features() as data:
             data["channel_styles"].pop(str(channel.id), None)
         self._settings_cache.pop(channel.guild.id, None)
+
+    @commands.Cog.listener()
+    async def on_thread_delete(self, thread):
+        await self.on_guild_channel_delete(thread)
 
     @commands.Cog.listener()
     async def on_webhooks_update(self, channel):

@@ -1,0 +1,14 @@
+{
+  "author": ["Kevin Kelly"],
+  "short": "Shared setup, health, and safe server settings backups.",
+  "description": "An optional requester-bound settings dashboard for loaded AudioPlus, CommunityPlus, LevelPlus, LogPlus, and OwoPlus cogs. Open existing setup panels, inspect health and local music prerequisites, export selected server configuration, and preview validated same-server restores while preserving member records.",
+  "install_msg": "Load with [p]load settingshub and open [p]settings. All controls require administrator access or Manage Server. Use [p]settings health or [p]settings backup. Enable slash commands with [p]slash enablecog settingshub, then [p]slash sync. See the README for backup scope and restoration.",
+  "requirements": [],
+  "tags": ["utility", "settings", "backup"],
+  "min_bot_version": "3.5.24",
+  "min_python_version": [3, 10, 0],
+  "type": "COG",
+  "hidden": false,
+  "disabled": false,
+  "end_user_data_statement": "This cog does not persist records. Requester/server IDs and restore previews are held in memory for up to three minutes. Backups export selected server settings from loaded cogs, excluding member records, message histories, credentials, and runtime cursors. Files and dashboard messages posted to Discord remain managed there."
+}

@@ -524,6 +524,11 @@ class LevelPlus(MilestoneCommands, redcommands.Cog):
         e = discord.Embed(title="LevelPlus - Commands", color=discord.Color.blurple())
         e.description = f"Commands and examples use `{p}` as prefix."
         e.add_field(
+            name="Achievements and challenges",
+            value=f"`{p}achievements [@Member]` · `{p}challenges [@Member]` · `{p}rankcard [@Member]`\n`{p}level badges <enabled>` · `{p}level challenges enabled <enabled>` · `{p}level challenges goal <metric> <target> <reward>`",
+            inline=False,
+        )
+        e.add_field(
             name="Core",
             value=f"• `{p}level` • `{p}level help` • `{p}level diag`\n• `{p}rank [@user]` • `{p}leaderboard [N]` • `{p}levellookup <query>`\n• `{p}level testmsg [@user]` • `{p}level testup [@user] [levels]`",
             inline=False,

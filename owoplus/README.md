@@ -45,7 +45,7 @@ Reposted messages suppress mentions and split long output into parts. All attach
 
 ## Slash commands
 
-The command root is `owo`; the old `owoplus` command name is removed. Installation and reload still use `owoplus`. Enable all 33 slash actions once as the bot owner:
+The command root is `owo`; the old `owoplus` command name is removed. Installation and reload still use `owoplus`. Enable all 37 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog owoplus

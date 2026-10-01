@@ -49,3 +49,5 @@ python -m scripts.preview_presentation
 ```
 
 The preview generator uses temporary Config storage and mocked Discord/Lavalink objects. It does not connect to or post on Discord.
+
+The discovery additions use the same theme: music result selectors, poll/event attendance menus, achievement/challenge cards, locally rendered indigo rank PNGs, style previews, and history reports. Optional SettingsHub adds a requester-bound cog picker and restore preview. All six packages vendor identical presentation, command support, and interactive helpers.

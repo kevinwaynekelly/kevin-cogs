@@ -9,10 +9,10 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 | Cog | What it does | Commands | Guide |
 | --- | --- | --- | --- |
 | AudioPlus | Native music, search picks, fair queues/autoplay, saved music, DJ policies, and daily checks | `[p]play`, `/play`, `[p]audio` | [Setup and commands](audioplus/README.md) |
-| CommunityPlus | Self-service/automatic roles, welcomes, solo voice controls, voice time, and weekly summaries | `[p]community`, `[p]seen`, `/activity` | [Setup and commands](communityplus/README.md) |
-| LevelPlus | XP, reward roles, calendar/season rankings, earned-XP boosts, and farming controls | `[p]level`, `[p]rank`, `/leaderboard` | [Setup and commands](levelplus/README.md) |
-| LogPlus | Event logs, permission diffs, category routing, uncached messages, and delivery recovery | `[p]log`, `[p]logchannel`, `/log event` | [Setup and commands](logplus/README.md) |
-| OwoPlus | Scoped transformations, personal opt-outs, custom words, and automatic/manual haiku | `[p]owo`, `/owo preview` | [Setup and commands](owoplus/README.md) |
+| CommunityPlus | Roles, welcomes, solo voice controls, participation, polls, and events | `[p]community`, `[p]seen`, `/activity` | [Setup and commands](communityplus/README.md) |
+| LevelPlus | XP, rewards, seasons, earned badges, weekly challenges, and PNG rank cards | `[p]level`, `[p]rank`, `/leaderboard` | [Setup and commands](levelplus/README.md) |
+| LogPlus | Event logs, permission diffs, delivery recovery, and retained history/search/exports | `[p]log`, `[p]logchannel`, `/log event` | [Setup and commands](logplus/README.md) |
+| OwoPlus | Scoped Owo/pirate/robot styles, personal opt-outs, custom words, and haiku | `[p]owo`, `/owo preview` | [Setup and commands](owoplus/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
 
@@ -25,10 +25,21 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | AudioPlus | `[p]audioset setup` or `/audioset setup` | Playback buttons, seek/queue editing, private saved playlists/favorites, and optional listener vote skipping. |
 | CommunityPlus | `[p]community setup` or `/community setup` | `[p]roles`, polls, event RSVPs/reminders, and posted safe self-service role pickers. Voice reports and weekly summaries retain administrator checks. |
 | LevelPlus | `[p]level setup` or `/level setup` | Rank/lifetime boards, `[p]periodboard`, season history, `[p]achievements`, `[p]challenges`, and `[p]rankcard`. Administrators configure rewards, boosts, and farming controls. |
-| LogPlus | `[p]log setup` or `/log setup` | Administrator event routing, exemptions, permission diffs, raw-event coverage, and delivery status/retries. |
-| OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
+| LogPlus | `[p]log setup` or `/log setup` | Administrator routing, permission diffs, delivery recovery, and opt-in retained history with timeline/search/export. |
+| OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The five cogs expose 232 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
+The five cogs expose 232 slash actions across valid groups and direct commands. Optional SettingsHub adds four more. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
+
+## Shared settings dashboard
+
+Install optional [SettingsHub](settingshub/README.md) for `[p]settings` or `/settings panel`, a single picker for the five loaded cogs' setup panels. `/settings health` inspects cog status and local prerequisites. `/settings backup` exports selected server configuration; `/settings restore` validates an attached same-server backup and previews changes before applying them. Member records, credentials, active events, histories, and runtime cursors are excluded and preserved. All controls retain current administrator, command, and cog checks.
+
+```text
+[p]cog install kevin-cogs settingshub
+[p]load settingshub
+[p]slash enablecog settingshub
+[p]slash sync
+```
 
 ## Discord presentation
 
@@ -64,7 +75,7 @@ Use `[p]play <song or URL>`, `[p]skip`, `[p]pause`, `[p]np`, and `[p]queue` for 
 
 The owner can enable [daily YouTube playback checks](audioplus/README.md#daily-youtube-playback-checks) with `[p]audiocheck enable`. A silent three-second native voice probe runs at 09:00 America/Chicago by default and DMs its configuring owner on failure. Successful checks stay quiet; busy voice connections postpone the probe.
 
-The other cogs declare Red **3.5.0 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**. Downloader installs yt-dlp and its matching EJS package. Install **PyNaCl>=1.5.0,<1.6** and **davey>=0.1.6** once in Red's Python environment; working voice libraries previously installed by Downloader remain supported and are kept during cog updates. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. Restart Red when changing voice libraries. Its guide includes voice-library and Deno installation commands and an optional persistent container image recipe. LevelPlus installs Pillow for PNG rank cards. CommunityPlus and LogPlus have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
+CommunityPlus, LevelPlus, LogPlus, and OwoPlus declare Red **3.5.0 or newer**. SettingsHub requires **3.5.24 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**. Downloader installs yt-dlp and its matching EJS package. Install **PyNaCl>=1.5.0,<1.6** and **davey>=0.1.6** once in Red's Python environment; working voice libraries previously installed by Downloader remain supported and are kept during cog updates. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. Restart Red when changing voice libraries. Its guide includes voice-library and Deno installation commands and an optional persistent container image recipe. LevelPlus installs Pillow for PNG rank cards. CommunityPlus and LogPlus have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
 
 These guides describe the current source. Compatibility metadata is not a record of live testing on every Red, Discord, or media-provider version.
 

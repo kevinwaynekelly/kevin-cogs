@@ -345,6 +345,11 @@ class LogPlus(LogDelivery, LogHistory, redcommands.Cog):
             inline=False,
         )
         e.add_field(
+            name="Retained history",
+            value=f"`{p}log history enabled true` · `{p}log history retention <days>`\n`{p}timeline @Member` · `{p}logsearch <query>` · `{p}logexport [json|csv]`",
+            inline=False,
+        )
+        e.add_field(
             name="Toggles",
             value=(
                 f"• `{p}log toggle message <edit|delete|bulk|pins>`\n"

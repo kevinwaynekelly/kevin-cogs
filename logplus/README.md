@@ -31,7 +31,7 @@ No destination is configured initially. Event switches default to on, compact st
 
 All retain Red administrator or **Manage Server** checks and honor the grouped command's permission/disabled state. The renamed root is `log`; `logplus` is now only the package name for installation and reload.
 
-Enable the 23 slash actions once as the bot owner:
+Enable the 30 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog logplus
@@ -106,9 +106,9 @@ Each toggle flips the current value. For example, `[p]log toggle message edit` s
 
 ## Stored data
 
-Red Config stores server settings, event switches, destination channel IDs, source/category routing overrides, channel exemption lists, retry preferences, and style/rate preferences. It does not persist message text in Config. Logs posted to Discord can contain user IDs, names, invite codes, message contents, and event details, and remain in the destination channels until removed there.
+Red Config stores server settings, event switches, destination channel IDs, source/category routing overrides, channel exemption lists, retry preferences, and style/rate preferences. Message text is persisted in Config only when optional local history is enabled. Logs posted to Discord can contain user IDs, names, invite codes, message contents, and event details, and remain in the destination channels until removed there.
 
-Pending retry records temporarily contain the same event details and message contents in memory. User-data export/deletion hooks return or remove pending records containing that user's Discord ID and clear cached audit entries on deletion. Config holds no per-user history; posted Discord logs are managed in Discord.
+Pending retry records temporarily contain the same event details and message contents in memory. User-data export/deletion hooks return or remove pending and retained records containing that user's Discord ID and clear cached audit entries on deletion. Optional Config history holds bounded event records identifying members; posted Discord logs are managed in Discord.
 
 ## Retained history, timelines, and exports
 

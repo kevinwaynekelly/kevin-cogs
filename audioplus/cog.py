@@ -715,6 +715,7 @@ class AudioPlus(AudioCommands, commands.Cog):
         )
         sections = {
             "Playback": f"`{p}play <query>`\n`{p}np` · `{p}queue`\n`{p}skip` · `{p}stop`",
+            "Discovery": f"`{p}search <query>` · choose a result before joining voice\n`{p}audioset fairqueue <enabled>` · `{p}audioset autoplay <enabled>`",
             "Controls": f"`{p}pause` · `{p}resume`\n`{p}volume [0..1000]` · `{p}shuffle`\n`{p}repeat [off|track|queue]`",
             "Voice": f"`{p}join` · `{p}disconnect`\n`{p}speak` · `{p}undeafen`\n`{p}fixvoice` · `{p}rejoin`",
             "Diagnostics": f"`{p}audiostatus` · `{p}playerstate`\n`{p}debugvc` · `{p}tone`\n`{p}audiocheck` (owner)",

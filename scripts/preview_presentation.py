@@ -23,6 +23,7 @@ from communityplus import CommunityPlus
 from levelplus import LevelPlus
 from logplus import LogPlus
 from owoplus import OwoPlus
+from settingshub import SettingsHub
 
 
 async def samples(directory):
@@ -104,6 +105,17 @@ async def samples(directory):
         await capture(
             OwoPlus.owoplus_preview.callback(owo, ctx, text="Hello friend, welcome to the server!")
         )
+        bot.get_cog = lambda name: {
+            "AudioPlus": audio,
+            "CommunityPlus": community,
+            "LevelPlus": level,
+            "LogPlus": logging,
+            "OwoPlus": owo,
+        }.get(name)
+        hub = SettingsHub(bot)
+        ctx.command = SimpleNamespace(qualified_name="settings")
+        await capture(SettingsHub.settings.callback(hub, ctx))
+        await hub.cog_unload()
         ctx.command = SimpleNamespace(qualified_name="community welcome channel")
         await capture(community._presentation.confirm(ctx))
     return cards

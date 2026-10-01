@@ -14,7 +14,7 @@ Each cog is independently installable through Red Downloader:
 
 AudioPlus isolates subprocess media resolution in `resolver.py`, native queue/playback in `player.py`, system dependency checks in `backend.py`, and daily scheduling/private alerts in `watchdog.py`. Audio/Level/Community/Owo feature policies live in their own `features.py` modules. Community participation and persistent role pickers remain separate from its event commands. LogPlus isolates bounded delivery in `delivery.py` and permission formatting in `diffs.py`. LevelPlus isolates threshold calculations in `levels.py`. OwoPlus isolates syllable counting and haiku detection in `haiku.py`. Keep cog modules self-contained; Downloader can install one cog without the others.
 
-Each cog vendors the same `presentation.py` helper. Edit the AudioPlus copy and sync it to the other four; tests enforce identical copies. Use the presentation helper for bot-owned messages and retain webhook/user content semantics. See [the visual design](docs/PRESENTATION.md), including the command to regenerate its sample preview.
+Each cog vendors the same `presentation.py` helper. Edit the AudioPlus copy and sync it to the other four; tests enforce identical copies, including optional SettingsHub. Use the presentation helper for bot-owned messages and retain webhook/user content semantics. See [the visual design](docs/PRESENTATION.md), including the command to regenerate its sample preview.
 
 All five cogs also vendor identical `command_support.py` and `interactive.py` helpers. Component contexts use the clicking member and check the full current command path; setup panels are bound to the original requester and server. Slash invocations check the full prefix permission path before deferring. Direct shortcuts check the original grouped command and its disabled state before reusing a callback. Preserve context and permission state even when a parent check fails. Legacy branches too deep for slash are attached after Cog command copying; keep them out of the application-command tree. Tests load all five cogs beside Red Core, exercise messages and slash preparation/conversion/hooks, and check removal/reload.
 
@@ -34,7 +34,7 @@ python3.11 -m venv .venv
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format --check .
 .venv/bin/python -m pytest -q
-.venv/bin/python -m compileall -q audioplus communityplus levelplus logplus owoplus
+.venv/bin/python -m compileall -q audioplus communityplus levelplus logplus owoplus settingshub
 .venv/bin/python -c "import json, pathlib; [json.loads(p.read_text()) for p in [pathlib.Path('info.json'), *pathlib.Path('.').glob('*/info.json')]]"
 git diff --check
 ```
@@ -64,3 +64,7 @@ Repository metadata lives in root `info.json`. See [Red's publishing guide](http
 - Keep root and cog guides consistent, use `[p]` for the bot prefix, and record meaningful changes in [CHANGELOG.md](CHANGELOG.md).
 
 For bug reports, include the cog, command or event, expected and actual behavior, relevant logs, and runtime versions. Remove bot tokens, cookies, passwords, and signed media URLs from logs before posting.
+
+## Shared settings maintenance
+
+SettingsHub discovers source cogs at runtime and imports none of their modules. Keep its explicit backup scope in `settingshub/schema.py` aligned with source defaults. Exclude member data, global credentials, operational cursors, registered message IDs, and temporary XP boosts. Validate the actual current setup path and role/channel policies before a restore, hold the existing added-section locks, preserve excluded nested fields, replace dynamic maps, and roll back failed writes. Test prefix/slash permission failures, requester/server boundaries, reloads, invalid files, and member data preservation. Health checks report detected prerequisites, not verified live provider/voice access.

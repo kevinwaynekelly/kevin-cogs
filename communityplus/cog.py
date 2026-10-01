@@ -389,6 +389,11 @@ class CommunityPlus(CommunityFeatures, CommunitySocial, redcommands.Cog):
             f"`{p}community vcsolo warning <seconds>` · `notify <enabled>` · `exemptchannel <channel>` · `exemptrole @Role`",
             inline=False,
         )
+        e.add_field(
+            name="Polls and events",
+            value=f"`{p}poll create <question> <choice | choice>` · `{p}poll vote <id> <choice>`\n`{p}event create <title> <ISO time>` · `{p}event rsvp <id> yes` · `{p}event remind <id>`",
+            inline=False,
+        )
         await self._reply(ctx, embed=e)
 
     @redcommands.hybrid_command(name="seen")

@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1395" viewBox="0 0 1100 1395">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1550" viewBox="0 0 1100 1550">
 <title>Kevin’s Cogs: unified Discord theme</title>
-<rect width="1100" height="1395" fill="#1E1F22"/>
+<rect width="1100" height="1550" fill="#1E1F22"/>
 <g font-family="DejaVu Sans, sans-serif">
 <text x="36" y="53" font-size="28" fill="#F2F3F5" font-weight="700">KEVIN&#x27;S COGS</text>
 <text x="36" y="87" font-size="16" fill="#B5BAC1" font-weight="400">One theme across music, community, levels, logs, and transformations.</text>
@@ -76,14 +76,23 @@
 <text x="58" y="1148" font-size="15" fill="#DBDEE1" font-weight="400">Full transformation</text>
 <text x="287" y="1125" font-size="15" fill="#F2F3F5" font-weight="700">Full transformation chance</text>
 <text x="287" y="1148" font-size="15" fill="#DBDEE1" font-weight="400">1 in 1</text>
-<text x="58" y="1182" font-size="15" fill="#F2F3F5" font-weight="700">Haiku</text>
-<text x="58" y="1205" font-size="15" fill="#DBDEE1" font-weight="400">Enabled</text>
+<text x="58" y="1182" font-size="15" fill="#F2F3F5" font-weight="700">Style</text>
+<text x="58" y="1205" font-size="15" fill="#DBDEE1" font-weight="400">Owo</text>
+<text x="287" y="1182" font-size="15" fill="#F2F3F5" font-weight="700">Haiku</text>
+<text x="287" y="1205" font-size="15" fill="#DBDEE1" font-weight="400">Enabled</text>
 <text x="58" y="1239" font-size="15" fill="#F2F3F5" font-weight="700">Output</text>
 <text x="58" y="1262" font-size="15" fill="#DBDEE1" font-weight="400">h-Hewwo fwiend, w-weewcome to de sewvew! nya~</text>
 <text x="58" y="1299" font-size="12" fill="#B5BAC1" font-weight="400">Kevin&#x27;s Cogs · Use !owo help for commands</text>
-<rect x="562" y="648" width="502" height="131" rx="8" fill="#2B2D31"/>
-<path d="M566 656 V771" stroke="#34D399" stroke-width="5" stroke-linecap="round"/>
-<text x="584" y="683" font-size="19" fill="#F2F3F5" font-weight="700">CommunityPlus · Welcome · Channel</text>
-<text x="584" y="711" font-size="15" fill="#DBDEE1" font-weight="400">Settings saved.</text>
-<text x="584" y="745" font-size="12" fill="#B5BAC1" font-weight="400">Kevin&#x27;s Cogs · Use !community help for commands</text>
+<rect x="562" y="648" width="502" height="177" rx="8" fill="#2B2D31"/>
+<path d="M566 656 V817" stroke="#818CF8" stroke-width="5" stroke-linecap="round"/>
+<text x="584" y="683" font-size="19" fill="#F2F3F5" font-weight="700">Settings · Server settings</text>
+<text x="584" y="711" font-size="15" fill="#DBDEE1" font-weight="400">Choose a cog to open its guided setup. Controls use</text>
+<text x="584" y="734" font-size="15" fill="#DBDEE1" font-weight="400">your current permissions. Use settings health,</text>
+<text x="584" y="757" font-size="15" fill="#DBDEE1" font-weight="400">backup, or restore for maintenance.</text>
+<text x="584" y="791" font-size="12" fill="#B5BAC1" font-weight="400">Kevin&#x27;s Cogs · Use !help settings for commands</text>
+<rect x="36" y="1357" width="502" height="131" rx="8" fill="#2B2D31"/>
+<path d="M40 1365 V1480" stroke="#34D399" stroke-width="5" stroke-linecap="round"/>
+<text x="58" y="1392" font-size="19" fill="#F2F3F5" font-weight="700">CommunityPlus · Welcome · Channel</text>
+<text x="58" y="1420" font-size="15" fill="#DBDEE1" font-weight="400">Settings saved.</text>
+<text x="58" y="1454" font-size="12" fill="#B5BAC1" font-weight="400">Kevin&#x27;s Cogs · Use !community help for commands</text>
 </g></svg>

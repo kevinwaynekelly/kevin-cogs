@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-01: Shared settings and discovery integration
+
+- Add optional independently installable SettingsHub with a shared setup picker, local health report, configuration backups, and validated requester-bound same-server restore previews. Preserve member/operational data, replace custom maps, reject unsafe inputs, repeat current permissions, and roll back failed writes.
+- Refresh command overviews, shared labels, guides, metadata, and CI syntax coverage for all discovery additions. Validate 236 slash actions and 485 tests on Python 3.10/3.11 with actual Red command/config APIs and mocked Discord/provider boundaries. Keep the original 209-command compatibility surface and five source cogs independently installable.
+
 ## 2026-10-01: Opt-in retained log history
 
 - Add administrator member timelines, text/category/date searches, filtered JSON/CSV exports, and slash equivalents behind original log permissions. Capture one logical accepted event before delivery without duplicating retries.

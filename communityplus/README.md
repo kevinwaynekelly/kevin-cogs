@@ -50,7 +50,7 @@ Managed/integration roles and `@everyone` are excluded from sticky restoration. 
 
 These shortcuts retain the permissions and disabled state of their grouped versions. The renamed root is `community`; the old `com` name is removed. Installation and reload still use `communityplus`.
 
-Enable the 51 slash actions once as the bot owner:
+Enable the 60 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog communityplus
