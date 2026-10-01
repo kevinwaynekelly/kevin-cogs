@@ -10,6 +10,7 @@ import random
 import re
 import time
 from collections import OrderedDict, defaultdict
+from fractions import Fraction
 from heapq import nlargest
 from types import SimpleNamespace
 from typing import List, Optional, Tuple
@@ -544,14 +545,30 @@ class LevelPlus(redcommands.Cog):
     ):
         if L1 <= 0 or L2 <= 0 or L1 == L2:
             return await ctx.send("Levels must be positive and different.")
-        a1 = 2.0 * XP1 / L1
-        a2 = 2.0 * XP2 / L2
-        d = (a1 - a2) / (L1 - L2)
-        b = (a1 - (L1 - 1) * d) / 2.0
-        if d < 0 or b < 0:
+        if XP1 < 0 or XP2 < 0:
+            return await ctx.send("XP thresholds must be nonnegative.")
+        group = self.config.guild(ctx.guild)
+        multiplier = float(await group.multiplier())
+        if not math.isfinite(multiplier) or multiplier <= 0:
+            return await ctx.send("Set a finite positive multiplier before calibrating.")
+        factor = Fraction(str(multiplier))
+        step = 2 * (Fraction(XP2, L2) - Fraction(XP1, L1)) / (L2 - L1) / factor
+        start = Fraction(XP1, L1) / factor - (L1 - 1) * step / 2
+        if step < 0 or start < 0:
             return await ctx.send("Calibration failed (negative base/inc). Check inputs.")
-        await self.config.guild(ctx.guild).linear.set({"base": float(b), "inc": float(d)})
-        await self.config.guild(ctx.guild).curve.set("linear")
+        try:
+            b, d = float(start), float(step)
+        except OverflowError:
+            return await ctx.send("Calibration failed (coefficients are too large). Check inputs.")
+        if not all(math.isfinite(value) for value in (b, d)) or any(
+            cumulative_xp(level, "linear", multiplier, b, d) != xp
+            for level, xp in ((L1, XP1), (L2, XP2))
+        ):
+            return await ctx.send(
+                "Calibration failed (coefficients cannot reproduce those XP thresholds). Check inputs."
+            )
+        await group.linear.set({"base": b, "inc": d})
+        await group.curve.set("linear")
         await ctx.send(f"Calibrated linear curve: base=**{b:.3f}**, inc=**{d:.3f}**")
 
     # ---- admin: message xp

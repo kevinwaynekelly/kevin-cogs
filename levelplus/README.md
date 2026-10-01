@@ -50,7 +50,7 @@ Square brackets indicate optional arguments.
 | `[p]level diag` | Check settings, permissions, intents, and a reaction probe. |
 | `[p]level show [@Member]` | Show XP and level. Defaults to yourself. |
 | `[p]level leaderboard [top]` | Show the leaderboard. Default 10, range 1 to 50. |
-| `[p]level lookup <name fragment|mention|ID>` | Find user IDs from current/cached users. |
+| `[p]level lookup <name fragment\|mention\|ID>` | Find user IDs from current/cached users. |
 
 ## Admin commands
 
@@ -58,29 +58,29 @@ For boolean commands, omitting `true`/`false` toggles the setting.
 
 | Command | Purpose |
 | --- | --- |
-| `[p]level formula curve <linear|exponential|constant>` | Select a level curve. |
+| `[p]level formula curve <linear\|exponential\|constant>` | Select a level curve. |
 | `[p]level formula multiplier <value>` | Set the threshold multiplier, range 0.1 to 10.0. |
 | `[p]level formula maxlevel <level>` | Set a level cap. `0` selects uncapped mode. |
 | `[p]level formula linear base <value>` / `inc <value>` | Set nonnegative linear coefficients. |
 | `[p]level formula preset arcane` | Apply the default Arcane-like linear coefficients. |
-| `[p]level formula calibrate <L1> <XP1> <L2> <XP2>` | Fit a linear curve to two cumulative XP thresholds. |
-| `[p]level message enable [true|false]` | Control message XP. |
-| `[p]level message mode <perword|random|none>` | Select word-based XP, a random amount, or no message award. |
+| `[p]level formula calibrate <L1> <XP1> <L2> <XP2>` | Fit a linear curve to two nonnegative cumulative XP thresholds, preserving the current multiplier. Rejects invalid or unrepresentable fits without changing settings. |
+| `[p]level message enable [true\|false]` | Control message XP. |
+| `[p]level message mode <perword\|random\|none>` | Select word-based XP, a random amount, or no message award. |
 | `[p]level message min <value>` / `max <value>` | Set random bounds, or the XP-per-word value and per-message cap in `perword` mode. |
 | `[p]level message cooldown <seconds>` | Set the cooldown, range 0 to 3,600 seconds. |
-| `[p]level reaction enable [true|false]` | Control reaction XP. |
-| `[p]level reaction awards <both|author|reactor|none>` | Choose award recipients. |
+| `[p]level reaction enable [true\|false]` | Control reaction XP. |
+| `[p]level reaction awards <both\|author\|reactor\|none>` | Choose award recipients. |
 | `[p]level reaction min <value>` / `max <value>` | Set the nonnegative random award range. |
 | `[p]level reaction cooldown <seconds>` | Set the reactor cooldown, range 0 to 3,600 seconds. |
-| `[p]level voice enable [true|false]` | Control voice XP. |
+| `[p]level voice enable [true\|false]` | Control voice XP. |
 | `[p]level voice range <min> <max>` | Set the nonnegative random award range. |
 | `[p]level voice cooldown <seconds>` | Set the interval, range 15 to 3,600 seconds. |
 | `[p]level voice minmembers <count>` | Require 1 to 99 human channel members. |
-| `[p]level voice antiafk [true|false]` | Skip AFK, muted, or deafened members when enabled. |
+| `[p]level voice antiafk [true\|false]` | Skip AFK, muted, or deafened members when enabled. |
 | `[p]level restrict nochannels add #channel` / `remove #channel` / `list` / `clear` | Manage excluded text channels. |
 | `[p]level restrict noroles add @Role` / `remove @Role` / `list` / `clear` | Manage excluded roles. |
-| `[p]level restrict toggles <threadxp|forumxp|textvoicexp|slashxp> [true|false]` | Control message/reaction/slash-command eligibility for these channel types. |
-| `[p]level levelup enable [true|false]` | Control announcements. |
+| `[p]level restrict toggles <threadxp\|forumxp\|textvoicexp\|slashxp> [true\|false]` | Control message/reaction/slash-command eligibility for these channel types. |
+| `[p]level levelup enable [true\|false]` | Control announcements. |
 | `[p]level levelup channel [#channel]` | Set the announcement channel, or omit it to clear the target. |
 | `[p]level levelup template <text>` | Set the announcement template. |
 | `[p]level testmsg [@Member]` | Send a test announcement without changing XP. |

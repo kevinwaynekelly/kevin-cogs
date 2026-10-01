@@ -9,6 +9,7 @@ Changes recorded here start with the repository's documentation and metadata pas
 - Split every cog into a small entry point, implementation, and constants while preserving Config identifiers, defaults, commands, and permissions.
 - Use cached settings and bounded transient caches; event handlers respect Red's per-server cog disable setting.
 - Calculate level thresholds with cumulative decimal formulas and logarithmic lookup, removing the implicit 5,000-level ceiling and exponential overflow.
+- Preserve the configured multiplier during linear calibration and reject negative, overflowing, or imprecise fits before changing saved settings.
 - Read XP per user, update it under consistent locks, batch voice awards, and use top-N selection for leaderboards and seen lists.
 - Parse real quoted CSV, preserve integer XP precision and custom aliases, and reject ambiguous name imports.
 - Scope solo voice timers to server/member, preserve existing deadlines, recheck eligibility, and cancel timers on disable/unload.

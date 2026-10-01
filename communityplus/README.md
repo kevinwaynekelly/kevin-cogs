@@ -66,7 +66,7 @@ Square brackets indicate optional arguments. `enable` and `disable` are separate
 | `[p]com stats [@Member]` | Show counters and the top five recorded games. |
 | `[p]com seenlist [limit]` | List recently seen current members. Default 25, range 1 to 100. |
 | `[p]com seenlistcsv` | Export current members' last-seen and presence summary as CSV. |
-| `[p]com embeds [true|false]` | Inspect or set compact embeds. |
+| `[p]com embeds [true\|false]` | Inspect or set compact embeds. |
 
 Welcome and goodbye templates support `{user}`, `{mention}`, `{server}`, `{count}`, `{created_at}`, and `{joined_at}`. An invalid template is sent unchanged.
 

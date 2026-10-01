@@ -3,9 +3,60 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import discord
+import pytest
 from conftest import forbidden, make_channel, make_context, make_member, make_message
 
 from levelplus import LevelPlus
+from levelplus.levels import cumulative_xp
+
+
+@pytest.mark.parametrize("multiplier", [0.1, 1.0, 2.0, 10.0])
+@pytest.mark.parametrize("anchors", [(1, 100, 2, 250), (2, 250, 1, 100)])
+async def test_calibration_fits_thresholds_with_active_multiplier(bot, guild, multiplier, anchors):
+    cog = LevelPlus(bot)
+    group = cog.config.guild(guild)
+    await group.multiplier.set(multiplier)
+    await group.curve.set("constant")
+    await LevelPlus.formula_calibrate.callback(cog, make_context(guild), *anchors)
+    coefficients = await group.linear()
+    assert await group.multiplier() == multiplier
+    assert await group.curve() == "linear"
+    for level, xp in zip(anchors[::2], anchors[1::2]):
+        assert cumulative_xp(level, "linear", multiplier, **coefficients) == xp
+
+
+@pytest.mark.parametrize(
+    "anchors",
+    [
+        (1, 10**308, 2, 10**308),
+        (1, 10**400, 2, 3 * 10**400),
+        (1, 9007199254740993, 2, 18014398509481986),
+        (1, -1, 2, 100),
+        (1, 100, 2, -1),
+    ],
+)
+async def test_invalid_calibration_preserves_saved_settings(bot, guild, anchors):
+    cog = LevelPlus(bot)
+    group = cog.config.guild(guild)
+    await group.curve.set("exponential")
+    before = await group.all()
+    ctx = make_context(guild)
+    await LevelPlus.formula_calibrate.callback(cog, ctx, *anchors)
+    assert await group.all() == before
+    ctx.send.assert_awaited_once()
+    assert "Calibrated" not in ctx.send.await_args.args[0]
+
+
+@pytest.mark.parametrize("multiplier", [0.0, -1.0, float("inf"), float("nan")])
+async def test_calibration_rejects_invalid_saved_multiplier(bot, guild, multiplier):
+    cog = LevelPlus(bot)
+    group = cog.config.guild(guild)
+    await group.multiplier.set(multiplier)
+    before = await group.linear()
+    ctx = make_context(guild)
+    await LevelPlus.formula_calibrate.callback(cog, ctx, 1, 100, 2, 250)
+    assert await group.linear() == before
+    assert "positive multiplier" in ctx.send.await_args.args[0]
 
 
 async def test_concurrent_xp_updates_and_saved_alias(bot, guild):
