@@ -28,7 +28,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | LogPlus | `[p]log setup` or `/log setup` | Administrator event routing, exemptions, permission diffs, raw-event coverage, and delivery status/retries. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The five cogs expose 221 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
+The five cogs expose 225 slash actions across valid groups and direct commands. Enable the desired cogs, reload after updating, and run `slash sync` to publish their current definitions to Discord.
 
 ## Discord presentation
 
@@ -64,7 +64,7 @@ Use `[p]play <song or URL>`, `[p]skip`, `[p]pause`, `[p]np`, and `[p]queue` for 
 
 The owner can enable [daily YouTube playback checks](audioplus/README.md#daily-youtube-playback-checks) with `[p]audiocheck enable`. A silent three-second native voice probe runs at 09:00 America/Chicago by default and DMs its configuring owner on failure. Successful checks stay quiet; busy voice connections postpone the probe.
 
-The other cogs declare Red **3.5.0 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**. Downloader installs yt-dlp and its matching EJS package. Install **PyNaCl>=1.5.0,<1.6** and **davey>=0.1.6** once in Red's Python environment; working voice libraries previously installed by Downloader remain supported and are kept during cog updates. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. Restart Red when changing voice libraries. Its guide includes voice-library and Deno installation commands and an optional persistent container image recipe. The other cogs have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
+The other cogs declare Red **3.5.0 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**. Downloader installs yt-dlp and its matching EJS package. Install **PyNaCl>=1.5.0,<1.6** and **davey>=0.1.6** once in Red's Python environment; working voice libraries previously installed by Downloader remain supported and are kept during cog updates. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. Restart Red when changing voice libraries. Its guide includes voice-library and Deno installation commands and an optional persistent container image recipe. LevelPlus installs Pillow for PNG rank cards. CommunityPlus and LogPlus have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
 
 These guides describe the current source. Compatibility metadata is not a record of live testing on every Red, Discord, or media-provider version.
 
@@ -108,7 +108,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 182 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
+Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. Across these four cogs there are 186 slash actions for member reports, role/welcome settings, XP controls, log routing/switches, and transformation tools. Each guide lists the few deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 

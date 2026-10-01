@@ -115,3 +115,11 @@ Detection considers English alphabetic words, accepts 3 to 32 words and at most 
 Red Config stores server settings, channel scope IDs, custom words and syllable corrections, intensity/cooldown preferences, and member IDs associated with probability overrides or personal opt-outs. It does not persist message contents in Config. Webhook references and syllable lookup caches are held in memory. Transformed text, copied attachments, and the author's display name/avatar are sent to Discord as webhook messages and remain there until removed.
 
 Red's user-data export/deletion hooks return or remove probability overrides and personal opt-outs across servers. Already-posted webhook messages are managed in Discord.
+
+## Channel styles and temporary modes
+
+`[p]owo style set <channel> <owo|pirate|robot> [minutes]` selects a channel style. Zero minutes means permanent; 1 to 10080 minutes expires automatically, including after reload. Threads prefer their own active override, then their parent's override, then Owo. `[p]owo style clear <channel>` restores inheritance; `[p]owo style` lists settings. Store at most 100 active overrides. Expiry is evaluated on each message, so no message is transformed using an expired mode. These settings do not enable automatic processing.
+
+Pirate and robot styles use their own whole-word dictionaries. Full pirate transformations add an Ahoy/Arrr frame; full robot transformations use uppercase transmission text. Both preserve URLs, mentions, emoji, and code. Custom words apply to every style and haiku retains priority. Probabilities, scopes, opt-outs, and cooldowns still apply. `[p]stylize <owo|pirate|robot> <text>` is a member preview without reposting or deleting messages. All style controls and the member preview have slash equivalents.
+
+Channel IDs, style names, and expiry timestamps are saved in the additive `features.channel_styles` map. Expired entries are pruned when setting a new style, and deleted channels are removed. No message content or additional member records are collected.

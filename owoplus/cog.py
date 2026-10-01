@@ -10,7 +10,7 @@ import re
 import time
 from collections import OrderedDict, defaultdict
 from functools import lru_cache
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Literal, Optional, Tuple, Union
 from weakref import WeakValueDictionary
 
 import discord
@@ -30,7 +30,16 @@ from .constants import (
     TARGETS,
 )
 from .events import guild_enabled
-from .features import FEATURE_DEFAULTS, channel_allowed, keyword_match, replace_keywords, valid_word
+from .features import (
+    FEATURE_DEFAULTS,
+    STYLE_WORDS,
+    channel_allowed,
+    channel_features,
+    keyword_match,
+    replace_keywords,
+    transform_style,
+    valid_word,
+)
 from .haiku import (
     Haiku,
     HaikuMeter,
@@ -75,6 +84,7 @@ class OwoPlus(redcommands.Cog):
         self._render_gate = asyncio.Semaphore(4)
         self._transform_times = OrderedDict()
         self._views = set()
+        self._closing = False
 
     # ---------- transforms ----------
     @staticmethod
@@ -425,6 +435,9 @@ class OwoPlus(redcommands.Cog):
             if is_code or mode == "none":
                 result.append(seg)
                 continue
+            if features and features.get("style", "owo") != "owo":
+                result.append(transform_style(seg, features, self._case_like, full=mode == "full"))
+                continue
             if mode == "keys":
                 mapped = (
                     replace_keywords(seg, features, self._case_like)
@@ -488,7 +501,8 @@ class OwoPlus(redcommands.Cog):
 
     async def _should_process(self, message, conf=None):
         if (
-            not message.guild
+            self._closing
+            or not message.guild
             or message.author.bot
             or message.webhook_id
             or not isinstance(message.channel, (discord.TextChannel, discord.Thread))
@@ -857,6 +871,7 @@ class OwoPlus(redcommands.Cog):
         original message.
         """
         conf = await self.config.guild(ctx.guild).all()
+        conf["features"] = channel_features(ctx.channel, conf["features"])
         n = conf["one_in"]
         forced = any(
             keyword_match(seg, conf["features"])
@@ -880,6 +895,7 @@ class OwoPlus(redcommands.Cog):
             ],
         )
         e.add_field(name="Full transformation chance", value=f"1 in {n:,}")
+        e.add_field(name="Style", value=conf["features"]["style"].title())
         e.add_field(
             name="Haiku", value="Enabled" if conf.get("haiku_enabled", True) else "Disabled"
         )
@@ -930,6 +946,7 @@ class OwoPlus(redcommands.Cog):
                 ctx, embed=_embed("OwoPlus test", desc="No eligible recent message found.")
             )
         conf = await self._settings(ctx.guild)
+        conf = {**conf, "features": channel_features(ctx.channel, conf["features"])}
         mode = self._choose_mode(last.author, last.content, conf)
         content = await self._render_async(
             last.content, mode, bool(conf.get("haiku_enabled", True)), conf["features"]
@@ -955,6 +972,7 @@ class OwoPlus(redcommands.Cog):
         conf = await self._settings(message.guild)
         if not await self._should_process(message, conf):
             return
+        conf = {**conf, "features": channel_features(message.channel, conf["features"])}
         original = message.content
         mode = self._choose_mode(message.author, original, conf)
         if mode == "none" and not conf.get("haiku_enabled", True):
@@ -963,8 +981,12 @@ class OwoPlus(redcommands.Cog):
             original, mode, bool(conf.get("haiku_enabled", True)), conf["features"]
         )
         if output != original:
-            if not await self._should_process(message) or await self.bot.cog_disabled_in_guild(
-                self, message.guild
+            latest = await self._settings(message.guild)
+            if (
+                channel_features(message.channel, latest["features"])["style"]
+                != conf["features"]["style"]
+                or not await self._should_process(message, latest)
+                or await self.bot.cog_disabled_in_guild(self, message.guild)
             ):
                 return
             key = (message.guild.id, message.author.id)
@@ -978,9 +1000,11 @@ class OwoPlus(redcommands.Cog):
                 self._transform_times.pop(key, None)
 
     async def cog_load(self):
+        self._closing = False
         await asyncio.to_thread(HaikuMeter.initialize)
 
     async def cog_unload(self):
+        self._closing = True
         await close_views(self)
         self._wh_cache.clear()
         self._settings_cache.clear()
@@ -1020,13 +1044,15 @@ class OwoPlus(redcommands.Cog):
 
     async def _render_async(self, raw, mode, use_haiku, features=None):
         async with self._render_gate:
+            if self._closing:
+                return raw
             return await asyncio.to_thread(
                 self._render_message_mode, raw, mode, use_haiku=use_haiku, features=features
             )
 
     async def _repost(self, message, content):
         # Preserve rich content that cannot be faithfully copied by this transformer.
-        if not content or message.embeds or len(message.attachments) > 10:
+        if self._closing or not content or message.embeds or len(message.attachments) > 10:
             return False
         files, sent = [], []
         channel = message.channel
@@ -1041,6 +1067,8 @@ class OwoPlus(redcommands.Cog):
             if hook is None:
                 return False
             for index, part in enumerate(self._chunk_message(content)):
+                if self._closing:
+                    raise asyncio.CancelledError
                 posted = await self._send_via_webhook(
                     hook,
                     channel=channel,
@@ -1051,6 +1079,8 @@ class OwoPlus(redcommands.Cog):
                 )
                 sent.append(posted)
             try:
+                if self._closing:
+                    raise asyncio.CancelledError
                 await message.delete()
             except discord.NotFound:
                 pass
@@ -1123,6 +1153,76 @@ class OwoPlus(redcommands.Cog):
                 "No English 5-7-5 haiku was detected. Use owo poem diag to inspect syllables."
             )
         await self._reply(ctx, output, title="Haiku")
+
+    @redcommands.hybrid_command(name="stylize")
+    @redcommands.guild_only()
+    async def stylize(self, ctx, style: Literal["owo", "pirate", "robot"], *, text: str):
+        """Preview supplied text in a chosen style."""
+        if len(text) > 2000:
+            raise redcommands.BadArgument("Use at most 2000 characters.")
+        conf = await self._settings(ctx.guild)
+        output = await self._render_async(text, "full", False, {**conf["features"], "style": style})
+        await self._reply(ctx, output, title=f"{style.title()} preview")
+
+    @owoplus.group(name="style", autohelp=False, fallback="list")
+    async def owo_style(self, ctx):
+        """List channel styles and their expiry times."""
+        data = await self.config.guild(ctx.guild).features()
+        now = time.time()
+        lines = []
+        for cid, entry in data["channel_styles"].items():
+            expiry = entry["expires"]
+            state = (
+                "Permanent"
+                if not expiry
+                else (f"Until <t:{int(expiry)}:R>" if expiry > now else "Expired")
+            )
+            lines.append(f"<#{cid}>: {entry['style'].title()} · {state}")
+        await self._reply(
+            ctx, "\n".join(lines) or "All channels use Owo. Set a channel style to override it."
+        )
+
+    @owo_style.command(name="set")
+    async def owo_style_set(
+        self,
+        ctx,
+        channel: Union[discord.TextChannel, discord.ForumChannel, discord.Thread],
+        style: Literal["owo", "pirate", "robot"],
+        minutes: int = 0,
+    ):
+        """Set a permanent or temporary channel style."""
+        if not 0 <= minutes <= 10080:
+            raise redcommands.BadArgument("Use 0 for permanent, or 1 to 10080 minutes.")
+        now = time.time()
+        async with self.config.guild(ctx.guild).features() as data:
+            data["channel_styles"] = {
+                cid: entry
+                for cid, entry in data["channel_styles"].items()
+                if not entry["expires"] or entry["expires"] > now
+            }
+            if str(channel.id) not in data["channel_styles"] and len(data["channel_styles"]) >= 100:
+                raise redcommands.BadArgument("Keep at most 100 active channel styles.")
+            data["channel_styles"][str(channel.id)] = {
+                "style": style,
+                "expires": now + minutes * 60 if minutes else 0,
+            }
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._reply(
+            ctx,
+            f"{channel.mention} uses {style.title()} "
+            + (f"for {minutes} minutes." if minutes else "until cleared."),
+            tone="success",
+        )
+
+    @owo_style.command(name="clear")
+    async def owo_style_clear(
+        self, ctx, channel: Union[discord.TextChannel, discord.ForumChannel, discord.Thread]
+    ):
+        """Remove a channel override and restore inheritance."""
+        async with self.config.guild(ctx.guild).features() as data:
+            data["channel_styles"].pop(str(channel.id), None)
+        self._settings_cache.pop(ctx.guild.id, None)
+        await self._presentation.confirm(ctx)
 
     @owoplus.group(name="channels", autohelp=False)
     async def owo_channels(self, ctx):
@@ -1242,7 +1342,9 @@ class OwoPlus(redcommands.Cog):
         """Disable a built-in keyword or remove a custom one."""
         word = valid_word(original)
         async with self.config.guild(ctx.guild).features() as data:
-            if word in KEY_MAP:
+            if any(word in words for words in STYLE_WORDS.values()):
+                if word not in data["words"] and len(data["words"]) >= 100:
+                    raise redcommands.BadArgument("You can configure 100 custom keyword entries.")
                 data["words"][word] = None
             else:
                 data["words"].pop(word, None)
@@ -1373,6 +1475,9 @@ class OwoPlus(redcommands.Cog):
     async def on_guild_channel_delete(self, channel):
         self._wh_cache.pop(channel.id, None)
         self._webhook_locks.pop(channel.id, None)
+        async with self.config.guild(channel.guild).features() as data:
+            data["channel_styles"].pop(str(channel.id), None)
+        self._settings_cache.pop(channel.guild.id, None)
 
     @commands.Cog.listener()
     async def on_webhooks_update(self, channel):

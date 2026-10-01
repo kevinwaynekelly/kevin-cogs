@@ -3,7 +3,7 @@
     "Kevin Kelly"
   ],
   "short": "Scoped transformations, member opt-outs, custom words, and haiku.",
-  "description": "Repost eligible server messages through webhooks with keyword replacements, configurable random owo transformations, and optional English haiku formatting, then attempt to delete the originals. Public text and slash commands use the owo root. Add channel scopes, personal opt-outs, custom word and syllable dictionaries, intensity/cooldown controls, manual member transformations, and guided setup.",
+  "description": "Repost eligible server messages through webhooks with keyword replacements, configurable random owo transformations, and optional English haiku formatting, then attempt to delete the originals. Public text and slash commands use the owo root. Add channel scopes, personal opt-outs, custom word and syllable dictionaries, intensity/cooldown controls, manual member transformations, and guided setup. Set persistent or expiring Owo, pirate, and robot styles per channel, with thread inheritance and a manual stylize preview.",
   "install_msg": "Load with [p]load owoplus. Automatic processing starts disabled. Use [p]owo preview <text> and read the cog README before [p]owo enable; transformations repost messages through webhooks and attempt to delete the originals. Enable slash commands as the bot owner with [p]slash enablecog owoplus, then [p]slash sync. Use [p]owo setup for guided settings and [p]owooptout for a personal opt-out.",
   "requirements": [],
   "tags": [
@@ -15,7 +15,7 @@
   "type": "COG",
   "hidden": false,
   "disabled": false,
-  "end_user_data_statement": "This cog stores per-guild enable, probability, owner-bypass, and haiku settings, plus member IDs and their probability overrides in Red Config. It also stores channel scope IDs, opt-out member IDs, custom words and syllable corrections, and intensity/cooldown preferences. Cooldown timestamps are held only in memory. It does not persist message contents in Config. Transformed content and copied attachments are posted to Discord through webhooks using the author's display name and avatar, and the original message is deleted when permitted. Posted messages remain in Discord until removed there. Red user-data export and deletion hooks return or remove probability overrides and opt-outs across servers.",
+  "end_user_data_statement": "This cog stores per-guild enable, probability, owner-bypass, and haiku settings, plus member IDs and their probability overrides in Red Config. It also stores channel scope IDs, opt-out member IDs, custom words and syllable corrections, and intensity/cooldown preferences, and channel style names/expiry timestamps. Cooldown timestamps are held only in memory. It does not persist message contents in Config. Transformed content and copied attachments are posted to Discord through webhooks using the author's display name and avatar, and the original message is deleted when permitted. Posted messages remain in Discord until removed there. Red user-data export and deletion hooks return or remove probability overrides and opt-outs across servers.",
   "min_python_version": [
     3,
     10,

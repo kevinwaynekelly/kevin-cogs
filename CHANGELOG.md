@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-01: Channel styles and automatic expiry
+
+- Add inherited Owo, pirate, and robot channel styles, permanent or expiring overrides, administrator slash controls, and a manual member stylize preview. Preserve code, links, mentions, emoji, opt-outs, and haiku priority.
+- Recheck expiry after rendering and stop late transformations on unload. Merge bounded style defaults without changing legacy settings or storing message contents.
+
 ## 2026-10-01: Achievements, challenges, and rank cards
 
 - Add seven earned badges, configurable optional weekly goals, member status commands, and administrator controls with slash equivalents.
