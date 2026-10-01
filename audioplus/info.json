@@ -2,20 +2,22 @@
   "author": [
     "Kevin Kelly"
   ],
-  "short": "Lavalink v4 music playback and voice diagnostics using Wavelink 3.x.",
-  "description": "Music playback, queues, volume controls, and voice diagnostics for Red using Lavalink v4 and Wavelink 3.x. The cog loads before a node is configured; a reachable Lavalink node is required for playback. The command group is audio, which conflicts with Red's bundled Audio cog.",
-  "install_msg": "Read https://github.com/kevinwaynekelly/kevin-cogs/blob/main/audioplus/README.md before loading. Loading makes setup commands available without a node connection. Playback defaults to http://127.0.0.1:2333 until configured. Unload Red's bundled Audio cog first if it is loaded. Node setup is owner-only: [p]audio setnode <host> <port> <password> <secure>, then [p]audio connectnode. Use [p]help audio for commands.",
+  "short": "Native Discord music playback, YouTube search, queues, and voice diagnostics.",
+  "description": "Music search and playback inside Red using yt-dlp, FFmpeg, and native Discord voice with DAVE support. No Lavalink server is needed. FFmpeg, libopus, and Deno 2.3+ or Node.js 22+ must be installed in the Red container. The audio command group conflicts with Red's bundled Audio cog.",
+  "install_msg": "Read https://github.com/kevinwaynekelly/kevin-cogs/blob/main/audioplus/README.md before loading. Install FFmpeg, libopus, and a supported JavaScript runtime inside the Red container. Restart Red after installing the declared voice dependencies. Unload Red's bundled Audio cog first if loaded. Use [p]audio pingnode to check local dependencies, then [p]audio play <query>. No Lavalink node is required.",
   "requirements": [
-    "wavelink>=3.4.1,<4.0.0",
-    "aiohttp>=3.8"
+    "yt-dlp[default]>=2026.8.19",
+    "PyNaCl>=1.5.0,<1.6",
+    "davey>=0.1.6"
   ],
   "tags": [
     "audio",
     "music",
-    "lavalink",
-    "wavelink"
+    "youtube",
+    "soundcloud",
+    "ffmpeg"
   ],
-  "min_bot_version": "3.5.0",
+  "min_bot_version": "3.5.24",
   "min_python_version": [
     3,
     10,
@@ -24,5 +26,5 @@
   "type": "COG",
   "hidden": false,
   "disabled": false,
-  "end_user_data_statement": "Stores global Lavalink connection settings in Red Config: host, port, password, TLS flag, and resume timeout. Does not persist user listening histories or playlists in its own Config. Playback state is maintained in memory and on the connected Lavalink node."
+  "end_user_data_statement": "Preserves global legacy Lavalink settings, including the node password, in Red Config for rollback. Native playback does not use them. Queues, track metadata, request contexts, volume, repeat mode, and playback failures are held in memory only. yt-dlp disk caching and downloads are disabled. No listening histories or playlists are persisted by the cog."
 }

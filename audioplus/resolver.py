@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -142,6 +144,14 @@ class MediaResolver:
                 *self._command(query, flat=flat),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Downloader adds its private dependency directory to sys.path.
+                # Child Python processes must receive that same import path.
+                env={
+                    **os.environ,
+                    "PYTHONPATH": os.pathsep.join(
+                        dict.fromkeys(os.path.abspath(path) for path in sys.path)
+                    ),
+                },
             )
             self._processes.add(process)
             try:
@@ -194,7 +204,9 @@ class MediaResolver:
                     uri,
                     str(entry.get("title") or "Unknown track")[:300],
                     str(entry.get("uploader") or entry.get("channel") or "Unknown")[:200],
-                    max(0, int(duration * 1000)) if isinstance(duration, (int, float)) else 0,
+                    max(0, int(duration * 1000))
+                    if isinstance(duration, (int, float)) and math.isfinite(duration)
+                    else 0,
                     source,
                 )
             )
@@ -224,3 +236,4 @@ class MediaResolver:
                     process.kill()
                 except ProcessLookupError:
                     pass
+        await asyncio.gather(*(process.wait() for process in tuple(self._processes)))

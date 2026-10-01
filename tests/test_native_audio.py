@@ -279,6 +279,35 @@ async def test_cancel_lookup_reaps_child_process(monkeypatch):
     assert process.returncode is not None and not resolver._processes
 
 
+async def test_child_python_can_import_downloader_private_dependencies(monkeypatch, tmp_path):
+    private = tmp_path / "downloader-lib"
+    package = private / "yt_dlp"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (private / "private_dependency.py").write_text("TITLE = 'private dependency found'")
+    (package / "__main__.py").write_text(
+        "import json, private_dependency; print(json.dumps({'title': private_dependency.TITLE}))"
+    )
+    monkeypatch.syspath_prepend(str(private))
+    resolver = MediaResolver(timeout=5)
+    assert (await resolver._extract("test", flat=True))["title"] == "private dependency found"
+
+
+async def test_close_reaps_active_lookup_process(monkeypatch):
+    resolver = MediaResolver()
+    monkeypatch.setattr(
+        resolver, "_command", lambda *a, **k: [sys.executable, "-c", "import time; time.sleep(20)"]
+    )
+    task = asyncio.create_task(resolver._extract("query", flat=True))
+    await eventually(lambda: bool(resolver._processes))
+    process = next(iter(resolver._processes))
+    await resolver.close()
+    assert process.returncode is not None
+    with pytest.raises(MediaError):
+        await task
+    assert not resolver._processes
+
+
 async def test_flat_playlist_metadata_and_stream_resolution(monkeypatch):
     resolver = MediaResolver()
     data = {
