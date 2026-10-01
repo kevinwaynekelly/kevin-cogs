@@ -12,7 +12,7 @@ Music search, playback, queues, and Discord voice control inside Red. AudioPlus 
 - A supported JavaScript runtime in Red's `PATH`, preferably **Deno 2.3+** or **Node.js 22+**, for full YouTube extraction. AudioPlus enables detected Deno, Node, and QuickJS runtimes in yt-dlp.
 - Network access from the **Red container** to media providers and Discord voice, including UDP. Playback no longer uses the Lavalink container's network connection.
 
-Downloader installs the Python dependencies; it cannot install container system packages. **Restart the Red process after installing PyNaCl or davey.** Discord.py checks those imports when it first loads, so a cog reload alone may still report them missing.
+Downloader installs the Python dependencies; it cannot install container system packages. Red imports Discord.py before exposing Downloader's package folder. AudioPlus initializes those optional voice imports before diagnostics or playback, without reloading Discord.py or replacing its classes. **Restart Red when upgrading voice libraries that are already loaded.** Package versions listed in diagnostics describe installed files; the separate **Discord voice** status reports whether native playback prerequisites can actually load.
 
 AudioPlus can load with missing system dependencies so its help and diagnostics remain available. It uses the `audio` command group, which conflicts with Red's bundled Audio cog. Unload the bundled cog before loading AudioPlus:
 
@@ -71,7 +71,18 @@ ffmpeg -version
 node --version
 ```
 
-Changes made in a container console can disappear when the container is recreated. The included [Dockerfile](Dockerfile) builds a persistent image for **PhasecoreX's Debian-based Red image family**, carrying FFmpeg, libopus, and Node.js 22. It inherits the existing image's entrypoint, `/data` volume, and bot startup command.
+For Deno, run these commands as root in the Red container's console:
+
+```sh
+apt-get update
+apt-get install -y --no-install-recommends curl unzip libopus0
+curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- --yes --no-modify-path
+deno --version
+```
+
+This places Deno in `/usr/local/bin`, rather than root's private home directory, so Red can find it. Only one supported JavaScript runtime is needed. Node.js and QuickJS may still show `missing` when Deno is available. Run `[p]audio pingnode` again, then test `[p]audio tone` and a YouTube search. These console changes survive a container restart but can disappear when the container is recreated.
+
+The included [Dockerfile](Dockerfile) builds a persistent image for **PhasecoreX's Debian-based Red image family**, carrying FFmpeg, libopus, and Node.js 22. It inherits the existing image's entrypoint, `/data` volume, and bot startup command.
 
 From a checkout of this repository on your Docker host:
 
@@ -134,7 +145,7 @@ The four legacy node commands are described in the upgrade table above. Use `[p]
 
 ## Troubleshooting
 
-1. Run `[p]audio pingnode`. Install missing packages/binaries in the Red environment and restart Red after voice-library installation. These checks verify dependencies, not live provider access or voice delivery.
+1. Run `[p]audio pingnode`. Install missing packages/binaries in the Red environment. AudioPlus loads newly available Downloader voice dependencies automatically; restart Red after upgrading a library already loaded in the process. If a native library cannot import, diagnostics identify PyNaCl or davey separately. These checks verify dependencies, not live provider access or voice delivery.
 2. Run `[p]audio stop`, then `[p]audio tone`. If it fails, inspect Red's voice permissions, UDP egress, FFmpeg/Opus availability, and access to the MP3 source.
 3. If direct audio works but YouTube fails, update yt-dlp and its matching EJS package, verify Deno/Node meets the required version, and retry a public track. Some provider requests can require authentication or be denied by a provider even with current extraction software. This cog does not automatically collect browser cookies or bypass authentication.
 4. Test SoundCloud independently with `[p]audio play scsearch:artist and song`. SoundCloud access is independent of YouTube access.

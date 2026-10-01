@@ -7,10 +7,47 @@ import ctypes.util
 import importlib.metadata
 import re
 import shutil
+from importlib import import_module
 
 import discord
 
 from .resolver import MediaError
+
+
+def _load_voice_libraries():
+    """Initialize optional voice imports exposed after Discord.py's first import.
+
+    Red imports Discord.py before adding Downloader's private dependency folder
+    to sys.path. Bind the newly available libraries without reloading Discord
+    modules or replacing classes already used by the running bot.
+    """
+    client = discord.voice_client
+    if not getattr(client, "has_nacl", False):
+        try:
+            nacl = import_module("nacl")
+            import_module("nacl.secret")
+            import_module("nacl.utils")
+        except (ImportError, OSError) as exc:
+            raise MediaError(
+                "PyNaCl could not be imported by Red. Reinstall AudioPlus's Python "
+                "dependencies and restart Red, then run audio pingnode."
+            ) from exc
+        client.nacl = nacl
+        client.has_nacl = True
+    if not getattr(client, "has_dave", False) or not getattr(
+        discord.voice_state, "has_dave", False
+    ):
+        try:
+            davey = import_module("davey")
+        except (ImportError, OSError) as exc:
+            raise MediaError(
+                "davey could not be imported by Red. Reinstall AudioPlus's Python "
+                "dependencies and restart Red, then run audio pingnode."
+            ) from exc
+        for module in (client, discord.voice_state, discord.gateway):
+            module.davey = davey
+        discord.voice_state.has_dave = True
+        client.has_dave = True
 
 
 def require_voice():
@@ -18,12 +55,7 @@ def require_voice():
         raise MediaError(
             "FFmpeg is missing from the Red container. Install it, then run audio pingnode."
         )
-    if not getattr(discord.voice_client, "has_nacl", False) or not getattr(
-        discord.voice_client, "has_dave", False
-    ):
-        raise MediaError(
-            "Native Discord voice requires PyNaCl and davey. Install AudioPlus's dependencies and restart Red before playing music."
-        )
+    _load_voice_libraries()
     if not discord.opus.is_loaded():
         library = ctypes.util.find_library("opus")
         try:

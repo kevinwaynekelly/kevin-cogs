@@ -2,6 +2,13 @@
 
 Changes recorded here start with the repository's documentation and metadata pass. Earlier implementation history is available in Git commits.
 
+## 2026-10-01: AudioPlus voice initialization
+
+- Load PyNaCl and davey installed in Red Downloader's private package folder after Discord.py's first import. Initialize the existing voice client, state, and gateway bindings without reloading Discord.py or replacing its classes.
+- Report actual Discord voice readiness separately from installed package versions and identify a native library that genuinely cannot import.
+- Add system-wide Deno installation commands for the Red container and explain that only one supported JavaScript runtime is needed.
+- Exercise the startup ordering failure in isolated processes with real NaCl packet encryption, DAVE key generation, gateway processing, and missing-library failures. Live Discord networking remains outside these regression checks.
+
 ## 2026-10-01: AudioPlus native playback
 
 - Replace Wavelink/Lavalink playback with per-guild native Discord voice, yt-dlp media resolution, and FFmpeg decoding inside Red. No Java node or YouTube plugin is needed.
