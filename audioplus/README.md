@@ -1,134 +1,166 @@
 # AudioPlus
 
-Lavalink v4 music playback through Wavelink 3.x, with queue controls and diagnostics for voice connection problems.
+Music search, playback, queues, and Discord voice control inside Red. AudioPlus uses **yt-dlp**, **FFmpeg**, and **Discord.py native voice with DAVE encryption support**. A Lavalink server, Wavelink, Java, and a separate YouTube plugin are no longer required.
 
-[Repository installation](../README.md#install)
+`[p]` means your bot's command prefix. With `!`, `[p]audio play roar` becomes `!audio play roar`. Replies use the shared Kevin's Cogs theme and fall back to text when embeds are unavailable.
 
+## Requirements
 
-Command replies use the [shared visual theme](../docs/PRESENTATION.md), with a sectioned command overview, playback cards, and matching status colors. Grant **Embed Links** to show the cards; replies respect Red's embed preference and fall back to text when embeds are unavailable.
+- Red **3.5.24 or newer**, with a Discord.py version that supports DAVE voice. Development checks use Red 3.5.24 and Discord.py 2.7.1 on Python 3.10/3.11.
+- Python packages declared in `info.json`: `yt-dlp[default]>=2026.8.19`, `PyNaCl>=1.5.0,<1.6`, and `davey>=0.1.6`. The yt-dlp default extra includes its matching `yt-dlp-ejs` challenge solver.
+- The **FFmpeg executable** and **libopus** in the Red container or host. Installing a Python package named ffmpeg does not install the executable.
+- A supported JavaScript runtime in Red's `PATH`, preferably **Deno 2.3+** or **Node.js 22+**, for full YouTube extraction. AudioPlus enables detected Deno, Node, and QuickJS runtimes in yt-dlp.
+- Network access from the **Red container** to media providers and Discord voice, including UDP. Playback no longer uses the Lavalink container's network connection.
 
-## Requirements and first load
+Downloader installs the Python dependencies; it cannot install container system packages. **Restart the Red process after installing PyNaCl or davey.** Discord.py checks those imports when it first loads, so a cog reload alone may still report them missing.
 
-- Red 3.5.0 or newer.
-- Wavelink `>=3.4.1,<4.0.0` and aiohttp `>=3.8`, installed by Downloader from `info.json`.
-- A running Lavalink v4 node with sources configured for the tracks you want to play.
-- **View Channel**, **Send Messages**, **Connect**, and **Speak** for the bot. Stage channels may also require a moderator to approve speaking.
-
-AudioPlus uses the `audio` command group. If Red's bundled Audio cog is loaded, unload it before loading this cog:
+AudioPlus can load with missing system dependencies so its help and diagnostics remain available. It uses the `audio` command group, which conflicts with Red's bundled Audio cog. Unload the bundled cog before loading AudioPlus:
 
 ```text
 [p]unload audio
+[p]cog install kevin-cogs audioplus
 ```
 
-Loading creates a reusable HTTP session and makes the configuration commands available without requiring a reachable node. On a fresh install, the connection defaults are:
-
-| Setting | Default |
-| --- | --- |
-| Host | `127.0.0.1` |
-| Port | `2333` |
-| Password | `youshallnotpass` |
-| TLS | Off |
-| Resume timeout | 60 seconds |
-
-In a container, `127.0.0.1` refers to the bot's own container. Configure a reachable node after loading the cog; playback also attempts a connection when needed.
-
-After loading, the bot owner can save node settings and connect:
+Restart Red after dependency installation, then run:
 
 ```text
-[p]audio setnode lavalink.example.com 2333 "your-node-password" false
-[p]audio connectnode
-[p]audio shownode
+[p]load audioplus
 [p]audio pingnode
 ```
 
-Use `true` for the final argument when the node uses HTTPS. Node settings persist in Red Config and are used for later connections. Run `setnode` in a private server channel since the command includes the password. The command group is server-only, so these commands cannot be run in DMs.
+## Upgrading from the Lavalink backend
 
-`setnode` saves settings and immediately attempts a fresh connection. If it fails, the settings remain saved and the command reports the failure. A fresh node connection disconnects AudioPlus players; queue music again after changing nodes.
-
-## Play music
-
-Join a voice channel, then:
+Update AudioPlus from this repository, then restart Red:
 
 ```text
-[p]audio join
-[p]audio play your search terms
-[p]audio queue
-[p]audio np
+[p]cog update False audioplus
 ```
 
-Plain search terms use `ytsearch:`. Explicit search prefixes are preserved, so you can choose another enabled source:
+Install the container dependencies below before testing playback. If Downloader reports a dependency installation failure, resolve it before proceeding. The bot owner can reinstall Python packages with:
 
 ```text
+[p]pipinstall yt-dlp[default]>=2026.8.19 PyNaCl>=1.5.0,<1.6 davey>=0.1.6
+```
+
+Restart Red after that command. When dependencies are already installed, `[p]cog update True audioplus` can update and reload the cog directly.
+
+Saved Config identifiers and defaults remain compatible. The old host, port, password, TLS flag, and resume timeout stay saved for rollback but are **ignored by native playback**. In-memory queues reset on reload or restart, as before. Existing commands, aliases, arguments, and permission checks remain registered. `audio repeat` is new.
+
+The old node commands remain available with documented new behavior:
+
+| Command | Native backend behavior |
+| --- | --- |
+| `[p]audio pingnode` | Shows local FFmpeg, yt-dlp, EJS, voice libraries, JavaScript runtime, player state, and latest failure. No node request is sent. |
+| `[p]audio connectnode` | Owner-only local dependency check. No Lavalink connection is opened. |
+| `[p]audio shownode` | Owner-only display of preserved legacy settings, with the password hidden. |
+| `[p]audio setnode <host> <port> <password> [secure]` | Owner-only update of legacy settings for rollback. Does not reconnect or change playback. Use a private channel because the command contains a password. |
+
+## Container setup
+
+Install the dependencies **inside the Red image**, not only on Unraid or in Lavalink. For a Debian/Ubuntu-based Red container, FFmpeg and Opus can be installed as root with:
+
+```sh
+apt-get update
+apt-get install -y --no-install-recommends ffmpeg libopus0
+```
+
+Install Node.js **22 or newer** or Deno **2.3 or newer** using its official distribution. An older Debian Node package may not meet that requirement. Confirm the executable is available to the user running Red:
+
+```sh
+ffmpeg -version
+node --version
+```
+
+Changes made in a container console can disappear when the container is recreated. The included [Dockerfile](Dockerfile) builds a persistent image for **PhasecoreX's Debian-based Red image family**, carrying FFmpeg, libopus, and Node.js 22. It inherits the existing image's entrypoint, `/data` volume, and bot startup command.
+
+From a checkout of this repository on your Docker host:
+
+```sh
+docker build -f audioplus/Dockerfile --build-arg RED_IMAGE=phasecorex/red-discordbot:core -t kevin-red-native .
+```
+
+If you already use a different PhasecoreX tag, pass that same tag as `RED_IMAGE`. In Unraid, use `kevin-red-native` as the Red container's Repository image, keeping its existing `/data` mapping, environment variables, and other settings. Do not replace your appdata mapping. This Dockerfile is an image recipe; automated checks do not build or deploy it to your server.
+
+For another base-image family, add FFmpeg, libopus, and a supported JavaScript runtime using that image's package manager. AudioPlus's `[p]audio pingnode` reports what Red can actually use.
+
+## Playback
+
+Join a voice channel, then try:
+
+```text
+[p]audio play roar
+[p]audio play https://www.youtube.com/watch?v=VIDEO_ID
+[p]audio play https://www.youtube.com/playlist?list=PLAYLIST_ID
 [p]audio play scsearch:artist and song
-[p]audio play ytmsearch:artist and song
+[p]audio np
+[p]audio queue
 ```
 
-URL playback and search availability depend on the Lavalink node's source configuration. A search or URL adds tracks to the queue and starts playback when the player is idle, clearing an old idle pause flag. Adding tracks while the current track is paused preserves that pause. If the node rejects the initial playback request, the track stays at the front of the queue for a later retry.
+Plain text and `ytsearch:` search YouTube and queue one result. `ytmsearch:` is retained for compatibility and maps to yt-dlp's regular YouTube search. `scsearch:` searches SoundCloud. HTTP/HTTPS media and provider URLs are accepted. YouTube playlist URLs queue up to 100 accessible entries. Other providers supported by yt-dlp can work through their URLs, subject to their access requirements. Lavalink plugin prefixes such as `spsearch:` are rejected with an explanation rather than silently searching another provider.
 
-Finding a track and accepting a playback request do not prove that the source can stream it. Asynchronous playback failures are reported in the most recent AudioPlus request channel and recorded temporarily for `[p]audio pingnode`. Stuck tracks receive one skip request; Wavelink advances the queue after the resulting track-end event.
+Each guild has an independent in-memory player. The queue holds at most 100 upcoming tracks. A paused current track stays paused when additional tracks are queued. Provider stream URLs are resolved immediately before playback to avoid using links that expired while waiting in the queue. Direct media URLs are used as supplied. yt-dlp runs in bounded subprocesses outside Red's event loop, with two concurrent lookups and a 45-second extraction timeout.
+
+Natural completion advances once. Skip cancels the current lookup or playback before advancing. Failed tracks are reported in the latest request channel and the player tries the next queued track. A failed or skipped track is not repeated. Stop clears upcoming tracks and cancels the active playback operation. Rejoin refreshes the stream and restores position, pause state, volume, and the queue for seekable audio. Live streams may restart at their live edge. If reconnection fails, tracks remain available in memory for a later `[p]audio join`.
 
 ## Commands
 
-All commands below use your bot prefix in place of `[p]` and run in a server.
+All playback and voice commands are server commands. The bot needs Connect and Speak in the target voice channel and may need Stage moderator approval to speak. Ordinary controls retain their existing permission checks; the three legacy setup commands remain bot-owner-only.
 
 | Command | Purpose |
 | --- | --- |
-| `[p]audio join` | Join or move to your voice channel. Aliases: `connect`, `summon`. |
-| `[p]audio leave` | Disconnect. Aliases: `dc`, `disconnect`. |
-| `[p]audio play <query or URL>` | Search for or queue audio. Alias: `p`. |
-| `[p]audio skip` | Skip the current track; Wavelink advances the queued tracks. Aliases: `next`, `s`. |
+| `[p]audio` | Show the command overview. |
+| `[p]audio play <query>` | Search or queue music; alias `p`. |
+| `[p]audio join` | Join or move to your voice channel; aliases `connect`, `summon`. |
+| `[p]audio leave` | Disconnect and clear the queue; aliases `dc`, `disconnect`. |
+| `[p]audio skip` | Skip current playback or lookup; aliases `next`, `s`. |
 | `[p]audio stop` | Stop playback and clear the queue. |
-| `[p]audio pause` / `[p]audio resume` | Pause or resume playback. |
-| `[p]audio volume` | Show the current volume. |
-| `[p]audio volume <value>` | Set volume; values are clamped to 0 through 1000. Alias: `vol`. |
-| `[p]audio np` | Show the current track. Alias: `nowplaying`. |
-| `[p]audio queue` | Show up to ten queued tracks. Alias: `q`. |
-| `[p]audio shuffle` | Shuffle queued tracks. |
-| `[p]audio pingnode` | Show node connectivity, sources, Lavalink/Lavaplayer/plugin versions, statistics, and the latest playback failure. |
-| `[p]audio playerstate` | Inspect the Lavalink REST player state. |
-| `[p]audio debugvc` | Show Discord voice flags and player status. |
-| `[p]audio speak` | Try to unsuppress the bot or request to speak on a Stage channel. |
-| `[p]audio undeafen` | Try to clear self-deafen without replacing the player. |
-| `[p]audio fixvoice` | Try Stage speaking and self-deafen recovery. |
-| `[p]audio rejoin` | Reconnect to the current voice channel, restoring the track, position, volume, pause state, and queue when successful. |
-| `[p]audio tone` | Queue a direct SoundHelix MP3 test track to help diagnose source/voice issues. |
+| `[p]audio pause` | Pause the current track. |
+| `[p]audio resume` | Resume paused playback. |
+| `[p]audio volume [value]` | Show/set volume, clamped to 0 through 1000%; alias `vol`. Values above 100% can clip. |
+| `[p]audio np` | Show current track and progress; alias `nowplaying`. |
+| `[p]audio queue` | Show the next ten tracks; alias `q`. |
+| `[p]audio shuffle` | Shuffle upcoming tracks. |
+| `[p]audio repeat [off|track|queue]` | Show/set repeat mode; default off. |
+| `[p]audio pingnode` | Check local dependencies and latest playback failure. |
+| `[p]audio playerstate` | Inspect the native player's state. |
+| `[p]audio debugvc` | Inspect Discord voice flags and local playback state. |
+| `[p]audio tone` | Queue a public direct MP3 to test playback independently of YouTube. It still requires internet access to the test URL. |
+| `[p]audio speak` | Try to unsuppress/request speaking access on a Stage channel. |
+| `[p]audio undeafen` | Try to clear self-mute/self-deafen. |
+| `[p]audio fixvoice` | Attempt Stage speaking and voice-flag recovery. |
+| `[p]audio rejoin` | Reconnect and restore seekable playback and queue state. |
 
-Owner-only commands:
-
-| Command | Purpose |
-| --- | --- |
-| `[p]audio setnode <host> <port> <password> [secure]` | Save node settings and reconnect; `secure` defaults to `false`. |
-| `[p]audio shownode` | Show the configured host, port, and TLS setting without the password. |
-| `[p]audio connectnode` | Attempt a fresh connection using the saved settings. |
-
-Use `[p]help audio` or `[p]help audio <subcommand>` for Red's generated help. Playback commands have no dedicated DJ/admin check in the current implementation.
+The four legacy node commands are described in the upgrade table above. Use `[p]help audio <command>` for native Red command help.
 
 ## Troubleshooting
 
-1. Check the node with `[p]audio pingnode` and reconnect with `[p]audio connectnode` as the owner. A connected node confirms the bot can reach Lavalink; source playback and Discord voice still need separate checks.
-2. Check **Connect/Speak** permissions and inspect `[p]audio debugvc` and `[p]audio playerstate`.
-3. Try `[p]audio fixvoice` or `[p]audio rejoin` if voice state is stuck.
-4. Run `[p]audio stop` to clear the existing queue, then `[p]audio tone`. This plays a direct MP3 rather than a YouTube search. The node must have its HTTP source enabled and be able to reach the MP3 URL. If it also fails, inspect Lavalink's logs and network access to the source and Discord voice, including UDP egress.
+1. Run `[p]audio pingnode`. Install missing packages/binaries in the Red environment and restart Red after voice-library installation. These checks verify dependencies, not live provider access or voice delivery.
+2. Run `[p]audio stop`, then `[p]audio tone`. If it fails, inspect Red's voice permissions, UDP egress, FFmpeg/Opus availability, and access to the MP3 source.
+3. If direct audio works but YouTube fails, update yt-dlp and its matching EJS package, verify Deno/Node meets the required version, and retry a public track. Some provider requests can require authentication or be denied by a provider even with current extraction software. This cog does not automatically collect browser cookies or bypass authentication.
+4. Test SoundCloud independently with `[p]audio play scsearch:artist and song`. SoundCloud access is independent of YouTube access.
+5. Playback errors appear in the request channel and remain in local diagnostics until the next successful track start. Dependency installation, lookup, voice connection, and decoder failures are reported separately.
 
-### No supported audio streams
+The bot owner can update extraction packages without a cog source change:
 
-`No supported audio streams available` is a source playback error inside Lavalink. The source may find a track's metadata and still fail to obtain a playable stream. A cog reload or a successful node connection does not establish that the source is working.
+```text
+[p]pipinstall yt-dlp[default]
+```
 
-If the MP3 test works but YouTube fails, inspect the Lavalink startup logs and `application.yml`. Use the maintained [youtube-source plugin](https://github.com/lavalink-devs/youtube-source#plugin), disable Lavalink's built-in YouTube source when using that plugin, and check the installed plugin version and configured clients against its documentation. Some client failures require authentication or changes to signature deciphering; choose those changes from the actual node logs rather than replacing unrelated settings.
+For a breakage already fixed in yt-dlp's nightly channel, the owner can use `[p]pipinstall --pre yt-dlp[default]`, following yt-dlp's release guidance. Red's Downloader passes pip arguments through. No automatic package upgrades run while playing music.
 
-If SoundCloud appears in `[p]audio pingnode`, `[p]audio play scsearch:artist and song` can test it independently. AudioPlus does not silently substitute another provider for a requested track.
+For bug reports, include Red/Discord.py versions, `[p]audio pingnode`, `[p]audio playerstate`, the public query/URL, and the matching Red error. Remove tokens, cookies, passwords, and signed stream URLs before sharing logs.
 
-For a playback report, include `[p]audio pingnode`, `[p]audio playerstate`, the failed query or URL, and Lavalink's matching log entry. Include a redacted `application.yml` when troubleshooting source configuration; remove node passwords, OAuth refresh tokens, and other credentials.
+## Stored data and lifecycle
 
-## Data
+Only legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The cog does not persist listening histories, playlists, user profiles, audio files, or yt-dlp disk caches. Track metadata, command contexts, errors, queues, volume, and repeat settings stay in memory. The data hooks therefore have no per-user Config records to export or delete.
 
-Red Config stores global node settings, including the password. AudioPlus does not persist listening histories or saved playlists in its own Config. The active player and queue are maintained in memory and on Lavalink.
+Unload closes only AudioPlus's players and cancels owned lookups/decoders. Other cogs' voice connections are left alone. Removing a guild also closes its player. Each cog remains independently installable through Downloader.
 
-The most recent request context and playback failure are held in memory per server and cleared when leaving voice, reconnecting the node, unloading the cog, or removing the server. A successful track start clears the previous failure.
+## Development and references
 
-AudioPlus owns one node in Wavelink's shared pool. Reconnecting or unloading closes that node and its own HTTP session, preserving other cogs' nodes. Players use partial autoplay to progress through queued tracks without adding recommendations. Diagnostic REST calls use AudioPlus's own Lavalink session and have timeouts. Live Discord voice and Lavalink playback still need a deployment smoke test.
+Regression tests cover Red Config/command compatibility, queue races, paused playback, stale callbacks, repeat, reconnect recovery, provider errors, process cancellation, and real yt-dlp/FFmpeg against a local HTTP audio fixture. The native Discord audio thread and Opus encoding are exercised against local audio too. Discord voice networking and external YouTube/SoundCloud behavior are mocked. A successful test suite does not establish live playback on your server.
 
-## References
-
-- [Wavelink 3.4.1 documentation](https://wavelink.readthedocs.io/en/v3.4.1/)
-- [Lavalink documentation](https://lavalink.dev/)
+- [yt-dlp documentation](https://github.com/yt-dlp/yt-dlp)
+- [yt-dlp JavaScript runtime setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS)
+- [Discord.py voice example](https://github.com/Rapptz/discord.py/blob/master/examples/basic_voice.py)
+- [PhasecoreX Red image](https://github.com/PhasecoreX/docker-red-discordbot)

@@ -12,7 +12,7 @@ Each cog is independently installable through Red Downloader:
 - `info.json` and `README.md`: Downloader metadata and the user guide.
 - `events.py`, where present: Red's per-server disable check for listeners.
 
-LevelPlus isolates threshold calculations in `levels.py`. OwoPlus isolates syllable counting and haiku detection in `haiku.py`. Keep cog modules self-contained; Downloader can install one cog without the others.
+AudioPlus isolates subprocess media resolution in `resolver.py`, native queue/playback in `player.py`, and system dependency checks in `backend.py`. LevelPlus isolates threshold calculations in `levels.py`. OwoPlus isolates syllable counting and haiku detection in `haiku.py`. Keep cog modules self-contained; Downloader can install one cog without the others.
 
 Each cog vendors the same `presentation.py` helper. Edit the AudioPlus copy and sync it to the other four; tests enforce identical copies. Use the presentation helper for bot-owned messages and retain webhook/user content semantics. See [the visual design](docs/PRESENTATION.md), including the command to regenerate its sample preview.
 
@@ -33,9 +33,9 @@ python3.11 -m venv .venv
 git diff --check
 ```
 
-The tests use actual Red Config with temporary JSON storage and actual command classes. Discord calls and Lavalink connections are mocked, except for a local HTTP test server for diagnostic responses. They cover concurrent updates, data hooks, level boundaries, imports, timers, webhook rollback, event registration, routing, and Discord size limits.
+Install FFmpeg and libopus in the test environment. Node.js 22+ or Deno 2.3+ is needed for full YouTube extraction. The tests use actual Red Config with temporary JSON storage and actual command classes. Discord networking and external media providers are mocked. Local HTTP audio tests run actual yt-dlp subprocesses and FFmpeg decoders, including process cancellation checks. They cover concurrent updates, data hooks, level boundaries, imports, timers, webhook rollback, event registration, routing, and Discord size limits.
 
-`tests/compatibility.json` captures the 209-command surface, Config identifiers, and defaults from commit `32592217b5b341f4327473d6772625d9f9bcc75f`. Changes to that fixture should represent an intentional compatibility change. CI runs the suite with Python 3.10/3.11 and Wavelink 3.4.1/3.5.2 using Red 3.5.24.
+`tests/compatibility.json` captures the 209-command surface, Config identifiers, and defaults from commit `32592217b5b341f4327473d6772625d9f9bcc75f`. Changes to that fixture should represent an intentional compatibility change. CI runs the suite with Python 3.10/3.11 using Red 3.5.24, its pinned Discord.py 2.7.1, yt-dlp and EJS, PyNaCl, davey, FFmpeg, libopus, and Node.js 22. The native migration retains all baseline commands and Config defaults; legacy node commands have documented new behavior and `audio repeat` is added.
 
 Run the reproducible level-calculation benchmark from the repository root:
 
@@ -45,7 +45,7 @@ Run the reproducible level-calculation benchmark from the repository root:
 
 It compares the old 5,000-threshold lookup with the new cumulative-formula lookup. Results reflect local calculation time and allocation, not overall bot latency. A sample run with Python 3.11 measured 600 lookups in 0.421 seconds versus 0.00122 seconds, and peak allocations of 202,000 versus 2,879 bytes. Timing varies by machine and cache state.
 
-Before deployment, load changed cogs in a development Red instance, check commands and settings after reload, and exercise real Discord events. AudioPlus additionally needs a Lavalink v4 node with working sources and voice connectivity. Automated tests do not replace that live smoke test.
+Before deployment, load changed cogs in a development Red instance, check commands and settings after reload, and exercise real Discord events. AudioPlus additionally needs its local native dependencies, accessible media providers, and a real Discord voice connection. The optional container Dockerfile is not built by the regression suite. Automated tests do not replace that live smoke test.
 
 ## Documentation and metadata
 
@@ -57,4 +57,4 @@ Repository metadata lives in root `info.json`. See [Red's publishing guide](http
 - Declare required pip packages in the cog's `requirements`; document optional packages separately.
 - Keep root and cog guides consistent, use `[p]` for the bot prefix, and record meaningful changes in [CHANGELOG.md](CHANGELOG.md).
 
-For bug reports, include the cog, command or event, expected and actual behavior, relevant logs, and runtime versions. Remove bot tokens and node passwords from logs before posting.
+For bug reports, include the cog, command or event, expected and actual behavior, relevant logs, and runtime versions. Remove bot tokens, cookies, passwords, and signed media URLs from logs before posting.

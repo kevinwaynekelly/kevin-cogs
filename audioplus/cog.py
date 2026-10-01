@@ -40,6 +40,7 @@ class AudioPlus(commands.Cog):
         self._players = {}
         self._player_locks = defaultdict(asyncio.Lock)
         self._lookups = set()
+        self._connections = set()
         self._closing = False
 
     async def cog_command_error(self, ctx, error):
@@ -54,9 +55,10 @@ class AudioPlus(commands.Cog):
 
     async def cog_unload(self):
         self._closing = True
-        for task in tuple(self._lookups):
+        pending = tuple(self._lookups | self._connections)
+        for task in pending:
             task.cancel()
-        await asyncio.gather(*tuple(self._lookups), return_exceptions=True)
+        await asyncio.gather(*pending, return_exceptions=True)
         players = list(self._players.values())
         self._players.clear()
         await asyncio.gather(*(player.close() for player in players), return_exceptions=True)
@@ -93,6 +95,41 @@ class AudioPlus(commands.Cog):
         player = self._players.pop(guild_id, None)
         if player:
             await player.close(disconnect=disconnect)
+
+    async def _open_voice(self, channel):
+        owned = None
+
+        def factory(client, voice_channel):
+            nonlocal owned
+            owned = discord.VoiceClient(client, voice_channel)
+            return owned
+
+        try:
+            voice = await channel.connect(
+                cls=factory,
+                timeout=30,
+                reconnect=True,
+                self_deaf=False,
+                self_mute=False,
+            )
+            if self._closing:
+                raise asyncio.CancelledError
+            return voice
+        except BaseException:
+            # discord.py's Connectable.connect does not clean up CancelledError.
+            if owned:
+                await owned.disconnect(force=True)
+            raise
+
+    async def _connect_voice(self, channel):
+        if self._closing:
+            raise asyncio.CancelledError
+        task = asyncio.create_task(self._open_voice(channel))
+        self._connections.add(task)
+        try:
+            return await task
+        finally:
+            self._connections.discard(task)
 
     @staticmethod
     def _snapshot(player):
@@ -147,15 +184,9 @@ class AudioPlus(commands.Cog):
                     snapshot = self._snapshot(previous) if previous else None
                     await self._dispose_player(ctx.guild.id)
                     try:
-                        vc = await channel.connect(
-                            cls=discord.VoiceClient,
-                            timeout=30,
-                            reconnect=True,
-                            self_deaf=False,
-                            self_mute=False,
-                        )
+                        vc = await self._connect_voice(channel)
                     except BaseException:
-                        if previous and snapshot:
+                        if previous and snapshot and not self._closing:
                             self._retain(previous, snapshot)
                             self._players[ctx.guild.id] = previous
                         raise
@@ -225,13 +256,7 @@ class AudioPlus(commands.Cog):
             await self._dispose_player(guild.id)
             try:
                 require_voice()
-                vc = await channel.connect(
-                    cls=discord.VoiceClient,
-                    timeout=30,
-                    reconnect=True,
-                    self_deaf=False,
-                    self_mute=False,
-                )
+                vc = await self._connect_voice(channel)
                 player = GuildPlayer(vc, self._resolver, self._report_playback_failure)
                 self._players[guild.id] = player
                 await self._restore(player, snapshot)

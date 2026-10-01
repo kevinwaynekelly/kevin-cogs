@@ -68,7 +68,11 @@ async def test_voice_connection_is_serialized_and_owned(bot, guild, monkeypatch)
         results = await asyncio.gather(*(cog._fetch_or_connect_player(ctx) for _ in range(10)))
         assert all(result[0] is results[0][0] for result in results)
         channel.connect.assert_awaited_once_with(
-            cls=discord.VoiceClient, timeout=30, reconnect=True, self_deaf=False, self_mute=False
+            cls=channel.connect.await_args.kwargs["cls"],
+            timeout=30,
+            reconnect=True,
+            self_deaf=False,
+            self_mute=False,
         )
     finally:
         await cog.cog_unload()
@@ -201,3 +205,27 @@ async def test_leave_and_guild_removal_clean_owned_players(audio_runtime):
     await cog.on_guild_remove(ctx.guild)
     assert player.closed and player._runner.done() and not cog._players
     player.voice.disconnect.assert_awaited_once_with(force=True)
+
+
+async def test_unload_cancels_partial_voice_handshake_and_disconnects_owned_client(
+    bot, guild, monkeypatch
+):
+    cog = AudioPlus(bot)
+    channel = make_channel(guild, kind=discord.VoiceChannel)
+    voice = FakeVoice()
+    started = asyncio.Event()
+    monkeypatch.setattr(audio_module.discord, "VoiceClient", lambda client, ch: voice)
+
+    async def connect(**kwargs):
+        kwargs["cls"](bot, channel)
+        started.set()
+        await asyncio.Event().wait()
+
+    channel.connect = AsyncMock(side_effect=connect)
+    task = asyncio.create_task(cog._connect_voice(channel))
+    await started.wait()
+    await cog.cog_unload()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    voice.disconnect.assert_awaited_once_with(force=True)
+    assert not cog._connections

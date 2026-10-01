@@ -140,21 +140,31 @@ class MediaResolver:
         async with self._slots:
             if self._closed:
                 raise MediaError("AudioPlus is unloading. Try again after it reloads.")
-            process = await asyncio.create_subprocess_exec(
-                *self._command(query, flat=flat),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # Downloader adds its private dependency directory to sys.path.
-                # Child Python processes must receive that same import path.
-                env={
-                    **os.environ,
-                    "PYTHONPATH": os.pathsep.join(
-                        dict.fromkeys(os.path.abspath(path) for path in sys.path)
-                    ),
-                },
+            spawning = asyncio.create_task(
+                asyncio.create_subprocess_exec(
+                    *self._command(query, flat=flat),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    # Downloader's private dependency path must reach child Python.
+                    env={
+                        **os.environ,
+                        "PYTHONPATH": os.pathsep.join(
+                            dict.fromkeys(os.path.abspath(path) for path in sys.path)
+                        ),
+                    },
+                )
             )
+            try:
+                process = await asyncio.shield(spawning)
+            except asyncio.CancelledError:
+                # Cancellation between OS spawn and transport setup still owns the child.
+                process = await spawning
+                await self._kill(process)
+                raise
             self._processes.add(process)
             try:
+                if self._closed:
+                    raise MediaError("AudioPlus is unloading.")
                 stdout, stderr = await asyncio.wait_for(process.communicate(), self.timeout)
                 if process.returncode:
                     raise MediaError(media_failure(stderr.decode("utf-8", errors="replace")))

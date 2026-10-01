@@ -8,9 +8,11 @@ import wave
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import discord
 import pytest
 from aiohttp import web
 
+from audioplus.backend import require_voice
 from audioplus.player import GuildPlayer, NativeSource
 from audioplus.resolver import MediaError, MediaResolver, Stream, Track, normalize_query
 
@@ -308,6 +310,30 @@ async def test_close_reaps_active_lookup_process(monkeypatch):
     assert not resolver._processes
 
 
+async def test_cancel_during_subprocess_spawn_reaps_child(monkeypatch):
+    original = asyncio.create_subprocess_exec
+    spawned = asyncio.Event()
+    release = asyncio.Event()
+    processes = []
+
+    async def delayed(*args, **kwargs):
+        process = await original(sys.executable, "-c", "import time; time.sleep(20)", **kwargs)
+        processes.append(process)
+        spawned.set()
+        await release.wait()
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed)
+    resolver = MediaResolver()
+    task = asyncio.create_task(resolver._extract("query", flat=True))
+    await spawned.wait()
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert processes[0].returncode is not None and not resolver._processes
+
+
 async def test_flat_playlist_metadata_and_stream_resolution(monkeypatch):
     resolver = MediaResolver()
     data = {
@@ -391,3 +417,37 @@ async def test_real_ffmpeg_failure_is_not_reported_as_natural_end(media_server):
             await asyncio.to_thread(source.read)
     finally:
         source.cleanup()
+
+
+async def test_real_discord_audio_thread_encodes_local_media_and_advances(media_server):
+    require_voice()
+    loop = asyncio.get_running_loop()
+    # The handshake/UDP boundary is replaced. VoiceClient.play, AudioPlayer,
+    # Opus encoding, FFmpeg decoding, and its thread callback are real.
+    voice = object.__new__(discord.VoiceClient)
+    voice.client = SimpleNamespace(loop=loop)
+    voice.channel = SimpleNamespace(guild=SimpleNamespace(id=789))
+    voice._connection = SimpleNamespace(
+        is_connected=lambda: True, ws=SimpleNamespace(speak=AsyncMock())
+    )
+    voice._player = None
+    voice.disconnect = AsyncMock()
+    packets = []
+    voice.send_audio_packet = lambda data, encode=False: packets.append(
+        voice.encoder.encode(data, 960) if encode else data
+    )
+    resolver = MediaResolver()
+    player = GuildPlayer(voice, resolver, AsyncMock())
+    try:
+        await player.enqueue(
+            [Track(media_server, "one", direct=True), Track(media_server, "two", direct=True)]
+        )
+        await eventually(lambda: player._runner.done())
+        assert len(packets) >= 40 and all(packets)
+        player.report_error.assert_not_awaited()
+        decoder = discord.opus.Decoder()
+        assert len(decoder.decode(packets[0], fec=False)) == 3840
+        assert player.current is None and not player.queue
+    finally:
+        await player.close()
+        await resolver.close()
