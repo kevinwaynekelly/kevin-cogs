@@ -227,3 +227,20 @@ async def test_tracking_and_background_tasks_stop_on_unload(bot, guild):
     tasks = [cog._startup_task, cog._maintenance_task]
     await cog.cog_unload()
     assert all(task.cancelled() for task in tasks)
+
+
+async def test_late_voice_events_and_settings_cannot_restart_timers_after_unload(bot, guild):
+    cog = CommunityPlus(bot)
+    member = make_member(guild)
+    channel = make_channel(guild, kind=discord.VoiceChannel)
+    channel.members = [member]
+    member.voice = SimpleNamespace(channel=channel)
+    before = SimpleNamespace(channel=None, self_stream=False, self_video=False)
+    after = SimpleNamespace(channel=channel, self_stream=False, self_video=False)
+    await cog.cog_unload()
+    try:
+        await cog.on_voice_state_update(member, before, after)
+        await cog.cvc_en.callback(cog, make_context(guild))
+        assert not cog._solo_tasks
+    finally:
+        await cog.cog_unload()

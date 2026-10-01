@@ -67,6 +67,7 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
         self._digest_locks = defaultdict(asyncio.Lock)
         self._role_views = {}
         self._views = set()
+        self._closing = False
         self._settings_cache = {}
         self._settings_locks = defaultdict(asyncio.Lock)
 
@@ -1414,6 +1415,8 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
                 task.cancel()
 
     async def _schedule_solo_disconnect(self, member, wait_s):
+        if self._closing:
+            return
         key = (member.guild.id, member.id)
         if key in self._solo_tasks and not self._solo_tasks[key].done():
             return
@@ -1540,6 +1543,7 @@ class CommunityPlus(CommunityFeatures, redcommands.Cog):
         )
 
     async def cog_unload(self):
+        self._closing = True
         tasks = list(self._solo_tasks.values())
         if self._startup_task:
             tasks.append(self._startup_task)

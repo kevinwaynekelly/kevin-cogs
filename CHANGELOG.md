@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-01: Community reload timer guard
+
+- Prevent late voice events and settings callbacks from creating solo timers after the cog unloads. Mark the instance closed before cancelling owned tasks and guard every timer creation.
+- Reproduce the late-event leak, verify the fix, and run the full 400-test suite on Python 3.10/3.11 with lint, formatting, syntax, metadata, and whitespace checks.
+
 ## 2026-10-01: Feature integration and final validation
 
 - Unify new control labels and command overviews, add guided setup to every cog, bind panels to their requester/server, and keep presentation/interaction/permission helpers identical for independent installs. Refresh the actual-payload visual preview for native audio.

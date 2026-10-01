@@ -37,7 +37,7 @@ Enable the **Server Members** intent for join/leave and role features, and the *
 | Seen and statistics | Enabled. Collects timestamps, message/voice counters, presence changes, and activity starts. |
 | Compact embeds | Enabled. |
 
-Managed/integration roles and `@everyone` are excluded from sticky restoration. Roles at or above the bot's highest role cannot be restored. Solo timers are rebuilt when the cog loads, keyed by server and member, and cancelled on unload or when disabled. Mute/deafen changes do not restart an existing solo deadline. Timers recheck the channel, companions, and enabled state before disconnecting.
+Managed/integration roles and `@everyone` are excluded from sticky restoration. Roles at or above the bot's highest role cannot be restored. Solo timers are rebuilt when the cog loads, keyed by server and member, and cancelled on unload or when disabled. Late events and settings callbacks cannot restart timers on an unloaded instance. Mute/deafen changes do not restart an existing solo deadline. Timers recheck the channel, companions, and enabled state before disconnecting.
 
 ## Direct and slash commands
 
