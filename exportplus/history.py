@@ -121,6 +121,8 @@ async def scan_channel(job, channel, guild, member):
     row = channel_row(channel)
     job.channels.append(row)
     if not await accessible(channel, member, guild.me):
+        row["name"] = "Unavailable channel/thread"
+        row["parent_id"] = None
         row["status"] = "skipped: missing history access or private-thread membership"
         job.complete = False
         return

@@ -7,6 +7,7 @@ Export this server's accessible chats into files you can read or upload to ChatG
 Replace `kevin` with your Red repository alias if different. Run installation and slash registration as the bot owner:
 
 ```text
+!repo update kevin
 !cog install kevin exportplus
 !load exportplus
 !slash enablecog exportplus
@@ -59,7 +60,7 @@ The bot sends independent `server-chat-001.zip` volumes, each below 7 MiB. Extra
 | `README.txt` | Upload instructions, a suggested ChatGPT prompt, and limitations. |
 | `INDEX.txt` | Server/date scope, total messages, channel/thread status, warnings and file mapping. |
 | `index.json` | Structured completeness manifest and channel/file metadata. |
-| `chat-0001.txt`, etc. | Readable transcripts grouped by channel and ordered oldest first. UTF-8, up to 1 MiB per part. |
+| `chat-0001.txt`, etc. | Readable transcripts grouped by channel and ordered oldest first, with date/completeness headers. UTF-8, up to 1 MiB per part. |
 | `messages-0001.jsonl`, etc. | Structured source records, including original mention syntax. |
 
 Messages retain author/display names and IDs, timestamps, edit time, source links, reply IDs, readable mentions, text, embed text/fields/links, sticker links, reaction counts, poll text/votes, and forwarded snapshots. Filenames come from counters, never channel names or attachment filenames.
@@ -70,14 +71,14 @@ Upload `INDEX.txt` and the relevant `chat-*.txt` files to ChatGPT. For a small s
 
 - Both the requester and bot need View Channel and Read Message History for each source. Private threads additionally require membership or Manage Threads for both. No thread joining or permission changes occur. Archived private discovery is limited to the bot's joined threads when it lacks Manage Threads; the index warns about this.
 - Enable Message Content in Discord's Developer Portal and Red. A missing intent blocks the export instead of producing empty-looking history.
-- Access and command availability are checked during scanning and again before delivery/retrieval. Only the original requester can retrieve or erase their export. If access changes, delivery is blocked; clear and create a fresh export with the remaining accessible channels.
+- Access and command availability are checked during scanning and again before delivery/retrieval. Only the original requester can retrieve or erase their export. Unavailable source names are redacted. If access changes, delivery is blocked; clear and create a fresh export with the remaining accessible channels.
 - Missing permissions, API failures and interrupted histories are listed explicitly. Deleted messages and previous edits cannot be reconstructed. This is a creation-time cutoff, not an atomic snapshot: messages can change during a long export.
 - Attachment/media files are represented by metadata and URLs. Binaries are not downloaded, images/audio are not interpreted, and links can expire.
 - One retained/running export per server, at most two active jobs, sixteen retained jobs, four hours per scan and 10,000 channels/threads. Transcript/record/index data stays below 256 MiB per export, with at most another 256 MiB of ZIP copies. Total bot storage reservations stay within 1 GiB. Reaching the scan/data cap produces an explicitly partial export; an index/archive that cannot fit reports failure. Use date/channel filters for large histories.
-- Files expire after 24 hours, checked at access and by ten-minute maintenance. Starting another export replaces your prior one. Cancellation, unload/reload and Red user-data deletion erase temporary files. The compressor finishes before cleanup so it cannot recreate erased files.
+- Files expire after 24 hours, checked at access and by ten-minute maintenance. Starting another export replaces your prior one. Cancellation, unload/reload and Red user-data deletion erase temporary files. Owned downloads stop and the compressor finishes before cleanup so neither can outlive erased files.
 
 ## Data and validation
 
-No chat/settings are saved in Red Config, and no bot token appears in exports. Temporary records contain the personal metadata described in `info.json`. Red user-data export returns only the requested author's retained message rows. A deletion request cancels and clears all temporary exports; files already delivered or downloaded remain with their recipients.
+No chat/settings are saved in Red Config. Bot authentication credentials are never added to export metadata. Temporary records contain the personal metadata described in `info.json`. Red user-data export returns only the requested author's retained message rows. A deletion request cancels and clears all temporary exports; files already delivered or downloaded remain with their recipients.
 
 Automated checks use Red's real prefix/slash command pipeline and filesystem/ZIP writers with mocked Discord history, thread membership and DM transport. They do not establish that Scarlet can read a live server or that live DMs work. Check `!export status` and the produced index after installation.

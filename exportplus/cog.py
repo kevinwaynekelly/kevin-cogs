@@ -67,6 +67,8 @@ class ExportJob:
     last_progress: float = 0
     delivered: int = 0
     error: str = ""
+    transfer_lock: object = field(default_factory=asyncio.Lock)
+    transfers: set = field(default_factory=set)
 
     @property
     def guild_id(self):
@@ -119,7 +121,7 @@ class ExportPlus(commands.Cog):
         # No job resumes after reload; discarded orphan directories cannot leak
         # into a new requester's download and never accumulate indefinitely.
         shutil.rmtree(self._root, ignore_errors=True)
-        self._root.mkdir(parents=True, exist_ok=True)
+        self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._maintenance = asyncio.create_task(self._maintain(), name="ExportPlus retention")
 
     async def cog_unload(self):
@@ -130,9 +132,7 @@ class ExportPlus(commands.Cog):
         async with self._lock:
             jobs = list(self._jobs.values())
             for job in jobs:
-                if job.task and not job.task.done():
-                    job.task.cancel()
-            await asyncio.gather(*(job.task for job in jobs if job.task), return_exceptions=True)
+                await self._erase(job)
             self._jobs.clear()
             shutil.rmtree(self._root, ignore_errors=True)
 
@@ -144,9 +144,15 @@ class ExportPlus(commands.Cog):
                 await self._prune()
 
     async def _erase(self, job):
-        if job.task and not job.task.done():
-            job.task.cancel()
-            await asyncio.gather(job.task, return_exceptions=True)
+        tasks = {
+            task
+            for task in [job.task, *job.transfers]
+            if task and task is not asyncio.current_task()
+        }
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         shutil.rmtree(job.root, ignore_errors=True)
         self._jobs.pop(job.guild_id, None)
 
@@ -183,6 +189,8 @@ class ExportPlus(commands.Cog):
     async def _authorize(self, job, *, files=False):
         if self._closing:
             raise commands.CheckFailure("ExportPlus is unloading.")
+        if self._jobs.get(job.guild_id) is not job:
+            raise commands.CheckFailure("This export was cleared, expired or replaced.")
         guild = self.bot.get_guild(job.guild_id)
         member = guild.get_member(job.owner_id) if guild else None
         if member is None or await self.bot.cog_disabled_in_guild(self, guild):
@@ -356,6 +364,17 @@ class ExportPlus(commands.Cog):
             pass
 
     async def _deliver(self, job, *, part=0, text=False):
+        task = asyncio.current_task()
+        job.transfers.add(task)
+        try:
+            async with job.transfer_lock:
+                await self._send_files(job, part=part, text=text)
+                if not text and not part:
+                    job.error = ""
+        finally:
+            job.transfers.discard(task)
+
+    async def _send_files(self, job, *, part=0, text=False):
         await self._authorize(job, files=True)
         paths = sorted(job.root.glob("chat-*.txt")) if text else job.volumes
         if part:
@@ -370,7 +389,11 @@ class ExportPlus(commands.Cog):
                     job,
                     f"**{path.name}** · {job.messages:,} messages exported. "
                     + ("Some history is missing. Check INDEX.txt. " if not job.complete else "")
-                    + "Extract the ZIP and upload INDEX.txt plus the chat text files to ChatGPT. Use `!export text 1` for a direct text attachment.",
+                    + (
+                        "Upload this text file directly to ChatGPT."
+                        if text
+                        else "Extract the ZIP and upload INDEX.txt plus the chat text files to ChatGPT. Use `!export text 1` for a direct text attachment."
+                    ),
                     file=upload,
                     tone="success" if job.complete else "warning",
                 )
@@ -394,7 +417,9 @@ class ExportPlus(commands.Cog):
     @commands.admin_or_permissions(manage_guild=True)
     async def export(self, ctx):
         """Export server chats privately into readable files for ChatGPT."""
-        job = self._jobs.get(ctx.guild.id)
+        async with self._lock:
+            await self._prune()
+            job = self._jobs.get(ctx.guild.id)
         if job and job.owner_id == ctx.author.id:
             await self._show_status(ctx, job)
         else:
@@ -439,7 +464,7 @@ class ExportPlus(commands.Cog):
         await self._reply(
             ctx,
             f"State: {job.state}\nMessages: {job.messages:,}\nChannels/threads checked: {len(job.channels):,}\n"
-            f"ZIP parts: {len(job.volumes)}\nText parts: {len(job.writer.files) if job.writer else 0}\n"
+            f"ZIP parts: {len(job.volumes)}\nText parts: {len(list(job.root.glob('chat-*.txt')))}\n"
             + (
                 "Some history was skipped or incomplete; read INDEX.txt.\n"
                 if not job.complete

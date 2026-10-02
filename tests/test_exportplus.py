@@ -5,22 +5,31 @@ import json
 import time
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import discord
 import pytest
 from conftest import forbidden, make_channel, make_context, make_member
+from redbot.core import commands
 from redbot.core._cli import parse_cli_flags
 from redbot.core._events import init_events
 from test_audio_hybrid import red_command_runtime as runtime_fixture
 from test_cog_hybrid import invoke_slash
+from test_settingshub import command_runtime as command_fixture
+from test_settingshub import hub_runtime as hub_fixture
 
+from emojistealerplus import EmojiStealerPlus
 from exportplus import ExportPlus
 from exportplus.cog import ExportJob
 from exportplus.constants import RETENTION, VOLUME_BYTES, __red_end_user_data_statement__
 from exportplus.history import accessible, discover, scan_channel
 from exportplus.transcript import ExportLimit, TranscriptWriter, message_record, parse_date
+
+hub_runtime = hub_fixture
+command_runtime = command_fixture
 
 red_command_runtime = runtime_fixture
 
@@ -415,5 +424,243 @@ async def test_retention_user_data_and_export_metadata_agree(export_runtime):
     job.finished = time.time() - RETENTION - 1
     await cog._prune()
     assert not job.root.exists() and not cog._jobs
-    info = json.loads(__import__("pathlib").Path("exportplus/info.json").read_text())
+    info = json.loads(Path("exportplus/info.json").read_text())
     assert info["end_user_data_statement"] == __red_end_user_data_statement__
+
+
+async def test_channel_prefix_and_slash_conversion_work_and_dates_bound_the_snapshot(
+    export_runtime, monkeypatch
+):
+    bot, cog, member, invoke = export_runtime
+    channel = text_channel(member.guild, 555555555555555555)
+    channel.history.side_effect = lambda **kwargs: sequence([chat_message(member, channel)])
+    ctx = await invoke(f"!export channel <#{channel.id}> 2026-09-01 - False False")
+    assert not ctx.command_failed, ctx.send.call_args
+    job = cog._jobs[member.guild.id]
+    await asyncio.wait_for(job.task, 3)
+    assert job.scope is channel and not job.include_bots and not job.include_threads
+    assert job.before <= discord.utils.utcnow() and job.messages == 1
+    ctx = await invoke_slash(
+        bot,
+        invoke,
+        monkeypatch,
+        "export channel",
+        channel=channel,
+        after=None,
+        before=None,
+        bots=True,
+        threads=False,
+    )
+    assert not ctx.command_failed, ctx.send.call_args
+    await asyncio.wait_for(cog._jobs[member.guild.id].task, 3)
+
+
+async def test_delivery_failure_preserves_private_export_and_retries_without_raw_error(
+    export_runtime,
+):
+    bot, cog, member, invoke = export_runtime
+    progress = SimpleNamespace(edit=AsyncMock())
+
+    async def send(*args, **kwargs):
+        if kwargs.get("file"):
+            raise discord.Forbidden(
+                SimpleNamespace(status=403, reason="Forbidden"), "private token text"
+            )
+        return progress
+
+    member.send.side_effect = send
+    await invoke("!export server")
+    job = cog._jobs[member.guild.id]
+    await asyncio.wait_for(job.task, 3)
+    assert job.state == "ready" and job.root.exists() and job.volumes
+    assert "delivery failed" in job.error and "private token" not in job.error
+    assert "Complete: True" in job.root.joinpath("chat-0001.txt").read_text()
+    member.send.side_effect = None
+    ctx = await invoke("!export download 1")
+    assert not ctx.command_failed
+    ctx = await invoke("!export text 2")
+    assert ctx.command_failed
+
+
+async def test_download_rechecks_source_access_and_other_admins_cannot_get_or_replace(
+    export_runtime,
+):
+    bot, cog, member, invoke = export_runtime
+    channel = text_channel(member.guild)
+    channel.history.side_effect = lambda **kwargs: sequence([chat_message(member, channel)])
+    await invoke("!export server")
+    job = cog._jobs[member.guild.id]
+    await asyncio.wait_for(job.task, 3)
+    member.send.reset_mock()
+    channel.permissions_for.return_value = discord.Permissions.none()
+    ctx = await invoke("!export download")
+    assert ctx.command_failed and member.send.await_count == 0
+    other = make_member(member.guild, 456789)
+    ctx.author = other
+    with pytest.raises(commands.CheckFailure):
+        await cog._job(ctx)
+    with pytest.raises(commands.CheckFailure):
+        await cog._start(ctx)
+    assert cog._jobs[member.guild.id] is job
+
+
+async def test_expiry_is_checked_by_status_and_user_deletion_clears_retained_files(export_runtime):
+    bot, cog, member, invoke = export_runtime
+    await invoke("!export server")
+    job = cog._jobs[member.guild.id]
+    await asyncio.wait_for(job.task, 3)
+    job.finished = time.time() - RETENTION - 1
+    ctx = await invoke("!export")
+    assert not ctx.command_failed and not job.root.exists() and not cog._jobs
+    await invoke("!export server")
+    job = cog._jobs[member.guild.id]
+    await asyncio.wait_for(job.task, 3)
+    await cog.red_delete_data_for_user(requester="discord_deleted_user", user_id=member.id)
+    assert not cog._jobs and not job.root.exists()
+
+
+async def test_partial_limit_export_is_readable_and_hidden_channel_names_are_redacted(
+    export_runtime, monkeypatch
+):
+    bot, cog, member, invoke = export_runtime
+    channel = text_channel(member.guild)
+    channel.history.side_effect = lambda **kwargs: sequence(
+        [chat_message(member, channel), chat_message(member, channel, number=2)]
+    )
+    hidden = text_channel(member.guild, 458)
+    hidden.name = "private confidential channel name"
+    hidden.permissions_for.return_value = discord.Permissions.none()
+    # Scan denied history first so its redacted status remains in the bounded index.
+    member.guild.channels = [member.guild.channels[0], hidden, channel]
+    monkeypatch.setattr(
+        "exportplus.cog.TranscriptWriter",
+        lambda root, server: TranscriptWriter(root, server, max_bytes=1000),
+    )
+    await invoke("!export server")
+    job = cog._jobs[member.guild.id]
+    await asyncio.wait_for(job.task, 3)
+    assert job.state == "ready" and job.messages == 1 and not job.complete
+    assert job.channels[-1]["status"].startswith("partial")
+    text = job.root.joinpath("chat-0001.txt").read_text()
+    assert "Complete: False" in text and "hello" in text
+    index = job.root.joinpath("INDEX.txt").read_text()
+    assert "private confidential" not in index and "Unavailable channel/thread" in index
+    assert "256 MiB" in index
+
+
+async def test_cancel_waits_for_compressor_and_stops_owned_downloads(export_runtime, monkeypatch):
+    bot, cog, member, invoke = export_runtime
+    entered, released = Event(), Event()
+    original = TranscriptWriter.finish
+
+    def finish(writer, manifest):
+        entered.set()
+        if not released.wait(2):
+            raise TimeoutError
+        return original(writer, manifest)
+
+    monkeypatch.setattr(TranscriptWriter, "finish", finish)
+    await invoke("!export server")
+    job = cog._jobs[member.guild.id]
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        cancelling = asyncio.create_task(invoke("!export clear"))
+        await asyncio.sleep(0.02)
+        assert job.root.exists() and not cancelling.done()
+    finally:
+        released.set()
+    ctx = await asyncio.wait_for(cancelling, 2)
+    assert not ctx.command_failed and job.task.cancelled() and not job.root.exists()
+    monkeypatch.setattr(TranscriptWriter, "finish", original)
+    await invoke("!export server")
+    job = cog._jobs[member.guild.id]
+    await asyncio.wait_for(job.task, 3)
+    sending = asyncio.Event()
+
+    async def blocked(*args, **kwargs):
+        sending.set()
+        await asyncio.Event().wait()
+
+    member.send.side_effect = blocked
+    download = asyncio.create_task(cog._deliver(job, part=1))
+    await asyncio.wait_for(sending.wait(), 1)
+    await cog._erase(job)
+    assert download.cancelled() and not job.root.exists() and not job.transfers
+    with pytest.raises(commands.CheckFailure):
+        await cog._deliver(job, part=1)
+
+
+async def test_thread_discovery_failures_and_channel_limit_are_reported(
+    tmp_path, guild, monkeypatch
+):
+    member = make_member(guild)
+    channel = text_channel(guild)
+    guild.active_threads = AsyncMock(side_effect=forbidden())
+    guild.threads = []
+    channel.archived_threads.side_effect = lambda **kwargs: sequence([], forbidden())
+    job = basic_job(tmp_path, guild, member)
+    assert [item.id async for item in discover(job, guild, member)] == [channel.id]
+    assert not job.complete and len(job.warnings) == 3
+    monkeypatch.setattr("exportplus.history.MAX_CHANNELS", 1)
+    second = text_channel(guild, 458)
+    with pytest.raises(ExportLimit):
+        _ = [item.id async for item in discover(job, guild, member)]
+    assert second.id != channel.id
+
+
+async def test_all_eight_cogs_register_valid_slash_payloads_and_identical_helpers(
+    hub_runtime, tmp_path, monkeypatch
+):
+    from discord.app_commands.commands import validate_name
+
+    bot, hub, member, invoke = hub_runtime
+    monkeypatch.setattr("exportplus.cog.cog_data_path", lambda cog: tmp_path / "ExportPlus")
+    await bot.add_cog(EmojiStealerPlus(bot))
+    await bot.add_cog(ExportPlus(bot))
+    try:
+        roots = {**bot.tree._global_commands, **bot.tree._disabled_global_commands}
+        assert len(roots) == 82
+        counts = {}
+        for root in roots.values():
+            leaves = (
+                root.walk_commands() if isinstance(root, discord.app_commands.Group) else [root]
+            )
+            for leaf in leaves:
+                if isinstance(leaf, discord.app_commands.Command) and leaf.binding:
+                    name = leaf.binding.qualified_name
+                    counts[name] = counts.get(name, 0) + 1
+        assert sum(counts.values()) == 348 and counts["ExportPlus"] == 9
+
+        def check(payload, depth=0):
+            validate_name(payload["name"])
+            assert 1 <= len(payload["description"]) <= 100
+            assert len(payload.get("options", [])) <= 25
+            for option in payload.get("options", []):
+                if option["type"] in (1, 2):
+                    assert depth < 2
+                check(option, depth + 1)
+
+        for root in roots.values():
+            check(root.to_dict(bot.tree))
+        for filename in ("presentation.py", "command_support.py", "interactive.py"):
+            expected = Path("audioplus", filename).read_bytes()
+            assert all(Path(name.lower(), filename).read_bytes() == expected for name in counts)
+        for command in bot.get_cog("ExportPlus").walk_commands():
+            assert "plus" not in command.name and command.help
+    finally:
+        await bot.remove_cog("ExportPlus")
+        await bot.remove_cog("EmojiStealerPlus")
+
+
+async def test_worker_and_storage_reservations_reject_new_jobs_before_private_collection(
+    export_runtime, monkeypatch
+):
+    bot, cog, member, invoke = export_runtime
+    monkeypatch.setattr("exportplus.cog.MAX_STORAGE_BYTES", 1)
+    ctx = await invoke("!export server")
+    assert ctx.command_failed and not cog._jobs and member.send.await_count == 0
+    monkeypatch.setattr("exportplus.cog.MAX_STORAGE_BYTES", 1024**3)
+    monkeypatch.setattr("exportplus.cog.MAX_JOBS", 0)
+    ctx = await invoke("!export server")
+    assert ctx.command_failed and not cog._jobs and member.send.await_count == 0
+    assert not list(cog._root.iterdir())

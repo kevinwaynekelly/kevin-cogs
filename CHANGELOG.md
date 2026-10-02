@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-02: ExportPlus delivery and transcript hardening
+
+- Put server/date/filter/completeness headers in every direct text file, redact unavailable channel/thread names, restrict local export directories, and prune expired exports when status is opened.
+- Serialize private transfers, own/cancel retries on clear/unload, wait for compression before deletion, and reject stale job references. Keep exports privately retrievable after a Discord delivery failure.
+- Pass 703 regressions on Python 3.10 and 3.11. Validate all eight cogs together at 348 slash actions across 82 roots. Cover channel converters, permission revocation, private retry, partial limits, expiry, user deletion, compressor/download cancellation and storage guards with real Red/filesystem code and mocked Discord boundaries.
+
 ## 2026-10-02: ExportPlus server chat exports
 
 - Add independently installable ExportPlus with administrator prefix/slash exports for accessible server channels, voice/stage text chats, forums and active/archived threads.
