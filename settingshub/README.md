@@ -1,6 +1,6 @@
 # SettingsHub
 
-An optional shared dashboard for AudioPlus, CommunityPlus, LevelPlus, LogPlus, and OwoPlus. Every original cog remains independently installable; this cog requires no other package from the repository and discovers whichever cogs are loaded.
+An optional shared dashboard for AudioPlus, CommunityPlus, LevelPlus, LogPlus, OwoPlus and EmojiStealerPlus. Every feature cog remains independently installable; this cog requires no other package from the repository and discovers whichever cogs are loaded.
 
 ## Install and use
 
@@ -19,6 +19,7 @@ Maintenance commands require Red administrator access or Manage Server and run i
 | --- | --- | --- |
 | `[p]settings` | `/settings panel` | Open a requester-bound cog picker that delegates to each cog's existing setup panel. |
 | `[p]settings health` | `/settings health` | Inspect load/disable status, log delivery counters, local music packages/executables, and current-channel permissions. |
+| `[p]settings support` | `/settings support` | Download a bounded ZIP with whitelisted diagnostics, local readiness flags and recent error types. |
 | `[p]settings backup` | `/settings backup` | Export eligible loaded cogs' selected server settings to JSON. |
 | `[p]settings restore` with an attached JSON backup | `/settings restore file:<attachment>` | Validate and preview a same-server restore, then apply with the requester-bound button. |
 
@@ -26,9 +27,9 @@ Controls last three minutes and repeat the current command, member, server, and 
 
 ## Backup scope and restore
 
-Backups contain music/continuity policies; community roles/welcome/solo/tracking/digest/room/onboarding/birthday policies; level formulas, source/exclusion/reward/farming/challenge/custom-goal/streak/monthly-season policies; log routing, switches, history/delivery/alert policies; and transformation dictionaries/channel/custom styles and Undo policy. Only loaded source cogs the caller can currently configure are included. A backup can contain a subset of the five source cogs; each included cog must have its complete supported settings shape. Hub themes, change history/policy and its own snapshot schedule are outside this source-cog backup scope.
+Backups contain music/continuity/session-summary policies; community roles/welcome/solo/tracking/digest/room/onboarding/birthday/native-event policies; level formulas, source/exclusion/reward/farming/challenge/custom-goal/streak/monthly-season policies; log routing, switches, history/delivery/alert policies; transformation dictionaries/channel/custom styles and Undo policy; and emoji capture policy. Only loaded source cogs the caller can currently configure are included. A backup can contain a subset of the six source cogs; each included cog must have its complete supported settings shape. Hub themes, change history/policy and its own snapshot schedule are outside this source-cog backup scope.
 
-Backups exclude global audio credentials/watchdog schedules and recipients, queue recovery payloads, listening history, personal/shared playlists/favorites, probability overrides/opt-outs, XP/display names/earned goal/streak progress, room ownership, birthday/acceptance/participation/sticky member records, active polls/events, incident cases/log text/digest cursors, owner alert recipient IDs, haiku submissions/contests/votes, registered role-menu messages, dated rankings, and temporary XP boosts. These records are preserved during restore. New definition/policy sections use merged defaults; use a fresh backup after updating to include the current supported shape.
+Backups exclude global audio credentials/watchdog schedules and recipients, queue recovery payloads, listening/session history, personal/shared playlists/favorites, probability overrides/opt-outs, XP/display names/earned goal/streak progress, room ownership, birthday/acceptance/participation/sticky member records, active polls/events/native mappings, copied emoji mappings, incident cases/log text/digest cursors, owner alert recipient IDs, haiku submissions/contests/votes, registered role-menu messages, dated rankings, and temporary XP boosts. These records are preserved during restore. New definition/policy sections use merged defaults; use a fresh backup after updating to include the current supported shape.
 
 Files are capped at 256 KiB. Restore rejects other server IDs, duplicate JSON keys, nonfinite values, unknown settings, invalid types/ranges/timezones, unavailable roles/channels, and unsafe automatic/self-service grant roles. Removed server IDs must be corrected or cleared before restoring. The JSON is validated before preview and again after acquiring settings locks. Refresh failures are reported separately after configuration is saved. Dynamic dictionaries are replaced; omitted operational/member fields stay intact. Restore uses the added sections' existing locks, saves prior values, and rolls back applied settings if a write fails. If storage also prevents rollback, the command reports affected settings for recovery. Legacy scalar setters retain their normal last-write behavior.
 
@@ -36,7 +37,7 @@ Restore clears settings caches, updates live audio fair-queue/autoplay/normaliza
 
 ## Stored data
 
-SettingsHub persists server themes and up to ten configuration snapshots, each capped at 256 KiB. Snapshots contain the same selected settings as manual backups and exclude personal records. Requester/server IDs and restore previews are held in memory for up to three minutes and discarded on timeout/unload or a user-data deletion request. Its bounded configuration history retains actor IDs and selected setting values, with identified-user export/deletion as described below. Dashboard messages and backup files posted to Discord remain managed there. The five source cogs retain their own documented data hooks.
+SettingsHub persists server themes and up to ten configuration snapshots, each capped at 256 KiB. Snapshots contain the same selected settings as manual backups and exclude personal records. Requester/server IDs and restore previews are held in memory for up to three minutes and discarded on timeout/unload or a user-data deletion request. Its bounded configuration history retains actor IDs and selected setting values, with identified-user export/deletion as described below. Support error signatures contain no member IDs and remain transient for up to 24 hours. Dashboard messages and backup/support files posted to Discord remain managed there. The six source cogs retain their own documented data hooks.
 
 ## Themes and maintenance
 
@@ -46,7 +47,7 @@ SettingsHub persists server themes and up to ten configuration snapshots, each c
 - `[p]snapshots auto true 6` enables automatic snapshots every six hours; `false` disables them. Intervals range from 1 to 168 hours, disabled by default. Unchanged settings are skipped.
 - `[p]snapshots create`, `[p]snapshots`, `[p]snapshots diff <id>`, `[p]snapshots restore <id>` and `[p]snapshots delete <id|all>` manage checkpoints. Automatic capture excludes disabled cogs. Restore repeats current source permissions and live role/channel validation, then requires the same requester-bound preview button as manual restore. Slash equivalents are available.
 
-The hub adds 22 slash actions. Live music cards, refreshed poll/event cards and retried logs use the current server theme. Automatic snapshots start disabled, retain up to ten records and skip unchanged settings.
+The hub adds 23 slash actions. Live music cards, refreshed poll/event cards and retried logs use the current server theme. Automatic snapshots start disabled, retain up to ten records and skip unchanged settings.
 
 ## Configuration change history
 
@@ -58,7 +59,7 @@ The hub adds 22 slash actions. Live music cards, refreshed poll/event cards and 
 | `[p]settings history clear` | `/settings history clear` | Erase records for source cogs you can currently configure. |
 | `[p]settings history export` | `/settings history export` | Download accessible history as JSON; requires Attach Files. |
 
-Collection begins after this update while SettingsHub is loaded and enabled in the server. Update and reload all six cogs so their command/component helpers can identify the actor. Prefix and hybrid/slash writes, guided setup buttons, and confirmed backup/snapshot restores are attributed to the actual caller. An instance-local observer checks writes and clears to these cogs' Red Config drivers; unload restores the original methods. Source cogs remain independently installable. Concurrent writes are serialized during observation. Background jobs do not inherit attribution from the command that started them, and unchanged/failed writes create no entry. A successful source write remains saved if supplementary history storage fails.
+Collection begins after this update while SettingsHub is loaded and enabled in the server. Update and reload all installed cogs so their command/component helpers can identify the actor. Prefix and hybrid/slash writes, guided setup buttons, and confirmed backup/snapshot restores are attributed to the actual caller. An instance-local observer checks writes and clears to these cogs' Red Config drivers; unload restores the original methods. Source cogs remain independently installable. Concurrent writes are serialized during observation. Background jobs do not inherit attribution from the command that started them, and unchanged/failed writes create no entry. A successful source write remains saved if supplementary history storage fails.
 
 History covers the explicit selected server-settings scope used by backups, plus Hub themes, history policy and snapshot enable/interval settings. Global audio/node credentials/watchdog settings, personal preferences/records, XP balances, listening history, active queues, snapshot contents and runtime cursors are excluded. External edits and commands from older, unreloaded cog copies are not reconstructed. Restores record each actual setting write, including rollback writes if a later stage fails. History is informational; it does not itself offer an undo button. Snapshot/backup restores retain their existing validation and preview controls.
 
@@ -77,6 +78,16 @@ Retain at most 200 entries and 512 KiB per server. Each entry has at most 100 ch
 [p]settings ready voicerooms "Create a Room"
 ```
 
-Feature choices are `playback`, `welcome`, `autorole`, `roles`, `onboarding`, `voicerooms`, `birthdays`, `messagexp`, `voicexp`, `levelrewards`, `logging`, `logalerts`, `transformations` and `snapshots`; omit the choice for all available features. Each source repeats its actual setup permission/disabled checks. Reports use the common theme and distinguish required failures from optional notes, including text fallback and best-effort audit attribution.
+Feature choices are `playback`, `welcome`, `autorole`, `roles`, `onboarding`, `voicerooms`, `birthdays`, `messagexp`, `voicexp`, `levelrewards`, `logging`, `logalerts`, `transformations`, `snapshots`, `emojis` and `nativeevents`; omit the choice for all available features. Each source repeats its actual setup permission/disabled checks. Reports use the common theme and distinguish required failures from optional notes, including text fallback and best-effort audit attribution. Emoji checks cover Create Expressions, capture scope/intents and cached static/animated capacity. Native event checks cover Create Events, ordinary voice access and the scheduled-event intent.
 
 Checks use the exact selected/configured channels and their effective permissions, channel capacity, room category, current role hierarchy and automatic grant policy, required local intents, transformation scope, snapshot size, and AudioPlus's native API/FFmpeg/Opus/package/runtime diagnostics. These are local prerequisite checks, not a live provider, storage or Discord transport test. They never connect/play, create rooms, grant roles or enable features. Run them before saving/enabling a feature and again after changing roles or channel overwrites. The separate opt-in `audiocheck now` still performs the bounded live playback probe.
+
+## Diagnostic support bundles
+
+`[p]settings support` or `/settings support` attaches `cog-support.zip`, requiring the current Hub administrator/Manage Server checks and Attach Files. It contains `README.txt`, `diagnostics.json`, `readiness.json` and `recent-errors.json`, capped at 256 KiB before compression.
+
+Diagnostics include package versions, current text-channel permission flags, loaded/disabled cog status, installed-source fingerprints and whitelisted native player/log delivery state. Readiness includes prerequisite names and flags for accessible features. Use `settings ready <feature>` in Discord for detailed current channel/role advice; dependency exception text is deliberately omitted from the archive. One broken audio diagnostic produces an error type without preventing other checks.
+
+While the hub is loaded/enabled, unexpected registered command failures keep up to 100 signatures across servers in memory for 24 hours. Only timestamp, canonical command, cog and exception type are retained, with a server ID used for filtering. Permission, validation, disabled-command and cooldown failures are excluded. Exports show only this server's errors for source cogs the caller can still configure. The buffer expires on reads/maintenance and clears on unload. It contains no member attribution and is not reconstructed from historical logs.
+
+Bundles never read log files or export message contents, command arguments, credentials, Config settings, member records, raw exception messages, traceback paths or provider URLs. No live voice/YouTube test runs while generating one. Attach the downloaded archive to a support request yourself; posted files remain managed by Discord.

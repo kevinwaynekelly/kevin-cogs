@@ -41,6 +41,7 @@ from .features import (
     week_key,
 )
 from .interactive import SetupView, close_views
+from .native_events import NativeEventBridge
 from .presentation import Presentation, settings
 from .social import SOCIAL_DEFAULTS, CommunitySocial
 
@@ -50,7 +51,9 @@ log = logging.getLogger(__name__)
 # ------------------------ defaults ------------------------
 
 
-class CommunityPlus(CommunityTools, CommunityFeatures, CommunitySocial, redcommands.Cog):
+class CommunityPlus(
+    NativeEventBridge, CommunityTools, CommunityFeatures, CommunitySocial, redcommands.Cog
+):
     """Community roles, notices, voice cleanup, and member activity."""
 
     async def cog_command_error(self, ctx, error):

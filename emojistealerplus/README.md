@@ -34,6 +34,8 @@ Capture ignores bot/webhook messages and bot reactions. One owned worker handles
 
 Uploads fetch current server emojis and honor separate static/animated slot limits using Discord.py's server limit. Existing emojis are never deleted to make room. Original ID mappings and copied image SHA-256 fingerprints prevent duplicate captures, including concurrent manual/automatic copies. Names are restricted to valid characters and disambiguated when already used. Deleted destinations are pruned during subsequent capture. Identical images already present before this cog copied them cannot be detected without downloading every server emoji.
 
+Queued automatic jobs recheck the current capture channel, reaction switch, cog enablement and upload permissions before copying. An image alias can reuse a known copied emoji even when its slots are full; no new emoji is created in that case.
+
 Images are fetched only from Discord's emoji CDN, without redirects, with a ten-second HTTP deadline and 256 KiB streaming cap. PNG/JPEG/GIF signatures are checked; animated captures must remain GIF. Discord uploads have a thirty-second deadline and may still fail because of platform capacity or rate limits. Status stores only a failure type, never raw response bodies. Optional notices use the shared theme and suppress mentions.
 
 ## Data

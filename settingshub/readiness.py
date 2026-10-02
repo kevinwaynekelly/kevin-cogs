@@ -20,6 +20,8 @@ FEATURES = {
     "logalerts": ("LogPlus", "Staff alerts and digests"),
     "transformations": ("OwoPlus", "Automatic message transformations"),
     "snapshots": ("SettingsHub", "Settings snapshots"),
+    "emojis": ("EmojiStealerPlus", "External emoji capture"),
+    "nativeevents": ("CommunityPlus", "Native Discord events"),
 }
 
 
@@ -217,6 +219,99 @@ class ReadinessCommands:
                 bool(diagnostics["runtimes"]),
                 ", ".join(diagnostics["runtimes"])
                 or "Install Deno 2.3+, Node.js 22+ or a supported QuickJS runtime.",
+            )
+
+        elif feature == "emojis":
+            conf = await group.capture()
+            report.add(
+                "Create Expressions",
+                ctx.guild.me.guild_permissions.create_expressions,
+                "Required to copy custom emoji into this server.",
+            )
+            check_intent(report, self.bot, "message_content", "Message Content intent")
+            check_intent(report, self.bot, "guild_messages", "Server message intent")
+            if conf["reactions"]:
+                check_intent(report, self.bot, "guild_reactions", "Server reaction intent")
+            destination = channel or find(conf["channel"]) if conf["channel"] or channel else None
+            if destination is not None or conf["channel"]:
+                valid = (
+                    isinstance(destination, (discord.TextChannel, discord.Thread))
+                    and destination.guild.id == ctx.guild.id
+                )
+                report.add(
+                    "Capture channel",
+                    valid,
+                    destination.mention
+                    if valid
+                    else "Choose an available text channel in this server.",
+                )
+                if valid:
+                    perms = check_permissions(report, ctx.guild, destination, ("view_channel",))
+                    if conf["notify"]:
+                        send = (
+                            "send_messages_in_threads"
+                            if isinstance(destination, discord.Thread)
+                            else "send_messages"
+                        )
+                        report.add(
+                            "Copy notifications",
+                            getattr(perms, send),
+                            "Sending notices is optional; emoji capture does not require it.",
+                            required=False,
+                        )
+            counts = {False: 0, True: 0}
+            for emoji in ctx.guild.emojis:
+                counts[emoji.animated] += 1
+            for animated, label in ((False, "Static emoji slots"), (True, "Animated emoji slots")):
+                report.add(
+                    label,
+                    counts[animated] < ctx.guild.emoji_limit,
+                    f"{counts[animated]} / {ctx.guild.emoji_limit} cached slots used.",
+                    required=False,
+                )
+            report.add(
+                "Capture policy",
+                conf["enabled"],
+                "Automatic capture is enabled."
+                if conf["enabled"]
+                else "Automatic capture is paused; yoink remains available.",
+                required=False,
+            )
+
+        elif feature == "nativeevents":
+            conf = (await group.community_tools())["native_events"]
+            destination = voice or find(conf["channel"]) if conf["channel"] or voice else None
+            if destination is not None or conf["channel"]:
+                valid = (
+                    isinstance(destination, discord.VoiceChannel)
+                    and destination.guild.id == ctx.guild.id
+                )
+                report.add(
+                    "Event voice channel",
+                    valid,
+                    destination.mention
+                    if valid
+                    else "Choose an ordinary voice channel in this server.",
+                )
+                if valid:
+                    check_permissions(
+                        report, ctx.guild, destination, ("view_channel", "connect", "create_events")
+                    )
+            else:
+                report.add(
+                    "Create Events",
+                    ctx.guild.me.guild_permissions.create_events,
+                    "Required for an external native Discord event.",
+                )
+                check_text_channel(report, ctx.guild, channel or ctx.channel)
+            check_intent(report, self.bot, "guild_scheduled_events", "Scheduled event intent")
+            report.add(
+                "Automatic native events",
+                conf["enabled"],
+                "Enabled for new events."
+                if conf["enabled"]
+                else "Off by default; use event native for an existing event.",
+                required=False,
             )
 
         elif feature == "welcome":

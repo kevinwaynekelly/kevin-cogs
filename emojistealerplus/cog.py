@@ -87,7 +87,18 @@ class EmojiStealerPlus(commands.Cog):
             and (await self.config.guild(guild).capture())["enabled"]
         )
 
-    async def _queue_emoji(self, guild, channel, emoji):
+    async def _automatic_allowed(self, guild, channel_id=None, *, reaction=False):
+        if not await self._enabled(guild):
+            return False
+        policy = await self.config.guild(guild).capture()
+        channel = guild.get_channel_or_thread(channel_id) if channel_id else None
+        return not (reaction and not policy["reactions"]) and (
+            not policy["channel"]
+            or channel is not None
+            and policy["channel"] in {channel.id, getattr(channel, "parent_id", None)}
+        )
+
+    async def _queue_emoji(self, guild, channel, emoji, *, reaction=False):
         if not emoji.id or not await self._enabled(guild):
             return
         settings = await self.config.guild(guild).capture()
@@ -106,18 +117,20 @@ class EmojiStealerPlus(commands.Cog):
         if token in self._pending or self._queue.full():
             return
         self._pending.add(token)
-        self._queue.put_nowait((guild.id, channel.id, emoji))
+        self._queue.put_nowait((guild.id, channel.id, emoji, reaction))
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._run(), name="EmojiStealerPlusCapture")
 
     async def _run(self):
         while not self._closing:
-            guild_id, channel_id, emoji = await self._queue.get()
+            guild_id, channel_id, emoji, reaction = await self._queue.get()
             try:
                 guild = self.bot.get_guild(guild_id)
                 channel = guild.get_channel_or_thread(channel_id) if guild else None
                 if channel and await self._enabled(guild):
-                    result, created = await self._copy(guild, emoji, automatic=True)
+                    result, created = await self._copy(
+                        guild, emoji, automatic=True, channel_id=channel_id, reaction=reaction
+                    )
                     if created and (await self.config.guild(guild).capture())["notify"]:
                         ctx = SimpleNamespace(guild=guild, channel=channel, send=channel.send)
                         await self._reply(
@@ -164,15 +177,17 @@ class EmojiStealerPlus(commands.Cog):
             raise commands.BadArgument("The animated emoji could not be preserved.")
         return image
 
-    async def _copy(self, guild, emoji, *, automatic=False):
-        if not emoji.id:
+    async def _copy(self, guild, emoji, *, automatic=False, channel_id=None, reaction=False):
+        if not emoji.id or not 0 < emoji.id < 2**64:
             raise commands.BadArgument(
                 "Choose a custom Discord emoji, such as <:name:123456789012345678>."
             )
         async with self._locks[guild.id]:
             if self._closing or await self.bot.cog_disabled_in_guild(self, guild):
                 raise commands.CheckFailure("Emoji capture is unavailable in this server.")
-            if automatic and not await self._enabled(guild):
+            if automatic and not await self._automatic_allowed(
+                guild, channel_id, reaction=reaction
+            ):
                 raise commands.CheckFailure("Automatic emoji capture is disabled.")
             if not guild.me or not guild.me.guild_permissions.create_expressions:
                 raise commands.CheckFailure(
@@ -192,20 +207,38 @@ class EmojiStealerPlus(commands.Cog):
                 known = copies.get(str(emoji.id))
                 if known:
                     return by_id[known["emoji"]], False
-                if sum(item.animated == emoji.animated for item in emojis) >= guild.emoji_limit:
-                    raise commands.BadArgument(
-                        "This server has no free slots for this emoji type. Remove an emoji first."
-                    )
                 image = await self._download(emoji)
                 fingerprint = hashlib.sha256(image).hexdigest()
                 duplicate = next(
-                    (value for value in copies.values() if value["hash"] == fingerprint), None
+                    (
+                        value
+                        for value in copies.values()
+                        if value["hash"] == fingerprint and value["animated"] == emoji.animated
+                    ),
+                    None,
                 )
                 if duplicate:
                     result, created = by_id[duplicate["emoji"]], False
                 else:
-                    if self._closing or (automatic and not await self._enabled(guild)):
+                    if sum(item.animated == emoji.animated for item in emojis) >= guild.emoji_limit:
+                        raise commands.BadArgument(
+                            "This server has no free slots for this emoji type. Remove an emoji first."
+                        )
+                    if (
+                        self._closing
+                        or await self.bot.cog_disabled_in_guild(self, guild)
+                        or (
+                            automatic
+                            and not await self._automatic_allowed(
+                                guild, channel_id, reaction=reaction
+                            )
+                        )
+                    ):
                         raise commands.CheckFailure("Emoji capture stopped before uploading.")
+                    if not guild.me.guild_permissions.create_expressions:
+                        raise commands.CheckFailure(
+                            "Create Expressions permission changed before upload."
+                        )
                     result = await asyncio.wait_for(
                         guild.create_custom_emoji(
                             name=emoji_name(emoji.name, emoji.id, {item.name for item in emojis}),
@@ -253,7 +286,7 @@ class EmojiStealerPlus(commands.Cog):
             return
         channel = guild.get_channel_or_thread(payload.channel_id)
         if channel:
-            await self._queue_emoji(guild, channel, payload.emoji)
+            await self._queue_emoji(guild, channel, payload.emoji, reaction=True)
 
     @commands.hybrid_group(name="emoji", invoke_without_command=True, fallback="status")
     @commands.guild_only()

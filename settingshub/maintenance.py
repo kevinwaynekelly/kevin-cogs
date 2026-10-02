@@ -194,6 +194,7 @@ class MaintenanceCommands:
             try:
                 await self._snapshot_tick()
                 await self._audit_tick()
+                self._prune_support()
             except Exception:
                 self._maintenance_log.exception("Settings snapshot maintenance failed")
             await asyncio.sleep(60)
@@ -418,7 +419,10 @@ class MaintenanceCommands:
                 **await asyncio.to_thread(source_identity, cog),
             }
             if name == "AudioPlus":
-                entry["native_player"] = await cog.diagnostic_report(ctx.guild.id)
+                try:
+                    entry["native_player"] = await cog.diagnostic_report(ctx.guild.id)
+                except Exception as error:
+                    entry["diagnostic_error"] = type(error).__name__
             if name == "LogPlus":
                 entry["delivery"] = dict(cog._delivery_status[ctx.guild.id])
             report["cogs"][name] = entry

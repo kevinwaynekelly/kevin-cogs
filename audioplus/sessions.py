@@ -1,5 +1,6 @@
 """Opt-in, bounded music session summaries and checked personal playlist saving."""
 
+import asyncio
 import io
 import json
 import logging
@@ -89,6 +90,18 @@ class SessionView(discord.ui.View):
 
 
 class MusicSessions:
+    def _clear_music_session(self, guild_id):
+        self._sessions.pop(guild_id, None)
+        self._last_sessions.pop(guild_id, None)
+        for view in tuple(self._views):
+            if isinstance(view, SessionView) and view.guild_id == guild_id:
+                view.record["tracks"].clear()
+                view.stop()
+                self._views.discard(view)
+        player = self._players.get(guild_id)
+        if player:
+            player._session_entry = None
+
     def _prune_sessions(self):
         for gid, record in tuple(self._last_sessions.items()):
             if time.time() - record["ended"] > SESSION_TTL:
@@ -156,6 +169,17 @@ class MusicSessions:
             entry["played_ms"] += played_ms
 
     async def _finish_music_session(self, player):
+        try:
+            await asyncio.wait_for(self._post_music_session(player), 10)
+        except Exception as error:
+            # A supplementary summary must never prevent disconnect/player cleanup.
+            log.warning(
+                "Could not finish music summary in guild %s (%s)",
+                player.guild.id,
+                type(error).__name__,
+            )
+
+    async def _post_music_session(self, player):
         record = self._sessions.pop(player.guild.id, None)
         if (
             not record
@@ -198,9 +222,9 @@ class MusicSessions:
                 channel, "\n\n".join(lines), title="Music session summary", view=view
             )
             self._views.add(view)
-        except (discord.HTTPException, commands.CommandError):
+        except BaseException:
             view.stop()
-            log.warning("Could not post music session summary in guild %s", player.guild.id)
+            raise
 
     async def _save_session_playlist(self, ctx, name, record):
         await check_command(ctx, self.playlist_save)
@@ -234,7 +258,7 @@ class MusicSessions:
         for record in records:
             rows = [row for row in record["tracks"] if row["requester"] == user_id]
             if rows:
-                personal[record["id"]] = rows
+                personal[record["id"]] = {"guild": record["guild"], "tracks": rows}
             if delete:
                 record["tracks"] = [row for row in record["tracks"] if row["requester"] != user_id]
         if delete:

@@ -94,3 +94,4 @@ EVENT_COLOR = {
 }
 
 __red_end_user_data_statement__ += " Stores bounded poll/event records, titles/options, creator and announcement IDs, times, member votes/RSVPs, private reminder opt-ins, and sent markers. User-data hooks export/delete personal choices and creator attribution; already delivered Discord messages remain."
+__red_end_user_data_statement__ += " Optional native Discord event mirrors retain event/server/channel IDs, start/end times, safe sync error types and up to five older occurrence IDs within those bounded event records. Interested-user lists are not collected. Native events remain on Discord after unloading."

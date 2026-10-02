@@ -5,11 +5,13 @@ import uuid
 from collections import Counter
 from contextlib import suppress
 from datetime import datetime
+from typing import Optional
 
 import discord
 from redbot.core import commands
 
 from .interactive import component_context, component_error
+from .native_events import native_policy
 from .presentation import clip
 
 SOCIAL_DEFAULTS = {"polls": {}, "events": {}}
@@ -101,6 +103,21 @@ def social_embed(cog, kind, key, record):
             name="Schedule",
             value=f"Every {record['repeat_days']} days · Capacity {record.get('capacity') or 'unlimited'}",
             inline=False,
+        )
+    if kind == "events" and (native := record.get("native")):
+        lines = []
+        if native.get("id"):
+            lines.append(
+                f"[Open in Discord](https://discord.com/events/{native['guild_id']}/{native['id']})"
+            )
+        if native.get("error"):
+            lines.append(
+                f"Sync needs attention: `{native['error']}`. Check Create Events and the event channel."
+            )
+        if not native["enabled"]:
+            lines.append("Automatic syncing is off.")
+        embed.add_field(
+            name="Discord event", value="\n".join(lines) or "Sync pending.", inline=False
         )
     return embed
 
@@ -245,6 +262,7 @@ class CommunitySocial:
             view.stop()
         else:
             self._social_views[(ctx.guild.id, kind, key)] = view
+        return key
 
     async def _social_choice(self, ctx, kind, key, value):
         if self._closing or await self.bot.cog_disabled_in_guild(self, ctx.guild):
@@ -270,10 +288,15 @@ class CommunitySocial:
 
     async def _social_close(self, ctx, kind, key):
         await self._social_record(ctx.guild, kind, key)
-        async with self.config.guild(ctx.guild).social() as data:
-            if key not in data[kind]:
-                raise commands.BadArgument("This entry no longer exists.")
-            data[kind][key]["closed"] = True
+        async with self._social_locks[(ctx.guild.id, kind, key)]:
+            async with self.config.guild(ctx.guild).social() as data:
+                if key not in data[kind]:
+                    raise commands.BadArgument("This entry no longer exists.")
+                data[kind][key]["closed"] = True
+                if kind == "events":
+                    data[kind][key]["cancelled"] = True
+        if kind == "events":
+            await self._native_sync(ctx.guild, key)
         await self._social_refresh(ctx.guild, kind, key)
         await self._presentation.confirm(ctx)
 
@@ -356,7 +379,7 @@ class CommunitySocial:
                 "Use a title up to 200 characters and a reminder from 1 to 1,440 minutes before the start."
             )
         at = event_time(when, self._now_ts())
-        await self._social_create(
+        key = await self._social_create(
             ctx,
             "events",
             {
@@ -369,6 +392,92 @@ class CommunitySocial:
                 "announced": False,
             },
         )
+        policy = (await self.config.guild(ctx.guild).community_tools())["native_events"]
+        if policy["enabled"]:
+            await self._native_link(ctx.guild, key, policy)
+
+    @event.command(name="native")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def event_native(
+        self, ctx, event_id: str, channel: Optional[discord.VoiceChannel] = None, minutes: int = 60
+    ):
+        """Link an event to Discord's Events tab, optionally in a voice channel."""
+        policy = native_policy(channel, minutes)
+        self._native_permissions(ctx.guild, policy["channel"])
+        await self._native_link(ctx.guild, event_id, policy)
+        await self._social_list(ctx, "events", event_id)
+
+    @event.command(name="nativeoff")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def event_nativeoff(self, ctx, event_id: str):
+        """Cancel an owned Discord mirror while keeping the local event and RSVPs."""
+        async with self._social_locks[(ctx.guild.id, "events", event_id)]:
+            async with self.config.guild(ctx.guild).social() as data:
+                record = data["events"].get(event_id)
+                if not record or not record.get("native"):
+                    raise commands.BadArgument("Choose an event with a native Discord mirror.")
+                record["native"].update(enabled=False, finished=False)
+        await self._native_sync(ctx.guild, event_id)
+        await self._social_refresh(ctx.guild, "events", event_id)
+        await self._social_list(ctx, "events", event_id)
+
+    @event.command(name="nativeset")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def event_nativeset(
+        self, ctx, enabled: bool, channel: Optional[discord.VoiceChannel] = None, minutes: int = 60
+    ):
+        """Automatically mirror newly created events; existing links keep their policy."""
+        policy = native_policy(channel, minutes)
+        if enabled:
+            self._native_permissions(ctx.guild, policy["channel"])
+        policy["enabled"] = enabled
+        await self._tools_settings(ctx.guild, "native_events", policy)
+        await self._reply(
+            ctx,
+            "Native events enabled for new events."
+            if enabled
+            else "Native events disabled for new events. Existing links continue until cancelled.",
+        )
+
+    @event.command(name="edit")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def event_edit(
+        self,
+        ctx,
+        event_id: str,
+        title: Optional[str] = None,
+        when: Optional[str] = None,
+        reminder_minutes: Optional[int] = None,
+    ):
+        """Update a future event's title, start time or private reminder schedule."""
+        if title is None and when is None and reminder_minutes is None:
+            raise commands.BadArgument("Provide a title, time or reminder interval to change.")
+        if title is not None and (not title.strip() or len(title) > 200):
+            raise commands.BadArgument("Use a title from 1 to 200 characters.")
+        if reminder_minutes is not None and not 1 <= reminder_minutes <= 1440:
+            raise commands.BadArgument(
+                "Choose a reminder from 1 to 1,440 minutes before the start."
+            )
+        at = event_time(when, self._now_ts()) if when is not None else None
+        async with self._social_locks[(ctx.guild.id, "events", event_id)]:
+            async with self.config.guild(ctx.guild).social() as data:
+                record = data["events"].get(event_id)
+                if not record or record["closed"] or record["at"] <= self._now_ts():
+                    raise commands.BadArgument("Choose an open future event.")
+                delay = (
+                    reminder_minutes * 60
+                    if reminder_minutes is not None
+                    else record["at"] - record["reminder_at"]
+                )
+                if title is not None:
+                    record["title"] = title.strip()
+                if at is not None:
+                    record["at"] = at
+                if at is not None or reminder_minutes is not None:
+                    record.update(reminder_at=record["at"] - delay, notified=[], announced=False)
+        await self._native_sync(ctx.guild, event_id)
+        await self._social_refresh(ctx.guild, "events", event_id)
+        await self._social_list(ctx, "events", event_id)
 
     @event.command(name="policy")
     @commands.admin_or_permissions(manage_guild=True)
@@ -451,24 +560,31 @@ class CommunitySocial:
                     self._social_locks.pop((guild.id, kind, key), None)
                     continue
                 if not record["closed"] and record["at"] <= self._now_ts():
-                    async with group() as data:
-                        current = data[kind].get(key)
-                        if current and not current["closed"] and current["at"] <= self._now_ts():
-                            step = current.get("repeat_days", 0) * 86400 if kind == "events" else 0
-                            if step:
-                                delay = current["at"] - current["reminder_at"]
-                                current["at"] += step * (
-                                    (self._now_ts() - current["at"]) // step + 1
+                    async with self._social_locks[(guild.id, kind, key)]:
+                        async with group() as data:
+                            current = data[kind].get(key)
+                            if (
+                                current
+                                and not current["closed"]
+                                and current["at"] <= self._now_ts()
+                            ):
+                                step = (
+                                    current.get("repeat_days", 0) * 86400 if kind == "events" else 0
                                 )
-                                current.update(
-                                    rsvps={},
-                                    remind={},
-                                    notified=[],
-                                    announced=False,
-                                    reminder_at=current["at"] - delay,
-                                )
-                            else:
-                                current["closed"] = True
+                                if step:
+                                    delay = current["at"] - current["reminder_at"]
+                                    current["at"] += step * (
+                                        (self._now_ts() - current["at"]) // step + 1
+                                    )
+                                    current.update(
+                                        rsvps={},
+                                        remind={},
+                                        notified=[],
+                                        announced=False,
+                                        reminder_at=current["at"] - delay,
+                                    )
+                                else:
+                                    current["closed"] = True
                     await self._social_refresh(guild, kind, key)
                 elif (
                     kind == "events"
@@ -476,6 +592,7 @@ class CommunitySocial:
                     and record["reminder_at"] <= self._now_ts()
                 ):
                     await self._event_reminders(guild, key)
+        await self._native_tick(guild)
 
     async def _event_reminders(self, guild, key):
         group = self.config.guild(guild).social

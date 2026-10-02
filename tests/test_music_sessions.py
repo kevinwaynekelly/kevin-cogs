@@ -89,6 +89,26 @@ async def test_disabled_default_and_privacy_cleanup(audio_runtime):
     assert "music-sessions.json" not in await cog.red_get_data_for_user(user_id=ctx.author.id)
 
 
+async def test_failed_summary_delivery_cannot_block_idle_disconnect_cleanup(
+    audio_runtime, monkeypatch
+):
+    cog, player, ctx = audio_runtime
+    ctx.channel.id = 457
+    ctx.channel.send.side_effect = OSError("Discord transport unavailable")
+    monkeypatch.setattr("audioplus.player.IDLE_DISCONNECT_SECONDS", 0.02)
+    await cog.config.guild(ctx.guild).music.session_summary.set(True)
+    player.on_start, player.on_finish = cog._track_started, cog._session_segment
+    # Isolate summary delivery: normal now-playing/panel transport is covered elsewhere.
+    cog._send_now_playing = AsyncMock()
+    cog._update_panel = AsyncMock()
+    await player.enqueue([Track("https://example.invalid/song", "Song", "Artist", 1000)], ctx)
+    await eventually(lambda: player.playing and ctx.guild.id in cog._sessions)
+    player.voice.finish()
+    await eventually(lambda: ctx.guild.id not in cog._players)
+    assert not player.voice.connected and not cog._views
+    assert ctx.guild.id in cog._last_sessions
+
+
 async def test_session_expiry_prunes_records_and_controls(red_command_runtime):
     bot, cog, member, invoke = red_command_runtime
     row = record(member.guild, member)

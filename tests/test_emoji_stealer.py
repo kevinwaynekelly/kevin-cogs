@@ -64,6 +64,35 @@ async def test_deleted_copy_can_be_recreated(emoji_cog, guild):
     assert guild.create_custom_emoji.await_count == 2
 
 
+async def test_identical_image_alias_can_reuse_a_copy_when_slots_are_full(emoji_cog, guild):
+    guild.emoji_limit = 1
+    original, _ = await emoji_cog._copy(guild, SOURCE)
+    alias = discord.PartialEmoji(name="sameimage", id=333333333333333333)
+    result, created = await emoji_cog._copy(guild, alias)
+    assert not created and result.id == original.id
+    assert guild.create_custom_emoji.await_count == 1
+
+
+async def test_queued_capture_rechecks_scope_and_reaction_switch_before_upload(emoji_cog, guild):
+    channel = make_channel(guild)
+    for key, value, reaction in (("channel", 1234, False), ("reactions", False, True)):
+        await emoji_cog._set_capture(guild, key, value)
+        with pytest.raises(commands.CheckFailure):
+            await emoji_cog._copy(
+                guild, SOURCE, automatic=True, channel_id=channel.id, reaction=reaction
+            )
+        await emoji_cog._set_capture(guild, key, None if key == "channel" else True)
+
+    async def revoke_after_download(emoji):
+        guild.me.guild_permissions.create_expressions = False
+        return PNG
+
+    emoji_cog._download.side_effect = revoke_after_download
+    with pytest.raises(commands.CheckFailure):
+        await emoji_cog._copy(guild, SOURCE, automatic=True, channel_id=channel.id)
+    guild.create_custom_emoji.assert_not_awaited()
+
+
 async def test_animated_slots_and_name_collisions(emoji_cog, guild):
     guild.emoji_limit = 1
     guild.emojis = [SimpleNamespace(id=777, name="dance", animated=False)]

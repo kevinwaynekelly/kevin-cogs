@@ -1,4 +1,4 @@
-"""One optional dashboard for the five independently installed cogs."""
+"""One optional dashboard for the six independently installed feature cogs."""
 
 import asyncio
 import io
@@ -33,6 +33,7 @@ from .schema import (
     select_fields,
     validate_fields,
 )
+from .support import SupportBundles
 
 log = logging.getLogger(__name__)
 
@@ -148,7 +149,9 @@ class RestoreView(DashboardView):
         self.add_item(cancel)
 
 
-class SettingsHub(ReadinessCommands, AuditCommands, MaintenanceCommands, commands.Cog):
+class SettingsHub(
+    SupportBundles, ReadinessCommands, AuditCommands, MaintenanceCommands, commands.Cog
+):
     """Shared setup, health, and server settings backup."""
 
     def __init__(self, bot):
@@ -161,6 +164,7 @@ class SettingsHub(ReadinessCommands, AuditCommands, MaintenanceCommands, command
         self._maintenance_task = None
         self._maintenance_log = log
         self._init_audit()
+        self._init_support()
 
     async def _reply(self, ctx, content=None, **kwargs):
         return await self._presentation.send(ctx, content, **kwargs)
@@ -192,6 +196,7 @@ class SettingsHub(ReadinessCommands, AuditCommands, MaintenanceCommands, command
     async def cog_unload(self):
         self._closing = True
         self._close_audit()
+        self._support_errors.clear()
         if self._maintenance_task:
             self._maintenance_task.cancel()
             await asyncio.gather(self._maintenance_task, return_exceptions=True)
@@ -316,9 +321,11 @@ class SettingsHub(ReadinessCommands, AuditCommands, MaintenanceCommands, command
                     await cog._reset_solo(ctx.guild)
                     await cog._refresh_role_menus(ctx.guild)
                 elif name == "AudioPlus":
+                    music = await cog.config.guild(ctx.guild).music()
+                    if not music["session_summary"]:
+                        cog._clear_music_session(ctx.guild.id)
                     player = cog._get_player(ctx.guild)
                     if player:
-                        music = await cog.config.guild(ctx.guild).music()
                         continuity = await cog.config.guild(ctx.guild).continuity()
                         async with player.lock:
                             player.fair_queue, player.autoplay = (
@@ -463,6 +470,12 @@ class SettingsHub(ReadinessCommands, AuditCommands, MaintenanceCommands, command
     async def diagnostic_export(self, ctx):
         """Download dependency, permission, cog and failure diagnostics."""
         await self._download_diagnostics(ctx)
+
+    @settings.command(name="support")
+    @commands.bot_has_permissions(attach_files=True)
+    async def support_export(self, ctx):
+        """Download a support ZIP with safe diagnostics, readiness and error types."""
+        await self._download_support(ctx)
 
     @settings.command(name="backup")
     @commands.bot_has_permissions(attach_files=True)

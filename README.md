@@ -2,7 +2,7 @@
 
 Six feature cogs and an optional shared settings hub for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
 
-Music, community tools, leveling, event logging, and message transformations. Each cog can be installed separately.
+Music, community tools, leveling, event logging, message transformations and automatic emoji capture. Each cog can be installed separately.
 
 ## Cogs
 
@@ -28,13 +28,14 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | CommunityPlus | `[p]community setup` or `/community setup` | `[p]roles`, polls, event RSVPs/reminders, and posted safe self-service role pickers. Voice reports and weekly summaries retain administrator checks. |
 | LevelPlus | `[p]level setup` or `/level setup` | Rank/lifetime boards, `[p]periodboard`, season history, `[p]achievements`, `[p]challenges`, and `[p]rankcard`. Administrators configure rewards, boosts, and farming controls. |
 | LogPlus | `[p]log setup` or `/log setup` | Administrator routing, permission diffs, delivery recovery, and opt-in retained history with timeline/search/export. |
+| EmojiStealerPlus | `[p]emoji` or `/emoji status` | Automatic external emoji capture and checked manual `[p]yoink` controls. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The original five feature cogs expose 306 slash actions; EmojiStealerPlus adds six and optional SettingsHub adds 22. The seven cogs together register 81 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
+The original five feature cogs expose 310 slash actions; EmojiStealerPlus adds six and optional SettingsHub adds 23, for 339 total actions. The seven cogs together register 81 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
-Install optional [SettingsHub](settingshub/README.md) for `[p]settings` or `/settings panel`, a single picker for the five loaded cogs' setup panels. `/settings health` inspects cog status and local prerequisites. `/settings backup` exports selected server configuration; `/settings restore` validates an attached same-server backup and previews changes before applying them. Member records, credentials, active events, histories, and runtime cursors are excluded and preserved. All controls retain current administrator, command, and cog checks.
+Install optional [SettingsHub](settingshub/README.md) for `[p]settings` or `/settings panel`, a single picker for the six loaded feature cogs' configuration panels. `/settings health` inspects cog status and local prerequisites. `/settings backup` exports selected server configuration; `/settings restore` validates an attached same-server backup and previews changes before applying them. Member records, credentials, active events, histories, and runtime cursors are excluded and preserved. All controls retain current administrator, command, and cog checks.
 
 ```text
 [p]cog install kevin-cogs settingshub
@@ -79,7 +80,7 @@ The owner can enable [daily YouTube playback checks](audioplus/README.md#daily-y
 
 Daily failure alerts identify the stage and safe error details. `[p]audiostatus` retains the latest check result in the monitored server after the probe disconnects, so an unexpected failure can be investigated without losing its context.
 
-CommunityPlus, LevelPlus, LogPlus, and OwoPlus declare Red **3.5.0 or newer**. SettingsHub requires **3.5.24 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**. Downloader installs yt-dlp and its matching EJS package. Install **PyNaCl>=1.5.0,<1.6** and **davey>=0.1.6** once in Red's Python environment; working voice libraries previously installed by Downloader remain supported and are kept during cog updates. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. Restart Red when changing voice libraries. Its guide includes voice-library and Deno installation commands and an optional persistent container image recipe. LevelPlus installs Pillow for PNG rank cards. CommunityPlus and LogPlus have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
+CommunityPlus, LevelPlus, LogPlus, OwoPlus and EmojiStealerPlus declare Red **3.5.0 or newer**. SettingsHub requires **3.5.24 or newer**. AudioPlus requires **Red 3.5.24 or newer**, native Discord voice, **yt-dlp**, **PyNaCl**, and **davey**. Downloader installs yt-dlp and its matching EJS package. Install **PyNaCl>=1.5.0,<1.6** and **davey>=0.1.6** once in Red's Python environment; working voice libraries previously installed by Downloader remain supported and are kept during cog updates. Install **FFmpeg**, **libopus**, and **Deno 2.3+ or Node.js 22+** inside the Red container. AudioPlus no longer needs Lavalink, Wavelink, or Java. Restart Red when changing voice libraries. Its guide includes voice-library and Deno installation commands and an optional persistent container image recipe. LevelPlus installs Pillow for PNG rank cards. CommunityPlus, LogPlus and EmojiStealerPlus have no additional required Python packages. OwoPlus can use optional syllable-counting packages, described in its guide.
 
 These guides describe the current source. Compatibility metadata is not a record of live testing on every Red, Discord, or media-provider version.
 
@@ -96,6 +97,7 @@ Read the cog's guide before loading it on an existing server. Some features star
 | LevelPlus | Message, reaction, and voice XP are enabled, along with level-up announcements. |
 | LogPlus | Needs a destination channel or route before it can post logs. |
 | OwoPlus | Disabled until `[p]owo enable`. Haiku formatting is enabled within the cog's settings. |
+| EmojiStealerPlus | Automatically captures external custom emoji in member messages, edits and reactions. Needs Create Expressions and message/reaction intents. Notices default off; pause with `[p]emoji enabled false`. |
 
 Common starting points:
 
@@ -125,7 +127,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. These four cogs offer 246 slash actions; their guides list the deeper or ID-based paths that remain text-only.
+Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. These four cogs offer 250 slash actions; their guides list the deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 
@@ -159,6 +161,14 @@ The command rename intentionally replaces `com` with `community`, `logplus` with
 
 AudioPlus now has automatic player panels with checked buttons, `seek`, queue `remove`/`move`, private saved `playlist`/`favorite` collections, and `audioset` DJ/vote policies. Use `[p]audioset setup` for its guided settings panel. See the [new controls](audioplus/README.md#player-panels-queue-tools-and-saved-music) and run `slash sync` after reloading to upload their slash counterparts.
 
+## Emoji, rewards, sessions, events and support
+
+Install the new cog with `[p]cog install kevin-cogs emojistealerplus`, then `[p]load emojistealerplus`. Automatic external emoji capture begins immediately when permissions allow; `[p]emoji` shows its controls and `[p]yoink <custom emoji>` copies one manually. See the [emoji guide](emojistealerplus/README.md).
+
+Use `[p]level rewards preview` or `/level rewards preview` for a read-only formula/reward scenario. Enable music summaries with `[p]audioset summary true [#channel]`; after disconnect, save the latest session with its playlist button or `[p]playlist session <name>` within three minutes. Summaries start disabled and retain bounded transient public metadata, requester IDs and decoded playback time; no audio is saved.
+
+`[p]event native <id> [voice_channel] [minutes]` links a local event to Discord's Events tab; `[p]event nativeset true` enables mirrors for new events. Native events start disabled and need Create Events, plus ordinary voice access when selected. Interested subscriptions remain separate from local RSVPs. `[p]settings support` produces a bounded ZIP of whitelisted dependency/source/permission information, readiness flags and recent error types. All these controls have slash counterparts and preserve current permission checks.
+
 ## New server features
 
 | Cog | Added features | Starting commands |
@@ -180,7 +190,7 @@ Settings and persistent records use Red's Config system. CommunityPlus records a
 
 AudioPlus preserves legacy Lavalink connection settings, including the old node password, for rollback. Native playback ignores them. The optional daily monitor stores recipient/test/schedule/result records. Personal/shared playlists retain public metadata and proposer/requester attribution. Listening history starts enabled and retains 100 public playback starts for 30 days, capped at 512 KiB, with requester export/deletion. Opt-in queue recovery retains up to 100 public records and playback state for seven days; ordinary queues remain transient when recovery is off. Extracted stream URLs, downloaded audio and yt-dlp disk caches are not persisted.
 
-LogPlus posts edited/deleted text to configured Discord channels. Opt-in history retains bounded event details for 1 to 90 days; staff incident cases retain selected log excerpts/notes and attribution for up to 90 days. Daily digests store aggregate counts, and owner error policies store the configuring recipient. OwoPlus reposts transformed messages through webhooks and attempts to delete originals. Each guide and `info.json` describes its records and limits. All six cogs implement Red's user-data hooks. Deletion removes or anonymizes associated records; messages already posted to Discord remain managed there.
+LogPlus posts edited/deleted text to configured Discord channels. Opt-in history retains bounded event details for 1 to 90 days; staff incident cases retain selected log excerpts/notes and attribution for up to 90 days. Daily digests store aggregate counts, and owner error policies store the configuring recipient. OwoPlus reposts transformed messages through webhooks and attempts to delete originals. Each guide and `info.json` describes its records and limits. All seven cogs implement Red's user-data hooks. Deletion removes or anonymizes associated records; messages already posted to Discord remain managed there.
 
 ## Development and support
 

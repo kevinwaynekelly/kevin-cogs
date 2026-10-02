@@ -12,9 +12,11 @@ import discord
 from redbot.core import commands
 
 from .features import safe_role, validate_zone
+from .native_events import NATIVE_DEFAULTS
 
 log = logging.getLogger(__name__)
 TOOLS_DEFAULTS = {
+    "native_events": NATIVE_DEFAULTS,
     "voice_hub": None,
     "voice_category": None,
     "onboarding": {"enabled": False, "role": None, "rules": ""},

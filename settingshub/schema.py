@@ -16,6 +16,7 @@ TARGETS = {
     "LevelPlus": ("level", "level setup"),
     "LogPlus": ("log", "log setup"),
     "OwoPlus": ("owo", "owo setup"),
+    "EmojiStealerPlus": ("emoji", "emoji"),
 }
 FIELDS = {
     "AudioPlus": ("music", "continuity"),
@@ -64,6 +65,7 @@ FIELDS = {
         "alert_settings",
     ),
     "OwoPlus": ("enabled", "one_in", "owner_bypass", "haiku_enabled", "features", "fun_settings"),
+    "EmojiStealerPlus": ("capture",),
 }
 EXCLUDED = {
     "CommunityPlus": ("features.role_menus", "features.summary.last_week"),
@@ -104,6 +106,7 @@ RANGES = {
     "music.per_member": (0, 100),
     "continuity.empty_grace": (10, 3600),
     "community_tools.birthdays.hour": (0, 23),
+    "community_tools.native_events.minutes": (1, 1440),
     "progress_settings.daily_bonus": (0, 100),
     "progress_settings.max_bonus": (0, 1000),
     "alert_settings.digest.hour": (0, 23),
@@ -385,6 +388,7 @@ def validate_fields(guild, expected, incoming, path=""):
             channel_types = {
                 "community_tools.voice_hub": discord.VoiceChannel,
                 "community_tools.voice_category": discord.CategoryChannel,
+                "community_tools.native_events.channel": discord.VoiceChannel,
             }
             if path in channel_types and not isinstance(
                 guild.get_channel(incoming), channel_types[path]
@@ -405,6 +409,7 @@ def validate_fields(guild, expected, incoming, path=""):
                 in {
                     "log_channel",
                     "music.summary_channel",
+                    "capture.channel",
                     "welcome.channel_id",
                     "cya.channel_id",
                     "levelup.channel_id",

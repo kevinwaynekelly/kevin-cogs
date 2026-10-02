@@ -50,7 +50,7 @@ Managed/integration roles and `@everyone` are excluded from sticky restoration. 
 
 These shortcuts retain the permissions and disabled state of their grouped versions. The renamed root is `community`; the old `com` name is removed. Installation and reload still use `communityplus`.
 
-Enable the 76 slash actions once as the bot owner:
+Enable the 80 slash actions once as the bot owner:
 
 ```text
 [p]slash enablecog communityplus
@@ -144,7 +144,7 @@ Red Config stores server settings and IDs for channels/roles, message templates,
 
 `[p]poll create "Which game?" "Minecraft|Stardew Valley|Other" 24` posts a poll closing after 24 hours. Administrators create/close polls; members use the persistent selector or `[p]poll vote <ID> <option number>`. A member has one vote and can change it before closing. `[p]poll [ID]` shows saved entries/results. Questions allow 300 characters, options 2 to 10 unique choices of up to 80 characters, durations 1 to 168 hours, and each poll up to 1,000 voters.
 
-`[p]event create "Game night" "2026-10-03T19:00-05:00" 15` posts a bot-managed event, with a reminder 15 minutes before the start. Use an ISO date with an explicit UTC offset or a Unix timestamp, from 1 minute to 180 days ahead. Members use the persistent attendance selector or `[p]event rsvp <ID> yes|maybe|no`. `[p]event remind <ID> true|false` independently opts into/out of a private reminder. Administrators use `[p]event cancel <ID>` to stop it. These are cog announcements, not native Discord scheduled events. All commands also have slash equivalents.
+`[p]event create "Game night" "2026-10-03T19:00-05:00" 15` posts a bot-managed event, with a reminder 15 minutes before the start. Use an ISO date with an explicit UTC offset or a Unix timestamp, from 1 minute to 180 days ahead. Members use the persistent attendance selector or `[p]event rsvp <ID> yes|maybe|no`. `[p]event remind <ID> true|false` independently opts into/out of a private reminder. Administrators use `[p]event cancel <ID>` to stop it. Native Discord mirrors are optional, as described below. All commands also have slash equivalents.
 
 Up to ten polls and ten events can be open per server. Each kind retains at most twenty records and expires records 30 days after their closing/start time. Events allow 1,000 RSVPs and 100 opted-in private reminders. Selectors recover after reload and repeat current member command checks. The owned minute maintenance loop closes due polls/events, posts one pre-event channel reminder, and sends only opted-in private reminders while the event is still in the future. Successful DMs have saved delivery markers; failures retry on the next maintenance cycle. Delivery uses at most five concurrent requests with three-second DM timeouts. Cancel, cog disable, unload, and opt-out stop pending deliveries. Closed or missed events do not replay reminders after downtime.
 
@@ -158,3 +158,20 @@ The additive `social` Config section stores titles/options, creator IDs, times, 
 - `[p]event policy <id> <capacity> <repeat_days>` adds a waitlist and recurrence to an existing future event. Capacity 0 is unlimited; repeat days 0 makes it one-off. Limits are 1000 attendees and 365 days between occurrences. Confirmed attendees are retained when capacity changes; cancellations promote the earliest waiter. Each occurrence resets attendance and private reminder opt-ins; missed occurrences advance to the next future time. Intervals use elapsed 24-hour days and can shift local wall time across daylight saving changes. Closing an event ends recurrence.
 
 Member-facing room, onboarding, birthday and attendance commands have slash equivalents. Administrative configuration keeps Manage Server checks. These additive sections preserve the original saved settings and data hooks. Room ownership and member consent records persist until room cleanup, opt-out or a Red user-data deletion request; Discord channel/role/message artifacts remain managed by Discord.
+
+## Native Discord events
+
+| Text command | Slash command | Behavior |
+| --- | --- | --- |
+| `[p]event native <id> [voice_channel] [minutes]` | `/event native` | Create or update an owned mirror in Discord's Events tab. Duration defaults to 60 minutes, from 1 to 1,440. Omit the channel for an external event linking to the announcement channel. |
+| `[p]event nativeoff <id>` | `/event nativeoff` | Cancel/complete the owned mirror while preserving the local event, RSVPs and reminder opt-ins. |
+| `[p]event nativeset true [voice_channel] [minutes]` | `/event nativeset` | Automatically mirror newly created events. Default off. `false` stops new automatic links; existing links keep their policy. |
+| `[p]event edit <id> [title] [when] [reminder_minutes]` | `/event edit` | Change an open future event and update its announcement/mirror. Slash fields allow changing only the desired values. Existing RSVPs and private reminder opt-ins remain. |
+
+All four commands retain administrator/Manage Server checks. The bot needs **Create Events** and, for ordinary voice destinations, **View Channel** and **Connect** there. Editing the bot's own mirrors accepts Create Events or Manage Events. Stage destinations are not supported. Enable the **Guild Scheduled Events** intent for changes made in Discord to update the local event. Optional SettingsHub provides `settings ready nativeevents`.
+
+The owned minute task starts linked occurrences and completes them after their configured duration. Discord may also change event status automatically. Repeating events get a fresh future mirror while the current occurrence remains active until its end; missed occurrences are skipped. Creates that reached Discord before a timeout are reused on retry/reload. Only matching bot-created mirrors are edited. Manual deletion disables that link without recreating it; the local RSVP announcement stays available. Discord-side title/time changes update the local card, and an early completion or cancellation closes the local event and stops recurrence. Native titles are limited to 100 characters while local titles allow 200; the bot's own update echoes do not truncate the local title.
+
+Discord's **Interested** subscriptions are separate from the cog's RSVPs, waitlist and opted-in private reminders. The bot never subscribes members on their behalf or collects the Interested list. Local attendance closes at the start. Changing the time/reminder interval resets delivery markers so the new schedule can be announced; disabling/cancelling still stops pending delivery. Sync failures retain a safe error type in the event card and retry while the link needs maintenance.
+
+The additive `community_tools.native_events` defaults preserve existing events and settings. Each native mapping lives within the existing bounded `social.events` record, with Discord/server/channel IDs, times, sync signature/error type and up to five older occurrence IDs. These operational mappings are excluded from configuration backups; the default automatic-link policy is included. Existing event retention and creator/participant data hooks apply. Unloading stops maintenance and leaves Discord events in place for reload or manual management.

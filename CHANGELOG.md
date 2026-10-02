@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-02: Native Discord events and support bundles
+
+- Add opt-in owned Discord Events-tab mirrors, voice/external destinations, editable titles/times, automatic linking for new events, cancellation controls and gateway updates. Reconcile reloads/timeouts without duplicate creates, retain ongoing recurring occurrences until their end, and preserve separate local RSVPs/reminder consent.
+- Add bounded support ZIP archives with whitelisted package/source/permission diagnostics, sixteen local readiness reports and transient same-server unexpected error types. Exclude member records, arguments, raw errors, paths, URLs, settings and log contents; keep failed audio diagnostics from blocking the report.
+- Include EmojiStealerPlus capture policy in shared setup, backups, history and readiness while preserving copied emoji mappings. Keep all seven independently installable cogs within Discord's slash limits.
+- Keep failed/timed-out music summaries from blocking voice cleanup and clear session controls when summary policy is restored off. Recheck queued emoji scope/reaction/permission changes and reuse known image aliases when emoji slots are full.
+- Pass 681 regressions on Python 3.10 and 3.11, plus lint, formatting, syntax, metadata and whitespace checks. Validate 339 slash actions across 81 roots. Discord, CDN and media-provider boundaries are mocked; live Scarlet deployment remains unverified.
+
 ## 2026-10-02: Reward previews and music session summaries
 
 - Add a read-only level/reward scenario command with optional formula, cap, milestone and stacking candidates, cached-member totals, bounded details and permission/hierarchy warnings. Share the exact reconciliation role plan and preserve custom earned rewards and removed-definition assignments.

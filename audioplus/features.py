@@ -630,13 +630,7 @@ class AudioCommands:
             state.update(session_summary=enabled, summary_channel=channel.id if channel else None)
             await section.set(state)
         if not enabled:
-            self._sessions.pop(ctx.guild.id, None)
-            self._last_sessions.pop(ctx.guild.id, None)
-            for view in tuple(self._views):
-                if getattr(view, "guild_id", None) == ctx.guild.id and hasattr(view, "record"):
-                    view.record["tracks"].clear()
-                    view.stop()
-                    self._views.discard(view)
+            self._clear_music_session(ctx.guild.id)
         await self._reply(
             ctx,
             f"Music session summaries {'enabled' if enabled else 'disabled and cleared'}. Use playlist session <name> within three minutes after a summary.",
