@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import discord
 
 from .constants import API_TIMEOUT, MAX_CHANNELS, MAX_ROLES
+from .permissions import RawPermissionOverwrite
 from .snapshot import ROLE_FIELDS, emoji_record
 
 
@@ -321,7 +322,7 @@ def channel_kwargs(row, mappings, roles, channels, *, current=None):
         else:
             # Type-aware public Objects preserve uncached member overwrites exactly.
             target = discord.Object(id=int(item["id"]), type=discord.User)
-        overwrites[target] = discord.PermissionOverwrite.from_pair(
+        overwrites[target] = RawPermissionOverwrite.from_pair(
             discord.Permissions(item["allow"]), discord.Permissions(item["deny"])
         )
     values["overwrites"] = overwrites

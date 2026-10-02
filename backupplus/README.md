@@ -60,6 +60,8 @@ Names use 1–32 lowercase letters, numbers, underscores or hyphens. `auto-` and
 - Voice/Stage: bitrate, user limit, region and video quality mode.
 - Forums: tags, default reaction, sort order, layout and required-tag setting. Existing tag IDs are reused where possible.
 
+Permission masks are retained exactly as nonnegative 64-bit integers, including reserved or newer bits that the installed Discord.py does not name. Capture uses the SDK's raw channel overwrite records because its public overwrite conversion drops unrecognized bits. If those raw records are unavailable, capture fails instead of saving incomplete permissions. Restore preserves these bits in role and channel API requests while retaining its administrator, bot-permission and hierarchy checks.
+
 Managed roles, the bot's highest role and roles above it are protected and left unchanged; differences are shown as warnings. Editable backed-up roles retain their relative order within the available current role slots below the bot. Absolute positions around unrelated or managed roles can differ. Announcement/forum restoration requires Discord Community and voice bitrates must fit the server's current boost limit.
 
 Snapshots exclude chat messages/history, thread/post contents, member role assignments, role icons, emoji/sticker/soundboard images, webhooks/tokens, bans, integrations, bot credentials, cog settings and server-wide settings. Unsupported channel types are explicitly listed as omissions. Use **ExportPlus** for chats and **SettingsHub** for selected cog policy backups. A recreated role receives a new ID and has no members until assigned separately; other cogs' saved role/channel references are not rewritten.

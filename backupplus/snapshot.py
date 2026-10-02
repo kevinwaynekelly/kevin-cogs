@@ -1,4 +1,4 @@
-"""Strict, same-server structural snapshots using public Discord.py objects."""
+"""Strict, same-server structural snapshots preserving raw Discord permission masks."""
 
 import hashlib
 import json
@@ -7,7 +7,6 @@ import re
 import time
 from copy import deepcopy
 
-import discord
 from redbot.core import commands
 
 from .constants import MAX_CHANNELS, MAX_FILE, MAX_OVERWRITES, MAX_ROLES
@@ -157,18 +156,23 @@ def channel_record(channel):
     kind = KINDS.get(channel.type.value)
     if kind is None:
         return None
+    # The public overwrites property converts through PermissionOverwrite.from_pair,
+    # which discards bits the installed SDK does not recognize. Read the SDK's raw
+    # API records instead, and fail rather than silently capture a lossy backup.
+    raw_overwrites = getattr(channel, "_overwrites", None)
+    if not isinstance(raw_overwrites, list):
+        invalid("raw channel permission masks are unavailable in this Discord.py version")
     overwrites = []
-    for target, overwrite in channel.overwrites.items():
-        allow, deny = overwrite.pair()
-        is_role = isinstance(target, discord.Role) or (
-            isinstance(target, discord.Object) and target.type is discord.Role
-        )
+    for overwrite in raw_overwrites:
+        target_type = getattr(overwrite, "type", None)
+        if type(target_type) is not int or target_type not in {0, 1}:
+            invalid("unsupported channel permission target type")
         overwrites.append(
             {
-                "id": str(target.id),
-                "kind": "role" if is_role else "member",
-                "allow": allow.value,
-                "deny": deny.value,
+                "id": str(getattr(overwrite, "id", None)),
+                "kind": "role" if target_type == 0 else "member",
+                "allow": getattr(overwrite, "allow", None),
+                "deny": getattr(overwrite, "deny", None),
             }
         )
     row = {
@@ -275,8 +279,6 @@ def validate(data, guild_id):
         text(row["name"], 100, empty=False)
         integer(row["position"], 0, 1000)
         integer(row["permissions"], 0, 2**64 - 1)
-        if row["permissions"] & ~discord.Permissions.all().value:
-            invalid("unsupported role permission bits")
         for field in ("colour", "secondary_colour", "tertiary_colour"):
             if row[field] is not None:
                 integer(row[field], 0, 0xFFFFFF)
@@ -318,8 +320,6 @@ def validate(data, guild_id):
                 invalid("overwrite references a missing role")
             for field in ("allow", "deny"):
                 integer(overwrite[field], 0, 2**64 - 1)
-                if overwrite[field] & ~discord.Permissions.all().value:
-                    invalid("unsupported overwrite permission bits")
             if overwrite["allow"] & overwrite["deny"]:
                 invalid("overwrite allows and denies the same permission")
             targets += 1

@@ -5,7 +5,7 @@ import json
 import time
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import discord
@@ -138,6 +138,38 @@ def structure(guild):
 
 def snapshot(guild):
     return capture(guild, guild.roles, guild.channels)
+
+
+def structure_with_unknown_permissions(guild):
+    structure(guild)
+    unknown_allow, unknown_deny = 1 << 47, 1 << 63
+    assert not (unknown_allow | unknown_deny) & discord.Permissions.all().value
+    guild.roles[1]._permissions |= unknown_allow | unknown_deny
+    guild.channels[1]._fill_overwrites(
+        {
+            "permission_overwrites": [
+                {
+                    "id": str(guild.id),
+                    "type": 0,
+                    "allow": "0",
+                    "deny": str(discord.Permissions(view_channel=True).value),
+                },
+                {
+                    "id": "201",
+                    "type": 0,
+                    "allow": str(unknown_allow | discord.Permissions(send_messages=True).value),
+                    "deny": str(unknown_deny),
+                },
+                {
+                    "id": "777777777777777777",
+                    "type": 1,
+                    "allow": str(unknown_deny | discord.Permissions(view_channel=True).value),
+                    "deny": str(unknown_allow),
+                },
+            ]
+        }
+    )
+    return snapshot(guild)
 
 
 def fake_mutations(guild, monkeypatch):
@@ -300,7 +332,12 @@ def test_capture_sdk_objects_preserves_uncached_overwrites_and_all_supported_kin
         lambda data: data["roles"].append(data["roles"][0]),
         lambda data: data["channels"][1].update(category="9999"),
         lambda data: data["channels"][1]["overwrites"][0].update(allow=True),
-        lambda data: data["roles"][1].update(permissions=1 << 63),
+        lambda data: data["roles"][1].update(permissions=1 << 64),
+        lambda data: data["roles"][1].update(permissions=-1),
+        lambda data: data["roles"][1].update(permissions=True),
+        lambda data: data["channels"][1]["overwrites"][0].update(allow=-1),
+        lambda data: data["channels"][1]["overwrites"][0].update(deny=1 << 64),
+        lambda data: data["channels"][1]["overwrites"][0].update(allow=1 << 63, deny=1 << 63),
         lambda data: data["channels"][1].update(url="https://evil.invalid"),
         lambda data: data.update(created_at=float("nan")),
     ],
@@ -318,6 +355,105 @@ def test_import_rejects_duplicate_keys_malformed_and_large_files(guild):
     for raw in (b'{"schema":1,"schema":1}', b"\xff", b"{" * 2000, b" " * (MAX_FILE + 1)):
         with pytest.raises(commands.BadArgument):
             parse(raw, guild.id)
+
+
+def test_snapshot_preserves_raw_masks_and_unknown_targets_without_loss(guild):
+    data = structure_with_unknown_permissions(guild)
+    assert data["roles"][1]["permissions"] == guild.roles[1].permissions.value
+    assert data["roles"][1]["permissions"] & (1 << 63)
+    rows = {item["id"]: item for item in data["channels"][1]["overwrites"]}
+    assert rows["201"]["allow"] & (1 << 47) and rows["201"]["deny"] == 1 << 63
+    assert rows["777777777777777777"]["allow"] & (1 << 63)
+    assert rows["777777777777777777"]["deny"] == 1 << 47
+    assert parse(encode(data), guild.id) == data
+    mappings = {"roles": {}, "channels": {}}
+    assert portable(data, mappings) == data
+    plan = build_plan(guild, data, snapshot(guild), mappings)
+    assert not plan.actions and not plan.blockers
+
+
+@pytest.mark.parametrize("problem", ["missing_records", "unknown_target", "missing_mask"])
+def test_capture_refuses_unavailable_or_unrecognized_raw_overwrite_records(guild, problem):
+    structure(guild)
+    channel = guild.channels[1]
+    if problem == "missing_records":
+        del channel._overwrites
+    elif problem == "unknown_target":
+        channel._overwrites[0].type = 2
+    else:
+        del channel._overwrites[0].allow
+    with pytest.raises(commands.BadArgument):
+        snapshot(guild)
+
+
+@pytest.mark.parametrize("operation", ["create", "edit"])
+async def test_actual_sdk_restore_requests_preserve_unknown_masks(guild, operation):
+    data = structure_with_unknown_permissions(guild)
+    if operation == "create":
+        guild.roles.pop(1)
+        guild.channels.pop(1)
+    else:
+        guild.roles[1]._permissions = discord.Permissions(send_messages=True).value
+        guild.channels[1]._fill_overwrites({"permission_overwrites": []})
+    mappings = {"roles": {}, "channels": {}}
+    plan = build_plan(guild, data, snapshot(guild), mappings)
+    assert not plan.blockers
+    role_id, channel_id = (8001, 8002) if operation == "create" else (201, 5002)
+
+    def role_response(*args, **kwargs):
+        return {
+            "id": str(role_id),
+            "name": "Member",
+            "permissions": kwargs["permissions"],
+            "position": 1,
+            "colors": {"primary_color": 0x123456},
+            "hoist": False,
+            "mentionable": False,
+            "managed": False,
+        }
+
+    def channel_response(*args, **kwargs):
+        return {
+            "id": str(channel_id),
+            "type": 0,
+            "name": "channel-5002",
+            "position": 0,
+            "parent_id": "5001",
+            "permission_overwrites": kwargs["permission_overwrites"],
+        }
+
+    http = SimpleNamespace(
+        create_role=AsyncMock(side_effect=role_response),
+        edit_role=AsyncMock(side_effect=role_response),
+        create_channel=AsyncMock(side_effect=channel_response),
+        edit_channel=AsyncMock(side_effect=channel_response),
+    )
+    guild._state = SimpleNamespace(http=http)
+    guild._channels = {}
+    guild._create_channel = MethodType(discord.Guild._create_channel, guild)
+    guild.create_text_channel = MethodType(discord.Guild.create_text_channel, guild)
+    guild.create_role = MethodType(discord.Guild.create_role, guild)
+    guild.edit_role_positions = AsyncMock()
+    for item in [*guild.roles, *guild.channels]:
+        item._state = guild._state
+    roles = {str(item.id): item for item in guild.roles}
+    channels = {str(item.id): item for item in guild.channels}
+
+    async def remember(kind, source, target, **kwargs):
+        if target is not None:
+            mappings[kind + "s"][source] = target
+
+    await execute(guild, plan, roles, channels, AsyncMock(), remember, AsyncMock(), reason="test")
+    role_call = http.create_role if operation == "create" else http.edit_role
+    channel_call = http.create_channel if operation == "create" else http.edit_channel
+    assert int(role_call.await_args.kwargs["permissions"]) == data["roles"][1]["permissions"]
+    restored = capture(guild, list(roles.values()), list(channels.values()))
+    expected = portable(data, mappings)
+    restored_role = next(row for row in restored["roles"] if row["id"] == str(role_id))
+    assert restored_role["permissions"] == data["roles"][1]["permissions"]
+    restored_channel = next(row for row in restored["channels"] if row["id"] == str(channel_id))
+    assert restored_channel["overwrites"] == expected["channels"][1]["overwrites"]
+    assert len(channel_call.await_args.kwargs["permission_overwrites"]) == 3
 
 
 def test_plan_readonly_role_hierarchy_and_missing_managed_overwrites(guild):
@@ -404,6 +540,24 @@ async def test_real_prefix_and_slash_commands_save_privately_and_honor_parent_ch
     ctx = await invoke_slash(bot, invoke, monkeypatch, "backup create", name="disabled")
     assert ctx.command_failed
     assert "disabled" not in (await cog.config.guild(member.guild).state())["snapshots"]
+
+
+@pytest.mark.parametrize("slash", [False, True])
+async def test_create_and_download_unknown_permission_masks(backup_runtime, monkeypatch, slash):
+    bot, cog, member, invoke, received = backup_runtime
+    expected = structure_with_unknown_permissions(member.guild)
+    if slash:
+        ctx = await invoke_slash(bot, invoke, monkeypatch, "backup create", name="baseline")
+    else:
+        ctx = await invoke("!backup create baseline")
+    assert not ctx.command_failed
+    record = (await cog.config.guild(member.guild).state())["snapshots"]["baseline"]
+    assert record["data"]["roles"] == expected["roles"]
+    assert record["data"]["channels"] == expected["channels"]
+    ctx = await invoke("!backup download baseline")
+    assert not ctx.command_failed
+    exported = parse(received[-1][2], member.guild.id)
+    assert exported == record["data"]
 
 
 async def test_preview_is_private_readonly_and_restore_requires_same_requester_and_fresh_server(

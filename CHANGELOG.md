@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-02: BackupPlus permission mask compatibility
+
+- Fix backup creation rejecting server role permissions that contain reserved or newer bits absent from Discord.py's named flags. Keep bounded integer validation and existing restore authorization checks.
+- Preserve raw role and channel overwrite masks through capture, JSON import/export and SDK restore requests, including uncached targets. Fail capture if the SDK's raw overwrite records are unavailable instead of silently discarding permission bits.
+- Cover prefix/slash capture, JSON round trips and actual Discord.py create/edit serialization with mocked Discord networking.
+
 ## 2026-10-02: BackupPlus cancellation and recovery hardening
 
 - Cancel restores during preparation as well as application, own private transfers by server, close their buffers on interruption, stop them on unload/server removal/user-data deletion, and cancel sibling discovery requests when an API fetch fails.
