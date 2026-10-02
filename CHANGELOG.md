@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-02: BackupPlus server structure snapshots
+
+- Add independently installable BackupPlus with 13 prefix/slash actions for bounded named server role/channel/permission snapshots, private JSON downloads/imports, exact restore previews and requester-bound confirmations.
+- Preserve uncached member overwrites, restore supported channel settings and forum tags, protect managed/high roles, check hierarchy/permission/capacity prerequisites, and handle category permission propagation explicitly.
+- Save a pre-restore snapshot, persist replacement IDs and uncertain create markers, stop on partial failures, and provide manual recovery bindings and cancellation. Keep automatic backups opt-in with bounded rotation and durable intervals.
+- Add data hooks, same-server file validation, owned task cleanup and nine-cog command-tree/helper checks. Networking is mocked in regression tests; live Scarlet deployment is unverified.
+
 ## 2026-10-02: ExportPlus delivery and transcript hardening
 
 - Put server/date/filter/completeness headers in every direct text file, redact unavailable channel/thread names, restrict local export directories, and prune expired exports when status is opened.

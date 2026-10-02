@@ -21,6 +21,7 @@ from test_cog_hybrid import invoke_slash
 from test_settingshub import command_runtime as command_fixture
 from test_settingshub import hub_runtime as hub_fixture
 
+from backupplus import BackupPlus
 from emojistealerplus import EmojiStealerPlus
 from exportplus import ExportPlus
 from exportplus.cog import ExportJob
@@ -608,7 +609,7 @@ async def test_thread_discovery_failures_and_channel_limit_are_reported(
     assert second.id != channel.id
 
 
-async def test_all_eight_cogs_register_valid_slash_payloads_and_identical_helpers(
+async def test_all_nine_cogs_register_valid_slash_payloads_and_identical_helpers(
     hub_runtime, tmp_path, monkeypatch
 ):
     from discord.app_commands.commands import validate_name
@@ -617,9 +618,10 @@ async def test_all_eight_cogs_register_valid_slash_payloads_and_identical_helper
     monkeypatch.setattr("exportplus.cog.cog_data_path", lambda cog: tmp_path / "ExportPlus")
     await bot.add_cog(EmojiStealerPlus(bot))
     await bot.add_cog(ExportPlus(bot))
+    await bot.add_cog(BackupPlus(bot))
     try:
         roots = {**bot.tree._global_commands, **bot.tree._disabled_global_commands}
-        assert len(roots) == 82
+        assert len(roots) == 83
         counts = {}
         for root in roots.values():
             leaves = (
@@ -629,7 +631,9 @@ async def test_all_eight_cogs_register_valid_slash_payloads_and_identical_helper
                 if isinstance(leaf, discord.app_commands.Command) and leaf.binding:
                     name = leaf.binding.qualified_name
                     counts[name] = counts.get(name, 0) + 1
-        assert sum(counts.values()) == 348 and counts["ExportPlus"] == 9
+        assert (
+            sum(counts.values()) == 361 and counts["ExportPlus"] == 9 and counts["BackupPlus"] == 13
+        )
 
         def check(payload, depth=0):
             validate_name(payload["name"])
@@ -648,6 +652,7 @@ async def test_all_eight_cogs_register_valid_slash_payloads_and_identical_helper
         for command in bot.get_cog("ExportPlus").walk_commands():
             assert "plus" not in command.name and command.help
     finally:
+        await bot.remove_cog("BackupPlus")
         await bot.remove_cog("ExportPlus")
         await bot.remove_cog("EmojiStealerPlus")
 
