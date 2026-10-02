@@ -1,0 +1,14 @@
+{
+  "author": ["Kevin Kelly"],
+  "short": "Automatically yoink external custom emojis into the current server.",
+  "description": "Capture external static and animated Discord emojis used in member messages, edits and reactions. Preserve animation, deduplicate original IDs and copied image fingerprints, respect separate server slot limits, and bound pending uploads. Add manual yoink, channel restrictions, optional themed notices, and prefix/slash administrator controls. Unicode and local server emojis are ignored; original messages are retained.",
+  "install_msg": "Load with [p]load emojistealerplus. Automatic message and reaction capture starts enabled; give the bot Create Expressions and enable Message Content to inspect messages. Use [p]emoji for status, [p]emoji enabled false to pause, or [p]yoink <custom emoji>. As the bot owner run [p]slash enablecog emojistealerplus and [p]slash sync for slash controls. See the cog README for slot and lifecycle limits.",
+  "requirements": [],
+  "tags": ["emoji", "utility", "automation"],
+  "min_bot_version": "3.5.0",
+  "min_python_version": [3, 10, 0],
+  "type": "COG",
+  "hidden": false,
+  "disabled": false,
+  "end_user_data_statement": "This cog stores server capture settings and up to 1000 mappings of external emoji IDs to server emoji IDs, names, animation flags and image fingerprints. It does not store member IDs, message text or image files. Pending emoji/channel IDs are held only in bounded memory until processed or unloaded. Copied images become ordinary Discord server emojis and remain until removed there. User-data hooks return no personal records."
+}

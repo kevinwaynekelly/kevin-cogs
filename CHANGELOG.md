@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-02: EmojiStealerPlus
+
+- Add an independently installable cog that automatically captures external static and animated custom emoji from member messages, edits and reactions, enabled by default.
+- Add checked prefix/slash capture controls, channel/thread scope, manual yoink and optional themed notices. Preserve messages and respect current Create Expressions permission and separate server emoji capacity.
+- Bound CDN downloads and upload deadlines, queue/deduplicate captures and image fingerprints, track and cancel the owned worker/session, and document nonpersonal mapping storage and Discord/provider test boundaries.
+
 ## 2026-10-01: Configuration history and feature readiness
 
 - Add selected server-settings change history with task-local caller attribution, real Config write/clear observation, before/after values, prefix/slash/component/restore coverage, and per-instance unload cleanup. Preserve successful settings writes if supplementary history fails.

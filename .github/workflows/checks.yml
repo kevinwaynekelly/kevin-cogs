@@ -37,6 +37,6 @@ jobs:
         run: python -m pytest -q
       - name: Syntax, metadata, and whitespace
         run: |
-          python -m compileall -q audioplus communityplus levelplus logplus owoplus settingshub
+          python -m compileall -q audioplus communityplus levelplus logplus owoplus settingshub emojistealerplus
           python -c "import json, pathlib; [json.loads(p.read_text()) for p in [pathlib.Path('info.json'), *pathlib.Path('.').glob('*/info.json')]]"
           git diff --check

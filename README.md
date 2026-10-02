@@ -1,6 +1,6 @@
 # Kevin Cogs
 
-Five feature cogs and an optional shared settings hub for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
+Six feature cogs and an optional shared settings hub for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
 
 Music, community tools, leveling, event logging, and message transformations. Each cog can be installed separately.
 
@@ -13,6 +13,7 @@ Music, community tools, leveling, event logging, and message transformations. Ea
 | LevelPlus | XP, custom achievements, streaks, monthly seasons, filtered boards and rank cards | `[p]level`, `[p]achievement`, `/streak` | [Setup and commands](levelplus/README.md) |
 | LogPlus | Event logs, retained history, burst alerts, daily digests and staff incidents | `[p]log`, `[p]logalerts`, `/incident list` | [Setup and commands](logplus/README.md) |
 | OwoPlus | Custom styles, author Undo, scoped transformations, approved haiku and contests | `[p]owo`, `[p]owoundo`, `/haikucontest list` | [Setup and commands](owoplus/README.md) |
+| EmojiStealerPlus | Automatically copy external static/animated emoji from messages and reactions | `[p]emoji`, `[p]yoink`, `/emoji status` | [Setup and commands](emojistealerplus/README.md) |
 | SettingsHub | Shared themes, command discovery, diagnostics, configuration history, readiness checks and snapshots | `[p]settings`, `/theme show`, `[p]snapshots` | [Setup and commands](settingshub/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
@@ -29,7 +30,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | LogPlus | `[p]log setup` or `/log setup` | Administrator routing, permission diffs, delivery recovery, and opt-in retained history with timeline/search/export. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The five feature cogs expose 303 slash actions; optional SettingsHub adds 22. The six cogs together register 79 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
+The original five feature cogs expose 303 slash actions; EmojiStealerPlus adds six and optional SettingsHub adds 22. The seven cogs together register 81 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
@@ -44,7 +45,7 @@ Install optional [SettingsHub](settingshub/README.md) for `[p]settings` or `/set
 
 ## Discord presentation
 
-All six cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
+All seven cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
 
 Red's native `[p]help` lists descriptions for every cog command. Use `[p]help community`, `[p]help level`, or `[p]help log` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
 
@@ -172,6 +173,8 @@ AudioPlus now has automatic player panels with checked buttons, `seek`, queue `r
 Use the prefix or matching slash action shown in each guide. Recovery needs an explicit `recoverqueue`; it does not automatically reconnect after restart. New automatic notices, birthday policies, streak bonuses, monthly seasons and snapshots require configuration. Owo Undo controls default on while automatic transformation itself remains disabled until enabled. Features have documented record/time limits and user-data hooks. Configuration snapshots cover selected source-cog settings; they preserve member and operational records rather than replacing them.
 
 ## Data
+
+EmojiStealerPlus stores bounded emoji source/destination mappings and image fingerprints, with no member IDs, chat text or saved image files. Copied emojis remain on Discord until removed there. Automatic capture starts enabled on loading the cog.
 
 Settings and persistent records use Red's Config system. CommunityPlus records activity, sticky roles, temporary-room ownership, opted-in birthday dates and rules acceptance. LevelPlus retains XP, display names, achievements/streaks and bounded season archives. OwoPlus stores personal preferences and explicitly submitted haiku/contest entries/votes for up to 90 days; author Undo text stays only in memory for two minutes. SettingsHub stores themes, up to ten selected configuration snapshots and bounded actor-attributed configuration changes, with identified-user export/deletion.
 
