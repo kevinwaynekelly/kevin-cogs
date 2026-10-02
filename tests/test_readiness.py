@@ -169,6 +169,8 @@ async def test_logging_checks_configured_route_destinations(hub_runtime):
     await log.config.guild(member.guild).features.routes.set({"voice": bad.id})
     report = await hub._feature_readiness(ctx, "logging")
     assert not report.ready and bad.mention in report.text()
+    report = await hub._feature_readiness(ctx, "logging", channel=good)
+    assert not report.ready and bad.mention in report.text()
 
 
 async def test_transformations_check_scope_and_webhook_permissions(hub_runtime):

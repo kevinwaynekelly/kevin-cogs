@@ -338,12 +338,11 @@ class ReadinessCommands:
                 target = (await group.alert_settings())["channel"]
                 check_text_channel(report, ctx.guild, channel or find(target))
             else:
-                destinations = [channel] if channel else [find(await group.log_channel())]
-                if channel is None:
-                    destinations.extend(find(cid) for cid in (await group.overrides()).values())
-                    destinations.extend(
-                        find(cid) for cid in (await group.features())["routes"].values()
-                    )
+                destinations = [channel or find(await group.log_channel())]
+                destinations.extend(find(cid) for cid in (await group.overrides()).values())
+                destinations.extend(
+                    find(cid) for cid in (await group.features())["routes"].values()
+                )
                 for destination in dict.fromkeys(destinations):
                     check_text_channel(report, ctx.guild, destination)
             report.add(
