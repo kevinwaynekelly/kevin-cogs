@@ -5,9 +5,11 @@ import time
 import zipfile
 from copy import copy
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import discord
+import pytest
 from conftest import make_channel
 from discord.app_commands.commands import validate_name
 from redbot.core import commands
@@ -250,3 +252,14 @@ def test_support_whitelist_never_serializes_raw_errors_paths_unknown_fields_or_u
     text = json.dumps(sanitized)
     assert "secret" not in text and "private" not in text and "token" not in text
     assert sanitized["cogs"]["AudioPlus"]["native_player"]["runtimes"] == ["Deno"]
+
+
+async def test_older_permission_objects_report_missing_create_events_without_crashing(hub_runtime):
+    bot, hub, member, invoke = hub_runtime
+    ctx = await invoke("!settings")
+    member.guild.me.guild_permissions = SimpleNamespace(manage_events=True)
+    report = await hub._feature_readiness(ctx, "nativeevents")
+    assert not report.ready and "Create Events" in report.text()
+    community = bot.get_cog("CommunityPlus")
+    with pytest.raises(commands.CheckFailure, match="Create Events"):
+        community._native_permissions(member.guild, None)

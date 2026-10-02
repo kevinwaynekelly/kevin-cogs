@@ -300,7 +300,7 @@ class ReadinessCommands:
             else:
                 report.add(
                     "Create Events",
-                    ctx.guild.me.guild_permissions.create_events,
+                    getattr(ctx.guild.me.guild_permissions, "create_events", False),
                     "Required for an external native Discord event.",
                 )
                 check_text_channel(report, ctx.guild, channel or ctx.channel)

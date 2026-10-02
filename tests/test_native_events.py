@@ -255,7 +255,7 @@ async def test_prefix_and_slash_native_commands_preserve_admin_checks(command_ru
     transport(member.guild, bot.user.id)
     community._reply = AsyncMock(return_value=SimpleNamespace(id=555, edit=AsyncMock()))
     bot.owner_ids.add(member.id)
-    ctx = await invoke("!event create Night 2026-12-01T18:00:00Z")
+    ctx = await invoke(f"!event create Night {community._now_ts() + 3600}")
     assert not ctx.command_failed
     key = next(iter(await community.config.guild(member.guild).social.events()))
     bot.owner_ids.discard(member.id)
@@ -267,3 +267,25 @@ async def test_prefix_and_slash_native_commands_preserve_admin_checks(command_ru
     bot.get_command("event native").disable_in(member.guild)
     ctx = await invoke_slash(bot, invoke, monkeypatch, "event native", event_id=key)
     assert ctx.command_failed and len(member.guild._remote) == 1
+
+
+async def test_ongoing_occurrence_limit_preserves_all_existing_owned_events(native):
+    cog, ctx = native
+    key = await local(cog, ctx)
+    await cog.event_native.callback(cog, ctx, key, minutes=60)
+    await cog.event_policy.callback(cog, ctx, key, 0, 1)
+    args = dict(ctx.guild.create_scheduled_event.call_args.kwargs)
+    args["description"] = marker(key, 1000)
+    args["end_time"] = datetime.fromtimestamp(999999, timezone.utc)
+    archives = []
+    for _ in range(5):
+        remote = await ctx.guild.create_scheduled_event(**args)
+        remote.status = discord.EventStatus.active
+        archives.append({"id": remote.id, "at": 1000, "end": 999999})
+    async with cog.config.guild(ctx.guild).social() as data:
+        data["events"][key]["native"]["archives"] = archives
+    cog._now_ts = lambda: 1600
+    await cog._social_tick(ctx.guild)
+    saved = (await cog._social_record(ctx.guild, "events", key))["native"]
+    assert saved["archives"] == archives and saved["id"] == 8000
+    assert saved["error"] == "CommandError" and len(ctx.guild._remote) == 6

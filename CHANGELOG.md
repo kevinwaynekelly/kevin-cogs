@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-02: Native event compatibility and occurrence bounds
+
+- Treat missing Create Events flags in older Discord permission objects as failed prerequisites instead of crashing native/readiness commands. Creation uses Discord.py 2.4+; other Community features retain their compatibility.
+- Refuse an additional active occurrence when five older mirrors remain unfinished, preserving all owned event IDs for later cleanup instead of exceeding or truncating the archive bound.
+- Pass 683 regressions on Python 3.10/3.11 with the documented mocked Discord/provider boundaries.
+
 ## 2026-10-02: Native Discord events and support bundles
 
 - Add opt-in owned Discord Events-tab mirrors, voice/external destinations, editable titles/times, automatic linking for new events, cancellation controls and gateway updates. Reconcile reloads/timeouts without duplicate creates, retain ongoing recurring occurrences until their end, and preserve separate local RSVPs/reminder consent.

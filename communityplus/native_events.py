@@ -33,7 +33,9 @@ class NativeEventBridge:
                 "The native event's ordinary voice channel no longer exists."
             )
         permissions = channel.permissions_for(guild.me) if channel else guild.me.guild_permissions
-        if not permissions.create_events and not (editing and permissions.manage_events):
+        if not getattr(permissions, "create_events", False) and not (
+            editing and permissions.manage_events
+        ):
             raise commands.CheckFailure("Give the bot Create Events for this event destination.")
         if channel and not (permissions.view_channel and permissions.connect):
             raise commands.CheckFailure(
@@ -120,6 +122,10 @@ class NativeEventBridge:
                     # A repeating local event has moved to its next occurrence.
                     await self._native_status(guild, key, native, remote)
                     if remote[current.id].status not in TERMINAL:
+                        if len(archives) >= 5:
+                            raise commands.CommandError(
+                                "Finish an older native occurrence before creating another mirror."
+                            )
                         archives.append({field: native[field] for field in ("id", "at", "end")})
                     native["id"] = None
                     current = None
