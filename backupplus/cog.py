@@ -9,6 +9,7 @@ import re
 import secrets
 import time
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from copy import copy, deepcopy
 from typing import Optional
 
@@ -28,7 +29,8 @@ from .constants import (
     RESTORE_TIMEOUT,
 )
 from .presentation import Presentation
-from .restore import build_plan, execute, target_id
+from .restore import build_plan, execute
+from .restore import target_id as mapped_id
 from .snapshot import capture, encode, fingerprint, name_key, parse, portable, validate
 
 log = logging.getLogger(__name__)
@@ -44,12 +46,18 @@ class BackupPlus(commands.Cog):
         self._presentation = Presentation("BackupPlus", "backup")
         self._locks = defaultdict(asyncio.Lock)
         self._previews = {}
-        self._tasks = set()
+        self._tasks = {}
         self._active = {}
         self._automatic = None
         self._closing = False
 
     async def cog_load(self):
+        for guild_id in await self.config.all_guilds():
+            async with self._locks[guild_id]:
+                state = await self.config.guild_from_id(guild_id).state()
+                if state["last_restore"].get("state") == "running":
+                    state["last_restore"].update(state="interrupted", error="ReloadInterrupted")
+                    await self._save(discord.Object(guild_id), state)
         self._automatic = asyncio.create_task(
             self._maintain(), name="BackupPlus automatic snapshots"
         )
@@ -59,7 +67,7 @@ class BackupPlus(commands.Cog):
         self._previews.clear()
         tasks = {
             task
-            for task in [self._automatic, *self._tasks]
+            for task in [self._automatic, *self._tasks, *self._active.values()]
             if task and task is not asyncio.current_task()
         }
         for task in tasks:
@@ -74,18 +82,23 @@ class BackupPlus(commands.Cog):
         if getattr(ctx, "interaction", None) is not None and not ctx.interaction.response.is_done():
             await ctx.defer(ephemeral=True)
         await self._authorize(ctx)
-        self._tasks.add(asyncio.current_task())
+        self._tasks[asyncio.current_task()] = ctx.guild.id
 
     async def cog_after_invoke(self, ctx):
-        self._tasks.discard(asyncio.current_task())
+        self._tasks.pop(asyncio.current_task(), None)
 
     async def cog_command_error(self, ctx, error):
-        self._tasks.discard(asyncio.current_task())
+        self._tasks.pop(asyncio.current_task(), None)
         await self._presentation.command_error(ctx, error)
 
     async def _authorize(self, ctx, *, bot_permissions=False):
         guild = ctx.guild
-        if self._closing or not guild or await self.bot.cog_disabled_in_guild(self, guild):
+        if (
+            self._closing
+            or not guild
+            or self.bot.get_guild(guild.id) is not guild
+            or await self.bot.cog_disabled_in_guild(self, guild)
+        ):
             raise commands.CheckFailure("BackupPlus is unavailable in this server.")
         member = guild.get_member(ctx.author.id)
         if member is None:
@@ -104,6 +117,16 @@ class BackupPlus(commands.Cog):
 
     async def _reply(self, ctx, content=None, **kwargs):
         return await self._presentation.send(ctx, content, **kwargs)
+
+    @asynccontextmanager
+    async def _restore_scope(self, guild_id):
+        task = asyncio.current_task()
+        self._active[guild_id] = task
+        try:
+            yield
+        finally:
+            if self._active.get(guild_id) is task:
+                self._active.pop(guild_id, None)
 
     async def _private(self, ctx, content, **kwargs):
         await self._authorize(ctx)
@@ -125,9 +148,21 @@ class BackupPlus(commands.Cog):
             ) from None
 
     async def _fetch(self, guild):
-        roles, channels = await asyncio.wait_for(
-            asyncio.gather(guild.fetch_roles(), guild.fetch_channels()), API_TIMEOUT
-        )
+        tasks = [
+            asyncio.create_task(guild.fetch_roles(), name=f"BackupPlus fetch roles {guild.id}"),
+            asyncio.create_task(
+                guild.fetch_channels(), name=f"BackupPlus fetch channels {guild.id}"
+            ),
+        ]
+        try:
+            roles, channels = await asyncio.wait_for(asyncio.gather(*tasks), API_TIMEOUT)
+        finally:
+            # gather propagates the first error without cancelling siblings.
+            # Finish cleanup before releasing the capture/restore's server lock.
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         return (
             capture(guild, roles, channels),
             {str(role.id): role for role in roles},
@@ -242,6 +277,11 @@ class BackupPlus(commands.Cog):
         """Show backup commands, limits and restore requirements."""
         await self._presentation.help(ctx)
 
+    @backup.command(name="progress", aliases=["status"], with_app_command=False)
+    async def backup_status(self, ctx):
+        """Show this server's backup counts, automatic policy and latest restore status."""
+        await self.backup.callback(self, ctx)
+
     @backup.command(name="create")
     async def backup_create(self, ctx, name: str):
         """Save a named snapshot of server roles, channels and permission overwrites."""
@@ -308,6 +348,7 @@ class BackupPlus(commands.Cog):
             )
         finally:
             upload.close()
+            upload.fp.close()
         await self._reply(ctx, "Snapshot sent to your DMs.", tone="success")
 
     @backup.command(name="import")
@@ -368,6 +409,7 @@ class BackupPlus(commands.Cog):
                 )
             finally:
                 upload.close()
+                upload.fp.close()
             if not plan.blockers:
                 self._previews[(ctx.guild.id, ctx.author.id)] = preview
         await self._reply(ctx, "Restore preview sent to your DMs.", tone="success")
@@ -387,7 +429,7 @@ class BackupPlus(commands.Cog):
             raise commands.CheckFailure(
                 "Use backup preview <name> first and supply its current confirmation code."
             )
-        async with self._locks[ctx.guild.id]:
+        async with self._locks[ctx.guild.id], self._restore_scope(ctx.guild.id):
             name, state, record, plan, roles, channels = await self._prepare(ctx, name)
             if (
                 self._previews.get(key) is not preview
@@ -426,7 +468,6 @@ class BackupPlus(commands.Cog):
             }
             state["last_restore"] = result
             await self._save(ctx.guild, state)
-            self._active[ctx.guild.id] = asyncio.current_task()
 
             async def before():
                 await self._authorize(ctx, bot_permissions=True)
@@ -475,7 +516,6 @@ class BackupPlus(commands.Cog):
                     type(error).__name__,
                 )
             finally:
-                self._active.pop(ctx.guild.id, None)
                 await self._save(ctx.guild, state)
             await self._reply(
                 ctx,
@@ -492,6 +532,7 @@ class BackupPlus(commands.Cog):
     async def backup_delete(self, ctx, name: str):
         """Delete one stored snapshot without deleting any Discord objects."""
         async with self._locks[ctx.guild.id]:
+            await self._authorize(ctx)
             name, state, _ = await self._get(ctx.guild, name)
             state["snapshots"].pop(name)
             await self._save(ctx.guild, state)
@@ -508,6 +549,7 @@ class BackupPlus(commands.Cog):
         if hours != 0 and not 6 <= hours <= 168:
             raise commands.BadArgument("Use 6–168 hours, or zero to disable automatic backups.")
         async with self._locks[ctx.guild.id]:
+            await self._authorize(ctx)
             state = await self.config.guild(ctx.guild).state()
             state.update(auto_hours=hours, last_attempt=time.time(), last_error="")
             await self._save(ctx.guild, state)
@@ -520,7 +562,7 @@ class BackupPlus(commands.Cog):
         )
 
     @backup.command(name="bind")
-    async def backup_bind(self, ctx, name: str, kind: str, source_id: str, target_id_value: str):
+    async def backup_bind(self, ctx, name: str, kind: str, source_id: str, target_id: str):
         """Bind a backed-up role/channel to an existing same-server object for recovery."""
         if kind not in {"role", "channel"}:
             raise commands.BadArgument("Choose role or channel.")
@@ -530,7 +572,7 @@ class BackupPlus(commands.Cog):
             live, _, _ = await self._fetch(ctx.guild)
             group = "roles" if kind == "role" else "channels"
             source = next((row for row in record["data"][group] if row["id"] == source_id), None)
-            target = next((row for row in live[group] if row["id"] == target_id_value), None)
+            target = next((row for row in live[group] if row["id"] == target_id), None)
             if (
                 source is None
                 or target is None
@@ -540,7 +582,7 @@ class BackupPlus(commands.Cog):
                         source["managed"]
                         or target["managed"]
                         or source_id == str(ctx.guild.id)
-                        or target_id_value == str(ctx.guild.id)
+                        or target_id == str(ctx.guild.id)
                     )
                 )
                 or (kind == "channel" and source["kind"] != target["kind"])
@@ -549,13 +591,13 @@ class BackupPlus(commands.Cog):
                     "Choose matching supported objects in this server; default/managed roles cannot be rebound."
                 )
             other_targets = {
-                target_id(record["mappings"], group, row["id"])
+                mapped_id(record["mappings"], group, row["id"])
                 for row in record["data"][group]
                 if row["id"] != source_id
             }
-            if target_id_value in other_targets:
+            if target_id in other_targets:
                 raise commands.BadArgument("Another backed-up object already uses that target.")
-            record["mappings"][group][source_id] = target_id_value
+            record["mappings"][group][source_id] = target_id
             record["pending"].pop(kind + ":" + source_id, None)
             await self._save(ctx.guild, state)
         await self._reply(
@@ -582,7 +624,10 @@ class BackupPlus(commands.Cog):
     async def _maintain(self):
         await self.bot.wait_until_red_ready()
         while not self._closing:
-            await self._automatic_once()
+            try:
+                await self._automatic_once()
+            except Exception as error:
+                log.warning("BackupPlus maintenance interrupted (%s)", type(error).__name__)
             self._prune_previews()
             await asyncio.sleep(60)
 
@@ -615,8 +660,18 @@ class BackupPlus(commands.Cog):
                     ):
                         raise commands.CheckFailure("Missing bot permissions")
                     data, _, _ = await self._fetch(guild)
-                    if self._closing or await self.bot.cog_disabled_in_guild(self, guild):
+                    if (
+                        self._closing
+                        or self.bot.get_guild(guild.id) is not guild
+                        or await self.bot.cog_disabled_in_guild(self, guild)
+                    ):
                         continue
+                    if (
+                        not guild.me
+                        or not guild.me.guild_permissions.manage_roles
+                        or not guild.me.guild_permissions.manage_channels
+                    ):
+                        raise commands.CheckFailure("Bot permissions changed")
                     state["last_error"] = ""
                     name = "auto-" + secrets.token_hex(6)
                     await self._store(guild, state, name, data, category="auto")
@@ -631,10 +686,16 @@ class BackupPlus(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
-        task = self._active.get(guild.id)
-        if task:
+        tasks = {
+            task
+            for task, guild_id in self._tasks.items()
+            if guild_id == guild.id and task is not asyncio.current_task()
+        }
+        if self._active.get(guild.id) and self._active[guild.id] is not asyncio.current_task():
+            tasks.add(self._active[guild.id])
+        for task in tasks:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         async with self._locks[guild.id]:
             await self.config.guild(guild).clear()
         self._previews = {key: value for key, value in self._previews.items() if key[0] != guild.id}
@@ -658,7 +719,11 @@ class BackupPlus(commands.Cog):
 
     async def red_delete_data_for_user(self, *, requester, user_id):
         self._previews.clear()
-        tasks = {task for task in self._active.values() if task is not asyncio.current_task()}
+        tasks = {
+            task
+            for task in [*self._tasks, *self._active.values()]
+            if task is not asyncio.current_task()
+        }
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

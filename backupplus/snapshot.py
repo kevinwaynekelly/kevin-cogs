@@ -335,7 +335,7 @@ def validate(data, guild_id):
                 invalid("invalid archive duration")
         if kind in {"voice", "stage"}:
             integer(row["bitrate"], 8000, 384000)
-            integer(row["user_limit"], 0, 10000)
+            integer(row["user_limit"], 0, 10000 if kind == "stage" else 99)
             text(row["rtc_region"], 100, optional=True)
             integer(row["video_quality_mode"], 1, 2)
         if kind in {"forum", "media"}:

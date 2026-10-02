@@ -30,6 +30,6 @@ __red_end_user_data_statement__ = (
     "default off. Snapshots remain until deleted, rotated or the server is removed. Restore "
     "previews contain a requester ID only in memory for ten minutes and are cleared on unload. "
     "User-data exports return only that user's permission overwrite records. User-data deletion "
-    "cancels restores and removes snapshots containing that user's overwrites. Files already "
+    "cancels pending backup work and removes snapshots containing that user's overwrites. Files already "
     "delivered by DM and restored Discord objects remain with their recipients or server."
 )

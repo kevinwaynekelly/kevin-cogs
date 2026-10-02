@@ -19,7 +19,7 @@ from test_cog_hybrid import invoke_slash
 
 from backupplus import BackupPlus
 from backupplus.constants import MAX_FILE, __red_end_user_data_statement__
-from backupplus.restore import build_plan, permissions_for
+from backupplus.restore import build_plan, channel_kwargs, execute, permissions_for
 from backupplus.snapshot import capture, encode, parse, portable
 
 red_command_runtime = runtime_fixture
@@ -569,3 +569,309 @@ async def test_user_data_hooks_are_scoped_and_remove_whole_affected_snapshots(ba
         json.loads(Path("backupplus/info.json").read_text())["end_user_data_statement"]
         == __red_end_user_data_statement__
     )
+
+
+async def test_actual_sdk_role_edit_clears_colours_with_supported_api_payload(guild):
+    structure(guild)
+    current = guild.roles[1]
+    saved = snapshot(guild)
+    current._secondary_colour = 0xABCDEF
+    current._tertiary_colour = 0xFEDCBA
+    response = {
+        "id": str(current.id),
+        "name": current.name,
+        "permissions": str(current.permissions.value),
+        "position": current.position,
+        "colors": {
+            "primary_color": current.colour.value,
+            "secondary_color": None,
+            "tertiary_color": None,
+        },
+    }
+    http = SimpleNamespace(edit_role=AsyncMock(return_value=response))
+    current._state = SimpleNamespace(http=http)
+    plan = build_plan(guild, saved, snapshot(guild), {"roles": {}, "channels": {}})
+    await execute(
+        guild,
+        plan,
+        {str(item.id): item for item in guild.roles},
+        {str(item.id): item for item in guild.channels},
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        reason="test",
+    )
+    assert http.edit_role.await_args.kwargs["colors"] == {
+        "secondary_color": None,
+        "tertiary_color": None,
+    }
+
+
+def test_forum_tag_recovery_uses_existing_ids_and_voice_limit_validation(guild):
+    structure(guild)
+    forum = sdk_channel(guild, 5015, kind=15, parent=5001)
+    guild.channels.append(forum)
+    data = snapshot(guild)
+    row = next(item for item in data["channels"] if item["id"] == "5015")
+    forum.available_tags[0].id = 7001
+    plan = build_plan(guild, data, snapshot(guild), {"roles": {}, "channels": {}})
+    assert not plan.actions
+    values = channel_kwargs(
+        row,
+        {"roles": {}, "channels": {}},
+        {str(item.id): item for item in guild.roles},
+        {str(item.id): item for item in guild.channels},
+        current=forum,
+    )
+    assert values["available_tags"][0].id == 7001
+    assert isinstance(values["default_layout"], discord.ForumLayoutType)
+    assert values["require_tag"]
+    guild.channels.append(sdk_channel(guild, 5016, kind=2))
+    data = snapshot(guild)
+    next(item for item in data["channels"] if item["id"] == "5016")["user_limit"] = 100
+    with pytest.raises(commands.BadArgument):
+        parse(encode(data), guild.id)
+
+
+async def test_definitive_create_rejection_removes_uncertainty_and_preserves_original(
+    backup_runtime, monkeypatch
+):
+    bot, cog, member, invoke, received = backup_runtime
+    fake_mutations(member.guild, monkeypatch)
+    await invoke("!backup create baseline")
+    member.guild.roles.pop(1)
+    member.guild.create_role.side_effect = forbidden()
+    await invoke("!backup preview baseline")
+    token = cog._previews[(member.guild.id, member.id)]["token"]
+    await invoke(f"!backup restore baseline {token}")
+    state = await cog.config.guild(member.guild).state()
+    assert not state["snapshots"]["baseline"]["pending"]
+    assert state["last_restore"]["state"] == "partial"
+    assert state["snapshots"]["baseline"]["data"]["roles"][1]["id"] == "201"
+    await invoke("!backup preview baseline")
+    assert cog._previews
+
+
+async def test_restore_rechecks_admin_between_mutations(backup_runtime, monkeypatch):
+    bot, cog, member, invoke, received = backup_runtime
+    calls = fake_mutations(member.guild, monkeypatch)
+    original_edit = discord.Role.edit
+
+    async def revoke(item, **kwargs):
+        result = await original_edit(item, **kwargs)
+        member.guild_permissions = discord.Permissions.none()
+        return result
+
+    monkeypatch.setattr(discord.Role, "edit", revoke)
+    await invoke("!backup create baseline")
+    member.guild.roles[1].name = "First changed"
+    member.guild.roles[2].name = "Second changed"
+    await invoke("!backup preview baseline")
+    token = cog._previews[(member.guild.id, member.id)]["token"]
+    await invoke(f"!backup restore baseline {token}")
+    state = await cog.config.guild(member.guild).state()
+    assert state["last_restore"]["state"] == "partial" and state["last_restore"]["completed"] == 1
+    assert len(calls) == 1 and member.guild.roles[2].name == "Second changed"
+
+
+async def test_cancel_and_reload_preserve_uncertain_creates_and_clear_owned_tasks(
+    backup_runtime, monkeypatch
+):
+    bot, cog, member, invoke, received = backup_runtime
+    fake_mutations(member.guild, monkeypatch)
+    await invoke("!backup create baseline")
+    member.guild.roles.pop(1)
+    entered = asyncio.Event()
+
+    async def pending(**kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    member.guild.create_role.side_effect = pending
+    await invoke("!backup preview baseline")
+    token = cog._previews[(member.guild.id, member.id)]["token"]
+    restore = asyncio.create_task(invoke(f"!backup restore baseline {token}"))
+    await asyncio.wait_for(entered.wait(), 1)
+    assert cog._active
+    assert not (await invoke("!backup cancel")).command_failed
+    await asyncio.gather(restore, return_exceptions=True)
+    state = await cog.config.guild(member.guild).state()
+    assert state["last_restore"]["state"] == "cancelled" and state["snapshots"]["baseline"][
+        "pending"
+    ] == {"role:201": True}
+    assert not cog._active and not cog._tasks
+    state["last_restore"]["state"] = "running"
+    await cog._save(member.guild, state)
+    await bot.remove_cog("BackupPlus")
+    assert cog._automatic.done()
+    replacement = BackupPlus(bot)
+    await bot.add_cog(replacement)
+    state = await replacement.config.guild(member.guild).state()
+    assert state["last_restore"]["state"] == "interrupted"
+    assert state["snapshots"]["baseline"]["pending"] == {"role:201": True}
+    assert not (await invoke("!backup status")).command_failed
+
+
+async def test_cancel_staging_before_safety_capture_does_not_start_mutations(
+    backup_runtime, monkeypatch
+):
+    bot, cog, member, invoke, received = backup_runtime
+    calls = fake_mutations(member.guild, monkeypatch)
+    await invoke("!backup create baseline")
+    member.guild.roles[1].name = "Changed"
+    await invoke("!backup preview baseline")
+    token = cog._previews[(member.guild.id, member.id)]["token"]
+    entered = asyncio.Event()
+    original_store = cog._store
+
+    async def staging(*args, **kwargs):
+        if kwargs.get("category") == "safety":
+            entered.set()
+            await asyncio.Event().wait()
+        return await original_store(*args, **kwargs)
+
+    monkeypatch.setattr(cog, "_store", staging)
+    restore = asyncio.create_task(invoke(f"!backup restore baseline {token}"))
+    await asyncio.wait_for(entered.wait(), 1)
+    await invoke("!backup cancel")
+    await asyncio.gather(restore, return_exceptions=True)
+    assert not calls and not cog._active and not cog._tasks
+    assert not (await cog.config.guild(member.guild).state())["last_restore"]
+
+
+@pytest.mark.parametrize("cleanup", ["unload", "user", "guild"])
+async def test_cleanup_cancels_pending_private_transfers(backup_runtime, cleanup):
+    bot, cog, member, invoke, received = backup_runtime
+    await invoke("!backup create baseline")
+    entered = asyncio.Event()
+    uploads = []
+
+    async def pending(*args, **kwargs):
+        uploads.append(kwargs["file"])
+        entered.set()
+        await asyncio.Event().wait()
+
+    member.send.side_effect = pending
+    download = asyncio.create_task(invoke("!backup download baseline"))
+    await asyncio.wait_for(entered.wait(), 1)
+    if cleanup == "unload":
+        await bot.remove_cog("BackupPlus")
+    elif cleanup == "user":
+        await cog.red_delete_data_for_user(requester="user", user_id=777777777777777777)
+    else:
+        await cog.on_guild_remove(member.guild)
+    await asyncio.gather(download, return_exceptions=True)
+    assert download.done() and uploads[0].fp.closed and not cog._tasks
+    if cleanup != "unload":
+        assert not (await cog.config.guild(member.guild).state())["snapshots"]
+
+
+async def test_auto_failure_cursor_and_byte_budget_do_not_overwrite_saved_records(
+    backup_runtime, monkeypatch
+):
+    bot, cog, member, invoke, received = backup_runtime
+    await invoke("!backup create baseline")
+    before = await cog.config.guild(member.guild).state()
+    monkeypatch.setattr("backupplus.cog.MAX_STATE", 1)
+    ctx = await invoke("!backup create overflow")
+    assert ctx.command_failed and await cog.config.guild(member.guild).state() == before
+    monkeypatch.setattr("backupplus.cog.MAX_STATE", 21 * 1024 * 1024)
+    await invoke("!backup auto 24")
+    state = await cog.config.guild(member.guild).state()
+    state["last_attempt"] = 0
+    await cog._save(member.guild, state)
+    member.guild.fetch_channels.side_effect = RuntimeError("secret error payload")
+    await cog._automatic_once()
+    state = await cog.config.guild(member.guild).state()
+    assert state["last_error"] == "RuntimeError" and state["last_attempt"] > 0
+    assert set(state["snapshots"]) == {"baseline"}
+    attempts = member.guild.fetch_channels.await_count
+    await cog._automatic_once()
+    assert member.guild.fetch_channels.await_count == attempts
+
+
+async def test_slash_import_attachment_validation_and_current_server_scope(
+    backup_runtime, monkeypatch
+):
+    bot, cog, member, invoke, received = backup_runtime
+    raw = encode(snapshot(member.guild))
+    attachment = discord.Attachment(
+        data={
+            "id": "777777777777777778",
+            "size": len(raw),
+            "filename": "backup.json",
+            "url": "https://cdn.discordapp.com/mock",
+            "proxy_url": "https://media.discordapp.net/mock",
+        },
+        state=bot._connection,
+    )
+    monkeypatch.setattr(discord.Attachment, "read", AsyncMock(return_value=raw))
+    ctx = await invoke_slash(
+        bot, invoke, monkeypatch, "backup import", name="imported", attachment=attachment
+    )
+    assert not ctx.command_failed
+    before = await cog.config.guild(member.guild).state()
+    data = snapshot(member.guild)
+    data["guild_id"] = "456"
+    monkeypatch.setattr(discord.Attachment, "read", AsyncMock(return_value=encode(data)))
+    ctx = await invoke_slash(
+        bot, invoke, monkeypatch, "backup import", name="wrongserver", attachment=attachment
+    )
+    assert ctx.command_failed and await cog.config.guild(member.guild).state() == before
+
+
+@pytest.mark.parametrize("method", ["auto", "delete"])
+async def test_settings_writes_recheck_admin_after_waiting_for_server_lock(backup_runtime, method):
+    bot, cog, member, invoke, received = backup_runtime
+    await invoke("!backup create baseline")
+    before = await cog.config.guild(member.guild).state()
+    ctx = await invoke("!help")
+    lock = cog._locks[member.guild.id]
+    await lock.acquire()
+    if method == "auto":
+        task = asyncio.create_task(cog.backup_auto.callback(cog, ctx, 24))
+    else:
+        task = asyncio.create_task(cog.backup_delete.callback(cog, ctx, "baseline"))
+    await asyncio.sleep(0)
+    member.guild_permissions = discord.Permissions.none()
+    lock.release()
+    with pytest.raises(commands.CheckFailure):
+        await task
+    assert await cog.config.guild(member.guild).state() == before
+
+
+async def test_confirmation_cannot_be_reused_by_another_administrator(backup_runtime):
+    bot, cog, member, invoke, received = backup_runtime
+    await invoke("!backup create baseline")
+    member.guild.roles[1].name = "Changed"
+    await invoke("!backup preview baseline")
+    token = cog._previews[(member.guild.id, member.id)]["token"]
+    ctx = await invoke("!help")
+    ctx.author = SimpleNamespace(id=987654321012345678, guild_permissions=discord.Permissions.all())
+    with pytest.raises(commands.CheckFailure):
+        await cog.backup_restore.callback(cog, ctx, "baseline", token)
+    assert member.guild.roles[1].name == "Changed"
+
+
+async def test_capture_failure_cancels_and_awaits_sibling_discovery_request(bot, guild):
+    structure(guild)
+    entered, finished = asyncio.Event(), asyncio.Event()
+
+    async def channels():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            finished.set()
+
+    async def roles():
+        await entered.wait()
+        raise RuntimeError("transport failed")
+
+    guild.fetch_roles.side_effect = roles
+    guild.fetch_channels.side_effect = channels
+    cog = BackupPlus(bot)
+    with pytest.raises(RuntimeError):
+        await asyncio.wait_for(cog._fetch(guild), 1)
+    assert finished.is_set()
+    assert not any(task.get_name().startswith("BackupPlus fetch") for task in asyncio.all_tasks())

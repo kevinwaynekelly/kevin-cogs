@@ -36,7 +36,7 @@ The code belongs to the requesting administrator and server and expires after te
 
 | Prefix command | Slash command | Purpose |
 | --- | --- | --- |
-| `[p]backup` | `/backup status` | Snapshot count, automatic interval and latest restore/error status. |
+| `[p]backup` or `[p]backup status` | `/backup status` | Snapshot count, automatic interval and latest restore/error status. Text alias: `backup progress`. |
 | `[p]backup help` | `/backup help` | Command help. |
 | `[p]backup create <name>` | `/backup create` | Capture a manual snapshot. |
 | `[p]backup list` | `/backup list` | List names, times, types and object counts. |
@@ -47,7 +47,7 @@ The code belongs to the requesting administrator and server and expires after te
 | `[p]backup restore <name> <token>` | `/backup restore` | Apply a fresh, reviewed plan. |
 | `[p]backup delete <name>` | `/backup delete` | Remove one stored snapshot. |
 | `[p]backup auto [hours=0]` | `/backup auto` | Set a 6–168 hour interval; zero disables. |
-| `[p]backup bind <name> <role-or-channel> <source_id> <target_id_value>` | `/backup bind` | Manually associate a snapshot object with a matching existing server object after an uncertain create. |
+| `[p]backup bind <name> <role-or-channel> <source_id> <target_id>` | `/backup bind` | Manually associate a snapshot object with a matching existing server object after an uncertain create. |
 | `[p]backup cancel` | `/backup cancel` | Stop a running restore; completed changes remain. |
 
 Names use 1–32 lowercase letters, numbers, underscores or hyphens. `auto-` and `before-` names are reserved. An existing manual name is never overwritten; delete it explicitly or choose a new one.
@@ -70,7 +70,9 @@ Restoration uses original IDs and saved replacement mappings, never name matchin
 
 Discord changes happen sequentially and cannot form a single transaction. The first failed operation stops the restore and records a partial result. Successfully created IDs are saved immediately. A timeout, cancellation or server error during creation leaves an uncertain marker instead of automatically creating another object on retry. Inspect Discord, then use `backup bind` to point that source ID to the existing object and generate a new preview. If the request definitively failed with a Discord client error, its uncertainty marker is cleared. Automatic snapshots do not attempt restores.
 
-Each API operation has a 20-second deadline and a restore has a 30-minute deadline. Current administrator, Red command/parent/cog checks and bot permissions are repeated during restore. Cancel/unload stops owned work and preserves completed changes and recovery state. There is no automatic restore after restart.
+If an uncertain request created no object, inspect Discord first, then download that snapshot and import it under a new name to explicitly reset uncertainty. Downloads substitute all confirmed replacement IDs so re-importing preserves successful recovery work.
+
+Each API operation has a 20-second deadline and a restore has a 30-minute deadline. Current administrator, Red command/parent/cog checks and bot permissions are repeated during restore. Cancel covers preparation and application; unload, server removal and user-data deletion also stop owned private transfers and close file buffers. Completed changes and recovery state remain after cancellation/unload. A restore still marked running after a restart is reported as interrupted; it never resumes automatically.
 
 ## Automatic backups and retention
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-02: BackupPlus cancellation and recovery hardening
+
+- Cancel restores during preparation as well as application, own private transfers by server, close their buffers on interruption, stop them on unload/server removal/user-data deletion, and cancel sibling discovery requests when an API fetch fails.
+- Recheck administrator access after waiting for policy/deletion locks, report interrupted restores across reloads, preserve pending create markers, and keep the automatic scheduler alive after a transient storage failure.
+- Verify Discord.py role color clearing payloads, recovered forum tag IDs, voice limits, same-server slash file imports and requester-bound confirmations using actual SDK/Red objects with mocked networking.
+
 ## 2026-10-02: BackupPlus server structure snapshots
 
 - Add independently installable BackupPlus with 13 prefix/slash actions for bounded named server role/channel/permission snapshots, private JSON downloads/imports, exact restore previews and requester-bound confirmations.
