@@ -8,9 +8,11 @@ from redbot.core import commands
 from .command_support import configuration_action
 
 
-async def component_context(cog, interaction, path, *, owner_id=None):
+async def component_context(
+    cog, interaction, path, *, owner_id=None, defer=True, source_message=None
+):
     """Apply current Red checks to the clicking member, never the message author."""
-    if not interaction.response.is_done():
+    if defer and not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True)
     if owner_id is not None and interaction.user.id != owner_id:
         raise commands.CheckFailure("This setup panel belongs to another member.")
@@ -19,7 +21,10 @@ async def component_context(cog, interaction, path, *, owner_id=None):
     command = cog.bot.get_command(path)
     if command is None or command.cog is not cog:
         raise commands.CheckFailure("This control expired. Run the command again.")
-    message = copy(interaction.message)
+    origin = interaction.message or source_message
+    if origin is None:
+        raise commands.CheckFailure("This control's message is unavailable. Run the command again.")
+    message = copy(origin)
     message.author = interaction.user
     message.content = ""
     ctx = await cog.bot.get_context(message)

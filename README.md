@@ -30,7 +30,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | LogPlus | `[p]log setup` or `/log setup` | Administrator routing, permission diffs, delivery recovery, and opt-in retained history with timeline/search/export. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The original five feature cogs expose 303 slash actions; EmojiStealerPlus adds six and optional SettingsHub adds 22. The seven cogs together register 81 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
+The original five feature cogs expose 306 slash actions; EmojiStealerPlus adds six and optional SettingsHub adds 22. The seven cogs together register 81 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
@@ -125,7 +125,7 @@ Server management commands generally require Red's admin access or the **Manage 
 | `[p]logchannel [#channel]` | `/logchannel` | Show or set the log destination. |
 | `[p]lograte [seconds]` | `/lograte` | Show or set duplicate suppression. |
 
-Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. These four cogs offer 245 slash actions; their guides list the deeper or ID-based paths that remain text-only.
+Community reports and logging shortcuts retain administrator checks. The `roles` picker is available to members. Grouped text commands remain available under `community`, `level`, `log`, and `owo`. Slash groups use a `status` subcommand for their settings panel, such as `/community status`. These four cogs offer 246 slash actions; their guides list the deeper or ID-based paths that remain text-only.
 
 Run these commands once as the bot owner to enable the new slash groups and shortcuts:
 

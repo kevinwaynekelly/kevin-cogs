@@ -25,6 +25,7 @@ from .listening import ListeningCommands
 from .player import GuildPlayer
 from .presentation import Presentation
 from .resolver import MediaError, MediaResolver, normalize_query
+from .sessions import MusicSessions
 from .watchdog import (
     DEFAULT_WATCHDOG,
     PROBE_FRAMES,
@@ -38,7 +39,7 @@ log = logging.getLogger(__name__)
 GUILD_ONLY = commands.guild_only()
 
 
-class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog):
+class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands, commands.Cog):
     """Music search, native Discord playback, queues, and voice diagnostics."""
 
     # Retain the old Config namespace/defaults for upgrades and rollbacks. These
@@ -67,6 +68,8 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
         self._connections = set()
         self._closing = False
         self._views = set()
+        self._sessions = {}
+        self._last_sessions = {}
         self._panels = {}
         self._panel_tasks = {}
         self._skip_votes = {}
@@ -126,6 +129,8 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
         players = list(self._players.values())
         self._players.clear()
         await asyncio.gather(*(player.close() for player in players), return_exceptions=True)
+        self._sessions.clear()
+        self._last_sessions.clear()
         await self._resolver.close()
         self._player_locks.clear()
 
@@ -420,7 +425,10 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
             async with section.get_lock():
                 await section.set({})
         if player:
-            await player.close(disconnect=disconnect)
+            try:
+                await player.close(disconnect=disconnect)
+            finally:
+                await self._finish_music_session(player)
 
     async def _disconnect_idle_player(self, player):
         async with self._player_locks[player.guild.id]:
@@ -429,6 +437,7 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
             if player.guild.voice_client is not player.voice:
                 await self._dispose_player(player.guild.id, disconnect=False)
             elif await player.disconnect_if_idle():
+                await self._finish_music_session(player)
                 if self._players.get(player.guild.id) is player:
                     self._players.pop(player.guild.id)
                 await self._close_panel(player.guild.id)
@@ -594,6 +603,7 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
                         on_idle=self._disconnect_idle_player,
                         on_start=self._track_started,
                         on_end=self._autoplay_next,
+                        on_finish=self._session_segment,
                     )
                     player.normalize = (await self.config.guild(ctx.guild).continuity())[
                         "normalize"
@@ -735,6 +745,7 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
                     on_idle=self._disconnect_idle_player,
                     on_start=self._track_started,
                     on_end=self._autoplay_next,
+                    on_finish=self._session_segment,
                 )
                 self._players[guild.id] = player
                 await self._restore(player, snapshot)
@@ -1376,6 +1387,7 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
         return await self._invoke_control(ctx, self.audio_rejoin)
 
     async def red_delete_data_for_user(self, *, requester, user_id):
+        self._session_user_data(user_id, delete=True)
         await self._continuity_delete_user(user_id)
         await self._delete_listening_user(user_id)
         if (await self.config.watchdog())["recipient_id"] == user_id:
@@ -1406,7 +1418,9 @@ class AudioPlus(ListeningCommands, AudioContinuity, AudioCommands, commands.Cog)
         history = await self._listening_user_data(user_id)
         if history:
             data["listening_history"] = history
-        return {"audioplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
+        result = {"audioplus.json": io.BytesIO(json.dumps(data, indent=2).encode())} if data else {}
+        result.update(self._session_user_data(user_id))
+        return result
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):

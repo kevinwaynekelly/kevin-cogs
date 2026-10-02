@@ -1,3 +1,11 @@
 """AudioPlus data-storage statement."""
 
 __red_end_user_data_statement__ = "Preserves legacy Lavalink connection settings, including the node password, in Red Config for rollback. Native playback ignores them. Optional daily checks store the configuring owner's Discord ID, test server/channel IDs, public video URL, local schedule, latest safe result, and pending failure DM in Config. User-data hooks export or remove that owner's check settings and disable the monitor. Request contexts are transient. Optional recovery stores up to 100 public track records, requester IDs, position, pause state, volume and repeat mode for seven days, checkpointed every ten seconds and on clean unload. Intentional stop/disconnect clears active checkpoints. Guild settings store music panel/DJ/vote preferences and member-specific playlists/favorites with source URLs and metadata; Shared server playlists retain up to ten collections of 100 approved tracks and 100 suggestions, with proposer IDs. User-data hooks export/delete personal collections, remove pending suggestions and anonymize approved/recovery requester attribution. Listening history starts enabled and stores up to 100 public playback-start records per server for 30 days, capped at 512 KiB, with requester IDs, times and metadata. Members can clear their own records; administrators can disable/erase history. User-data hooks export/delete identified request records. No extracted signed stream, downloaded audio, or yt-dlp cache is persisted."
+
+__red_end_user_data_statement__ += (
+    " Opt-in session summaries retain up to 100 public track starts, requester IDs and "
+    "decoded playback time per active connection in bounded memory. Up to 20 completed "
+    "summaries and save controls remain in memory for three minutes; export/deletion hooks "
+    "include these identified requests. Saving a session uses the existing personal playlist "
+    "storage. Posted summaries remain on Discord; unload clears transient session records."
+)

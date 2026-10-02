@@ -1,5 +1,15 @@
 # AudioPlus
 
+## Music session summaries
+
+Enable with `[p]audioset summary true [#channel]`, or `/audioset summary`. Summaries start disabled. The optional channel receives summaries; otherwise they use the session's initial request channel. `[p]audioset` shows the policy and destination. `false` stops collection and clears transient records/save controls.
+
+After the connection leaves voice, including the normal ten-second idle departure or a manual disconnect, Scarlet posts songs started, decoded playback time, requester counts for retained songs, and the latest ten titles. Seeking/rejoining resumes the same start; repeat playback counts another start. Playback time counts source audio frames, excludes pauses and seek offsets, and is approximate delivery time rather than proof that a listener heard every frame. Summary delivery cannot open another voice connection. Unload clears sessions without posting restart notices.
+
+Use the **Save session as playlist** button or `[p]playlist session <name>` (`/playlist session`) within three minutes to save retained songs to your own collection. Modal/command paths repeat current playlist permissions, the original `playlist save` disabled state, server boundaries, retention and collection limits. Saving requires a new name and never overwrites an existing playlist. Ordinary playlist play commands still apply current music request policies.
+
+Each active session retains at most the latest 100 public track starts and 256 KiB, with requester IDs and playback counters. Up to twenty completed records/cards stay in memory for three minutes and are pruned by normal maintenance, reads and new starts. They do not survive reload; member data export/deletion includes these requests. Summaries posted to Discord remain there. The bot needs View Channel and Send Messages in the destination; Embed Links is optional. Failed summary delivery leaves the short-lived `playlist session` command available.
+
 Music search, playback, queues, and Discord voice control inside Red. AudioPlus uses **yt-dlp**, **FFmpeg**, and **Discord.py native voice with DAVE encryption support**. A Lavalink server, Wavelink, Java, and a separate YouTube plugin are no longer required.
 
 `[p]` means your bot's command prefix. With `!`, `[p]play roar` becomes `!play roar`. Playback and voice controls also have slash commands, including `/play`, `/skip`, and `/queue`. Replies use the shared Kevin's Cogs theme and fall back to text when embeds are unavailable. Existing `[p]audio ...` commands remain available.
@@ -259,7 +269,7 @@ New music controls have matching slash commands. Automatic now-playing panels ar
 
 `audioset` requires Red admin or Manage Server. Open controls remain the default. With a DJ role, DJs, members with Manage Server, and bot owners can manage playback; other members can still queue music. Vote skip requires at least half of current human listeners, rounded up, and each person counts once per track. Nonprivileged controls require sharing the bot's voice channel when a policy is enabled. A play request cannot move an active protected player to another channel. Private saved collections contain source URLs and track metadata, never extracted playback streams; they survive reloads, while the live queue remains transient.
 
-There are now 58 slash music/settings actions, including `/playlist list`, `/favorite list`, and `/audioset status`. After updating and reloading, run `[p]slash sync` to upload the additions.
+There are now 60 slash music/settings actions, including `/playlist list`, `/favorite list`, and `/audioset status`. After updating and reloading, run `[p]slash sync` to upload the additions.
 
 ## Daily YouTube playback checks
 

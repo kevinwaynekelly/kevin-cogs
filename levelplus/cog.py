@@ -49,6 +49,7 @@ from .levels import cumulative_xp, level_from_xp
 from .milestones import MILESTONE_DEFAULTS, MilestoneCommands
 from .presentation import Presentation, settings
 from .progression import CALENDAR_DEFAULTS, PROGRESS_SETTINGS, ProgressionCommands
+from .reward_preview import build_preview, preview_policy, reward_changes
 
 log = logging.getLogger(__name__)
 
@@ -228,29 +229,9 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
             return
         async with self._reward_locks[(member.guild.id, member.id)]:
             level = await self.current_level(member.guild, member.id)
-            eligible = []
-            managed = []
-            for key, threshold in rewards["roles"].items():
-                role = member.guild.get_role(int(key))
-                if role is None:
-                    continue
-                try:
-                    safe_role(member.guild, role)
-                except redcommands.BadArgument:
-                    continue
-                managed.append(role)
-                if level >= threshold:
-                    eligible.append((threshold, role))
-            desired = (
-                [role for _, role in eligible]
-                if rewards["stack"]
-                else [max(eligible, key=lambda item: (item[0], item[1].id))[1]]
-                if eligible
-                else []
+            add, remove, _ = reward_changes(
+                member, level, rewards, await self._custom_reward_roles(member, settings)
             )
-            desired.extend(await self._custom_reward_roles(member, settings))
-            add = list(dict.fromkeys(role for role in desired if role not in member.roles))
-            remove = [role for role in managed if role not in desired and role in member.roles]
             try:
                 if add:
                     await member.add_roles(*add, reason="Level milestone rewards")
@@ -1675,6 +1656,62 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
             "Checked milestone roles. The bot needs Manage Roles and a higher role to assign them.",
             tone="success",
         )
+
+    @rewards.command(name="preview")
+    async def rewards_preview(
+        self,
+        ctx,
+        curve: Optional[str] = None,
+        multiplier: Optional[float] = None,
+        base: Optional[float] = None,
+        increment: Optional[float] = None,
+        max_level: Optional[int] = None,
+        role: Optional[discord.Role] = None,
+        threshold: Optional[int] = None,
+        stack: Optional[bool] = None,
+        member: Optional[discord.Member] = None,
+    ):
+        """Preview levels and reward roles using optional proposed settings."""
+        current = await self._settings(ctx.guild)
+        proposed = preview_policy(
+            current,
+            curve=curve,
+            multiplier=multiplier,
+            base=base,
+            increment=increment,
+            max_level=max_level,
+            role=role,
+            threshold=threshold,
+            stack=stack,
+        )
+        report = await build_preview(self, ctx.guild, current, proposed, member)
+        lines = [
+            f"Reviewed {report['reviewed']} cached members · {report['changed']} level changes · "
+            f"{report['adds']} role additions · {report['removes']} role removals.",
+            f"Proposed curve: {proposed['curve']} · Multiplier: {proposed['multiplier']:g} · "
+            f"Linear base/increment: {proposed['linear']['base']:g}/{proposed['linear']['inc']:g} · "
+            f"Maximum level: {proposed['max_level'] or 'Unlimited'} · Stack: {proposed['rewards']['stack']}",
+        ]
+        if not ctx.guild.me or not ctx.guild.me.guild_permissions.manage_roles:
+            lines.append(
+                "Role changes require the bot's Manage Roles permission before they can be applied."
+            )
+        if report["blocked"]:
+            lines.append(
+                "Skipped unavailable or unsafe roles: "
+                + ", ".join(f"<@&{rid}>" for rid in sorted(report["blocked"]))
+            )
+        for row in report["rows"]:
+            text = f"<@{row['member']}> · Level {row['old']} → {row['new']}"
+            if row["add"]:
+                text += "\nGain: " + ", ".join(f"<@&{rid}>" for rid in row["add"])
+            if row["remove"]:
+                text += "\nLose: " + ", ".join(f"<@&{rid}>" for rid in row["remove"])
+            lines.append(text)
+        lines.append(
+            "Dry run. Settings, XP and Discord roles remain unchanged. Details show at most 100 members; totals cover everyone reviewed. Custom earned role rewards are preserved. Use slash options to select only the candidate fields you want to test."
+        )
+        await self._reply(ctx, "\n\n".join(lines), title="Reward preview")
 
     @redcommands.hybrid_command(name="periodboard")
     @redcommands.guild_only()

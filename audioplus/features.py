@@ -24,6 +24,8 @@ DEFAULTS_GUILD = {
         "history": True,
         "max_seconds": 0,
         "per_member": 0,
+        "session_summary": False,
+        "summary_channel": None,
     },
     "playlists": {},
     "favorites": {},
@@ -240,6 +242,7 @@ class AudioCommands:
 
     async def _track_started(self, player):
         self._skip_votes.pop(player.guild.id, None)
+        await self._session_started(player)
         await self._record_listening_history(player)
         await self._update_panel(player)
         if player.guild.id not in self._panel_tasks and player.guild.id in self._panels:
@@ -409,6 +412,17 @@ class AudioCommands:
             personal[name] = [saved_track(track) for track in tracks]
         await self._reply(ctx, f"Saved **{name}** with {len(tracks)} tracks.", tone="success")
 
+    @playlist.command(name="session")
+    async def playlist_session(self, ctx, name: str):
+        """Save the last completed music session within three minutes."""
+        self._prune_sessions()
+        record = self._last_sessions.get(ctx.guild.id)
+        if not record:
+            raise commands.CommandError(
+                "No recent session summary. Enable audioset summary and play music first."
+            )
+        await self._save_session_playlist(ctx, name, record)
+
     @playlist.command(name="play")
     async def playlist_play(self, ctx, name: str):
         """Queue one of your saved playlists."""
@@ -524,6 +538,8 @@ class AudioCommands:
                 f"Vote skipping = {conf['vote_skip']}"
                 f"\nFair queue = {conf['fair_queue']}\nAutoplay = {conf['autoplay']}"
                 f"\nListening history = {conf['history']}"
+                f"\nSession summaries = {conf['session_summary']}"
+                f"\nSummary channel = {('<#' + str(conf['summary_channel']) + '>') if conf['summary_channel'] else 'Last request channel'}"
                 f"\nMaximum song seconds = {conf['max_seconds']} (0 = unlimited)"
                 f"\nTracks per member = {conf['per_member']} (0 = unlimited)"
             )
@@ -601,6 +617,29 @@ class AudioCommands:
             f"Maximum song length: {max_seconds or 'Unlimited'} seconds. "
             f"Active tracks per member: {per_member or 'Unlimited'}. "
             "The DJ role, Manage Server and bot owners are exempt. Existing tracks are retained.",
+        )
+
+    @audioset.command(name="summary")
+    async def audioset_summary(
+        self, ctx, enabled: bool, channel: Optional[discord.TextChannel] = None
+    ):
+        """Post a music summary on disconnect, optionally in a chosen channel."""
+        section = self.config.guild(ctx.guild).music
+        async with section.get_lock():
+            state = await section()
+            state.update(session_summary=enabled, summary_channel=channel.id if channel else None)
+            await section.set(state)
+        if not enabled:
+            self._sessions.pop(ctx.guild.id, None)
+            self._last_sessions.pop(ctx.guild.id, None)
+            for view in tuple(self._views):
+                if getattr(view, "guild_id", None) == ctx.guild.id and hasattr(view, "record"):
+                    view.record["tracks"].clear()
+                    view.stop()
+                    self._views.discard(view)
+        await self._reply(
+            ctx,
+            f"Music session summaries {'enabled' if enabled else 'disabled and cleared'}. Use playlist session <name> within three minutes after a summary.",
         )
 
     @audioset.command(name="setup")

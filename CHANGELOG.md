@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-02: Reward previews and music session summaries
+
+- Add a read-only level/reward scenario command with optional formula, cap, milestone and stacking candidates, cached-member totals, bounded details and permission/hierarchy warnings. Share the exact reconciliation role plan and preserve custom earned rewards and removed-definition assignments.
+- Add opt-in summaries after native voice departure with bounded transient track/requester records and decoded playback accounting across seek/rejoin segments. Add three-minute personal playlist saving with checked prefix/slash commands, a modal button, expiry, collection limits and user-data hooks.
+- Extend shared component contexts with optional modal acknowledgement and source-message fallback; retain identical helpers and all existing command checks across seven independently installable packages.
+
 ## 2026-10-02: EmojiStealerPlus
 
 - Add an independently installable cog that automatically captures external static and animated custom emoji from member messages, edits and reactions, enabled by default.

@@ -1,5 +1,11 @@
 # LevelPlus
 
+## Reward previews
+
+`[p]level rewards preview` shows which cached members would currently gain or lose milestone reward roles. `/level rewards preview` also accepts optional proposed `curve`, `multiplier`, linear `base`/`increment`, `max_level`, reward `role`/`threshold`, `stack`, and a specific `member`. Omitted fields retain their current values. For example, select `base:200` to preview a slower linear progression, or `role:@Veteran threshold:10` to preview a reward definition. Both candidate role and threshold must be supplied together; threshold zero stops managing that role and preserves existing assignments, matching reward removal.
+
+The command requires the existing reward administrator checks and changes no settings, XP or Discord roles. It uses the same role plan as actual reconciliation, respects safe role hierarchy, stacking and tie-breaking, and protects overlapping custom earned role rewards. Reports show current/proposed levels, additions/removals, unavailable/unsafe roles, and missing Manage Roles permission. Totals cover up to 10000 cached human members, while detailed rows are capped at 100; select one member in larger servers. Reliable full membership requires the Members intent. Results reflect the current cache/XP snapshot and do not guarantee later Discord updates will succeed. Candidate numeric values must be finite and in command ranges.
+
 Server leveling for Red with message, reaction, voice, and slash-command XP; configurable level curves; leaderboards; level-up announcements; and XP import/export tools.
 
 See the [repository README](../README.md) for installation. Load with `[p]load levelplus`. Replace `[p]` with your bot's prefix.
@@ -154,7 +160,7 @@ Administrator checks protect changes and role synchronization. `periodboard` and
 
 Boosts affect earned event XP, unlike the original threshold multiplier. The highest matching boost applies, up to five active boosts, and expired boosts stop applying without a restart. Daily caps cover message/reaction/voice/slash XP together, persist across reloads, and apply after boosting. Administrative additions/imports bypass earned-XP policies and do not increase calendar/season totals. Message/reaction duplicate caches are bounded in memory and reset on reload; daily caps do not reset on reload. Short rejected messages do not consume message cooldowns.
 
-Calendar records retain 35 daily buckets and the current season. Archives retain five seasons' top 50 only. Install a timezone database or `tzdata` if the container lacks America/Chicago; collection falls back to UTC when the configured zone is unavailable. New `/periodboard`, `/level rewards ...`, `/level season ...`, `/level boost`, `/level guard ...`, and `/level setup` are included among this cog's 73 slash actions. Reload and `slash sync` after updating.
+Calendar records retain 35 daily buckets and the current season. Archives retain five seasons' top 50 only. Install a timezone database or `tzdata` if the container lacks America/Chicago; collection falls back to UTC when the configured zone is unavailable. New `/periodboard`, `/level rewards ...`, `/level season ...`, `/level boost`, `/level guard ...`, and `/level setup` are included among this cog's 74 slash actions. Reload and `slash sync` after updating.
 
 ## Stored data and current limits
 

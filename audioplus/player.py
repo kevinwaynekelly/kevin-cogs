@@ -92,6 +92,7 @@ class GuildPlayer:
         on_idle=None,
         on_start=None,
         on_end=None,
+        on_finish=None,
     ):
         self.voice = voice
         self.resolver = resolver
@@ -100,6 +101,7 @@ class GuildPlayer:
         self.on_idle = on_idle
         self.on_start = on_start
         self.on_end = on_end
+        self.on_finish = on_finish
         self.fair_queue = False
         self.autoplay = False
         self._autoplay_generation = 0
@@ -297,11 +299,17 @@ class GuildPlayer:
                 raise error
         finally:
             self.preparing = False
+            self.source = None
             # A cancelled preparation/start must not leave a decoder playing behind the queue.
             if source is not None:
                 self.voice.stop()
                 source.cleanup()
-            self.source = None
+                if self.on_finish:
+                    try:
+                        frames = getattr(source, "frames", 0)
+                        await self.on_finish(self, track, frames * 20 if type(frames) is int else 0)
+                    except Exception:
+                        log.warning("Could not account for music session playback", exc_info=True)
 
     async def _run(self):
         try:

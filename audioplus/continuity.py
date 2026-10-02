@@ -52,6 +52,7 @@ class AudioContinuity:
                 await section.set(record if tracks else {})
 
     async def _continuity_tick(self):
+        self._prune_sessions()
         for player in tuple(self._players.values()):
             if self._closing or player.closed:
                 continue

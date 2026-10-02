@@ -404,6 +404,7 @@ def validate_fields(guild, expected, incoming, path=""):
                 text=path
                 in {
                     "log_channel",
+                    "music.summary_channel",
                     "welcome.channel_id",
                     "cya.channel_id",
                     "levelup.channel_id",
