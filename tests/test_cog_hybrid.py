@@ -71,7 +71,7 @@ async def invoke_slash(bot, invoke, monkeypatch, path, **options):
     ctx.prefix = "/"
     ctx.send.reset_mock()
     done = []
-    ctx.defer = AsyncMock(side_effect=lambda: done.append(True))
+    ctx.defer = AsyncMock(side_effect=lambda **kwargs: done.append(True))
     interaction = SimpleNamespace(
         client=bot,
         command=app,

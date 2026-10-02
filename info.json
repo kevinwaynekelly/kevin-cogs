@@ -2,7 +2,7 @@
   "author": [
     "Kevin Kelly"
   ],
-  "short": "Native music, community events, leveling, logs, transformations and automatic emoji capture for Red.",
-  "description": "Six independently installable Red Discord Bot feature cogs for native music and session summaries; community tools and native Discord events; XP progression and reward previews; moderation history/alerts; message transformations and haiku; and automatic external emoji capture. All feature cogs offer direct and slash commands. Optional SettingsHub adds shared themes, configuration history, read-only readiness, diagnostic support bundles and validated settings snapshots/restore.",
+  "short": "Native music, community, levels, logs, transformations, emoji capture and chat exports for Red.",
+  "description": "Seven independently installable Red Discord Bot feature cogs for native music and session summaries; community tools and native Discord events; XP progression and reward previews; moderation history/alerts; message transformations and haiku; automatic external emoji capture; and readable private chat exports. All feature cogs offer direct and slash commands. Optional SettingsHub adds shared themes, configuration history, read-only readiness, diagnostic support bundles and validated settings snapshots/restore.",
   "install_msg": "Thanks for adding Kevin Cogs. List the available cogs with [p]cog list kevin-cogs, or use your chosen repository name. Setup guides: https://github.com/kevinwaynekelly/kevin-cogs. AudioPlus uses native Discord voice with local FFmpeg and yt-dlp. Use [p]play, [p]community, [p]level, [p]log, and [p]owo; each cog supports slash commands."
 }

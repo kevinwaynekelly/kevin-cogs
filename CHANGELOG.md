@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-02: ExportPlus server chat exports
+
+- Add independently installable ExportPlus with administrator prefix/slash exports for accessible server channels, voice/stage text chats, forums and active/archived threads.
+- Stream chronological UTF-8 text and structured JSONL with an explicit completeness index, preserve message/reply/attachment metadata, filter dates/bots, and privately deliver bounded standalone ZIP volumes.
+- Add requester-only progress/download/text/cancel/clear commands, preflight DMs, live access checks, bounded disk/jobs/deadlines, expiry, unload cleanup and author-only user-data exports.
+- Validate real Red commands and filesystem/ZIP output with mocked Discord history/DM boundaries. Live Scarlet deployment remains unverified.
+
 ## 2026-10-02: Native event compatibility and occurrence bounds
 
 - Treat missing Create Events flags in older Discord permission objects as failed prerequisites instead of crashing native/readiness commands. Creation uses Discord.py 2.4+; other Community features retain their compatibility.
