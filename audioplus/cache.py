@@ -332,7 +332,7 @@ class SongCache:
             "-rw_timeout",
             "15000000",
             "-protocol_whitelist",
-            "http,https,tcp,tls,crypto,pipe",
+            "http,https,httpproxy,tcp,tls,crypto,pipe",
         ]
         if stream.headers:
             args += [

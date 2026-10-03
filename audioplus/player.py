@@ -12,7 +12,7 @@ import discord
 from .cache import song_key
 from .failures import log_failure, safe_exception
 from .resolver import MAX_TRACKS, MediaError, Track
-from .source import NativeSource
+from .source import DecoderError, NativeSource
 
 log = logging.getLogger(__name__)
 IDLE_DISCONNECT_SECONDS = 10
@@ -65,6 +65,7 @@ class GuildPlayer:
         self._idle_task = None
         self._queue_requests = 0
         self.resuming = False
+        self._pause_requested = False
         self.lock = asyncio.Lock()
 
     @property
@@ -78,6 +79,14 @@ class GuildPlayer:
     @property
     def position(self):
         return self.source.position if self.source else 0
+
+    def pause(self):
+        self._pause_requested = True
+        self.voice.pause()
+
+    def resume(self):
+        self._pause_requested = False
+        self.voice.resume()
 
     def _start_worker(self):
         if not self.closed and (self._runner is None or self._runner.done()):
@@ -204,12 +213,15 @@ class GuildPlayer:
 
     async def _play_one(self, track, start=0, paused=False):
         self.preparing = True
+        self._pause_requested = paused
         requester = self._requesters.get(id(track), 0)
         epoch = self.cache.epoch if self.cache else 0
         stream = self.cache.get(self.guild.id, track, requester) if self.cache else None
         notified = False
+        refreshed = False
         try:
-            for attempt in range(2):
+            # One cache fallback and one fresh provider stream at most.
+            for _ in range(3):
                 source = None
                 if stream is None:
                     stream = await self.resolver.resolve(track)
@@ -233,7 +245,7 @@ class GuildPlayer:
                             loop.call_soon_threadsafe(callback, error)
 
                     self.voice.play(source, after=after)
-                    if paused:
+                    if self._pause_requested:
                         self.voice.pause()
                     self.preparing = False
                     self.last_error = None
@@ -249,18 +261,24 @@ class GuildPlayer:
                     if error:
                         raise error
                     return
-                except Exception:
-                    if (
-                        attempt
-                        or not getattr(stream, "local", False)
-                        or not self.voice.is_connected()
-                    ):
+                except Exception as error:
+                    if not self.voice.is_connected():
                         raise
-                    # Discard an unreadable copy, retry the provider once, and
-                    # continue after any frames already sent without another start record.
-                    self.cache.invalidate(song_key(self.guild.id, track))
+                    if getattr(stream, "local", False):
+                        self.cache.invalidate(song_key(self.guild.id, track))
+                    elif (
+                        isinstance(error, DecoderError)
+                        and error.retryable
+                        and not track.direct
+                        and not refreshed
+                    ):
+                        refreshed = True
+                    else:
+                        raise
+                    # Keep queue accounting and the start notice intact across
+                    # recovery; extracted links are never reused for a retry.
                     if source:
-                        start = source.position
+                        start = 0 if getattr(stream, "live", False) else source.position
                     stream = None
                     self.preparing = True
                 finally:

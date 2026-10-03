@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-03: AudioPlus stream failure recovery
+
+- Classify FFmpeg HTTP statuses, transient network errors, unsupported formats/protocols and unreadable local copies into fixed safe messages. Drain stderr continuously with a 16 KiB memory bound; reap children, join the owned drain thread and discard captured text on cleanup. Keep the independent IntroPlus decoder identical.
+- Resolve a fresh provider stream once after a retryable decoder failure, preserving position, pause intent, queue and a single playback-start record. Bound recovery to one cache fallback plus one remote refresh; cancel recovery on skip/stop/unload and avoid refreshing direct URLs or unrelated/permanent failures.
+- Allow configured HTTP proxy transport for remote music and intro FFmpeg playback/downloads without broadening local file protocols. Exercise real HTTP failures, headers, proxy transport, stderr floods, cleanup and retry state; external YouTube and Discord networking remain mocked.
+
 ## 2026-10-03: AudioPlus three-month short-song cache
 
 - Automatically prepare audio-only local copies of known non-live provider songs strictly under five minutes after playback starts. The initial play keeps streaming; subsequent same-server plays skip stream extraction and read local audio. Preserve cached seek, pause, volume, normalization and IntroPlus overlays; retry a damaged copy from the provider once without duplicate start records.

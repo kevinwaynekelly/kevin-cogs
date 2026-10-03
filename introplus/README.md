@@ -73,6 +73,8 @@ Each server handles one intro at a time, with at most five waiting, and queued r
 
 YouTube resolution runs in owned cancellable subprocesses with a 45-second deadline. Cache preparation allows two concurrent jobs and at most 128 pending jobs; each FFmpeg download has a 60-second deadline and a frame/byte output limit. Voice connection uses a 30-second timeout; clip playback has a duration-plus-five-second deadline, and voice disconnect has a ten-second deadline. Cleanup closes/reaps owned FFmpeg processes and preserves active AudioPlus sources.
 
+The shared PCM decoder reports safe HTTP status, network, unsupported-format/protocol or unreadable-copy categories when available. It drains FFmpeg stderr into a bounded 16 KiB memory buffer and discards it on cleanup; signed URLs, headers and arbitrary provider text are not exposed or saved. Remote FFmpeg transport allows HTTPS through a configured HTTP proxy. AudioPlus's fresh-stream playback retry applies to its music player; IntroPlus keeps its existing bounded clip preparation and playback deadlines.
+
 ## YouTube configuration
 
 Lavalink's `youtube.oauth` and `youtube.remoteCipher` YAML do not configure this native backend. Both cogs use yt-dlp/EJS with a local JavaScript runtime. Current [yt-dlp guidance](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#logging-in-with-oauth) says YouTube OAuth no longer works with yt-dlp and recommends cookies when account access is necessary. This cog uses public videos and stores no account credentials. Update yt-dlp/EJS and the JavaScript runtime when extraction fails.

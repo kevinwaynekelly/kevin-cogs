@@ -92,11 +92,11 @@ class AudioContinuity:
             if player.guild.id in self._empty_paused:
                 self._empty_paused.discard(player.guild.id)
                 if player.paused and not player.closed:
-                    player.voice.resume()
+                    player.resume()
             return
         self._empty_since.setdefault(player.guild.id, now)
         if player.playing:
-            player.voice.pause()
+            player.pause()
             self._empty_paused.add(player.guild.id)
         if now - self._empty_since[player.guild.id] >= settings["empty_grace"]:
             async with self._player_locks[player.guild.id]:

@@ -1140,7 +1140,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             return await self._reply(ctx, "No track is ready to pause.", tone="warning")
         await check_control(self, ctx)
         self._empty_paused.discard(ctx.guild.id)
-        player.voice.pause()
+        player.pause()
         await self._reply(ctx, "Paused.", tone="success")
 
     @audio.command(name="resume")
@@ -1152,7 +1152,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             return await self._reply(ctx, "No paused track.", tone="warning")
         await check_control(self, ctx)
         self._empty_paused.discard(ctx.guild.id)
-        player.voice.resume()
+        player.resume()
         await self._reply(ctx, "Resumed.", tone="success")
 
     @audio.command(name="volume", aliases=["vol"])
