@@ -819,7 +819,24 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         watchdog = await self.config.watchdog()
         if watchdog["guild_id"] == guild_id:
             report["last_playback_check"] = watchdog["last_result"]
+        player = self._players.get(guild_id)
+        if player and player.buffer_status:
+            report["playback_buffer"] = player.buffer_status
         return report
+
+    @staticmethod
+    def _buffer_diagnostics(player):
+        status = player.buffer_status
+        if status is None:
+            return ""
+        return (
+            f"\n**Playback buffer** · {status['buffer_seconds']:.1f} / {status['target_seconds']:.0f} seconds"
+            f" · start/refill at {status['prefill_seconds']:.0f} seconds"
+            f"\n**Refilling** · {'yes' if status['refilling'] else 'no'}"
+            f"\n**Buffer shortages** · {status['underruns']} · inserted silence {status['silence_ms'] / 1000:.2f} seconds"
+            f"\n**Longest decoder read** · {status['max_read_ms']:.0f} ms"
+            "\nShortages and silence totals cover this voice connection."
+        )
 
     async def _diagnostic_reply(self, ctx):
         state = await diagnostics(voice_guard=self._voice_maintenance_error)
@@ -866,6 +883,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
                 f"**Voice connected** · {player.voice.is_connected()}",
                 f"**Queued tracks** · {len(player.queue)}",
             ]
+            lines.append(self._buffer_diagnostics(player))
             if player.last_error:
                 lines.append("\n**Last playback failure**\n" + player.last_error)
         lines.append(
@@ -969,7 +987,8 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         title = discord.utils.escape_markdown(player.current.title) if player.current else "None"
         await self._reply(
             ctx,
-            f"**Native player**\nConnected: `{player.voice.is_connected()}`  Playing: `{player.playing}`  Paused: `{player.paused}`\nPreparing stream: `{player.preparing}`\nTrack: {title}\nPosition: `{player.position} ms`\nVolume: `{player.volume}%`  Repeat: `{player.repeat}`\nQueued tracks: `{len(player.queue)}`",
+            f"**Native player**\nConnected: `{player.voice.is_connected()}`  Playing: `{player.playing}`  Paused: `{player.paused}`\nPreparing stream: `{player.preparing}`\nTrack: {title}\nPosition: `{player.position} ms`\nVolume: `{player.volume}%`  Repeat: `{player.repeat}`\nQueued tracks: `{len(player.queue)}`"
+            + self._buffer_diagnostics(player),
         )
 
     @audio.command(name="speak")
@@ -1030,6 +1049,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
                 f"Connected: `{player.voice.is_connected()}`  Playing: `{player.playing}`  Paused: `{player.paused}`",
                 f"Preparing: `{player.preparing}`  Position: `{player.position} ms`  Volume: `{player.volume}%`",
             ]
+            lines.append(self._buffer_diagnostics(player))
         await self._reply(ctx, "\n".join(lines))
 
     @audio.command(name="rejoin")

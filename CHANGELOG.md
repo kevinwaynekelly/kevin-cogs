@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-03: AudioPlus playback read-ahead
+
+- Decouple AudioPlus FFmpeg reads from Discord's audio delivery with up to 120 seconds of PCM read-ahead, bounded to about 22 MiB per player. Start playback after three seconds or shorter-source EOF, with a ten-second preparation deadline, while the decoder continues filling toward the maximum. Absorb source delays while buffered audio remains; refill to three seconds with bounded silence and invoke existing recovery after a 15-second refill stall. Keep progress, session totals and daily probes tied to delivered real audio frames.
+- Show buffered/max seconds, the separate three-second start/refill target, refill state, underruns, silence time and longest decoder read through existing prefix/slash `playerstate`, `audiostatus` and `debugvc` commands. Accumulate counters through seeks/refreshes for the current voice connection, retain the last source snapshot and reset on disconnect; persist no metrics.
+- Preserve cache expiry, saved Config defaults, command roots and IntroPlus's independent clip playback. Buffering does not fix outgoing packet loss or severe host CPU starvation.
+
 ## 2026-10-03: AudioPlus stream failure recovery
 
 - Classify FFmpeg HTTP statuses, transient network errors, unsupported formats/protocols and unreadable local copies into fixed safe messages. Drain stderr continuously with a 16 KiB memory bound; reap children, join the owned drain thread and discard captured text on cleanup. Keep the independent IntroPlus decoder identical.

@@ -9,6 +9,7 @@ from collections import deque
 
 import discord
 
+from .buffer import BufferedSource
 from .cache import song_key
 from .failures import log_failure, safe_exception
 from .resolver import MAX_TRACKS, MediaError, Track
@@ -66,6 +67,8 @@ class GuildPlayer:
         self._queue_requests = 0
         self.resuming = False
         self._pause_requested = False
+        self._buffer_totals = {"underruns": 0, "silence_ms": 0, "max_read_ms": 0.0}
+        self._last_buffer = None
         self.lock = asyncio.Lock()
 
     @property
@@ -79,6 +82,22 @@ class GuildPlayer:
     @property
     def position(self):
         return self.source.position if self.source else 0
+
+    @property
+    def buffer_status(self):
+        current = self.source.diagnostics() if isinstance(self.source, BufferedSource) else None
+        status = current or self._last_buffer
+        if status is None:
+            return None
+        status = dict(status)
+        if current is None:
+            status.update(buffer_seconds=0.0, refilling=False)
+        for key in ("underruns", "silence_ms"):
+            status[key] = self._buffer_totals[key] + (current[key] if current else 0)
+        status["max_read_ms"] = max(
+            self._buffer_totals["max_read_ms"], current["max_read_ms"] if current else 0
+        )
+        return status
 
     def pause(self):
         self._pause_requested = True
@@ -232,7 +251,11 @@ class GuildPlayer:
                         )
                     options = {"normalize": True} if self.normalize else {}
                     source = self.source_factory(stream, volume=self.volume, start=start, **options)
+                    if isinstance(source, NativeSource):
+                        source = BufferedSource(source)
                     self.source = source
+                    if isinstance(source, BufferedSource):
+                        await source.prepare()
                     loop = asyncio.get_running_loop()
                     ended = loop.create_future()
 
@@ -286,6 +309,21 @@ class GuildPlayer:
                     # A cancelled start must not leave a decoder behind the queue.
                     if source is not None:
                         self.voice.stop()
+                        if isinstance(source, BufferedSource):
+                            self._last_buffer = source.diagnostics()
+                            for key in ("underruns", "silence_ms"):
+                                self._buffer_totals[key] += self._last_buffer[key]
+                            self._buffer_totals["max_read_ms"] = max(
+                                self._buffer_totals["max_read_ms"], self._last_buffer["max_read_ms"]
+                            )
+                            if self._last_buffer["underruns"]:
+                                log.warning(
+                                    "AudioPlus buffer ran short in guild %s: %s incidents, %s ms silence, slowest read %.0f ms",
+                                    self.guild.id,
+                                    self._last_buffer["underruns"],
+                                    self._last_buffer["silence_ms"],
+                                    self._last_buffer["max_read_ms"],
+                                )
                         source.cleanup()
                         if self.on_finish:
                             try:
