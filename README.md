@@ -9,7 +9,7 @@ Music, personal voice entrance clips, community tools, leveling, event logging, 
 | Cog | What it does | Commands | Guide |
 | --- | --- | --- | --- |
 | AudioPlus | Native playback, recovery, normalization, shared playlists, DJ policies and daily checks | `[p]play`, `/play`, `[p]audioset` | [Setup and commands](audioplus/README.md) |
-| IntroPlus | Personal YouTube voice entrance clips, duration/start controls and music overlays | `[p]intro set`, `/intro test`, `[p]intro duration` | [Setup and commands](introplus/README.md) |
+| IntroPlus | Cached personal YouTube voice entrance clips, duration/start controls and music overlays | `[p]intro set`, `/intro test`, `[p]intro duration` | [Setup and commands](introplus/README.md) |
 | CommunityPlus | Roles, welcomes, temporary rooms, onboarding, birthdays and recurring events | `[p]community`, `[p]voiceroom`, `/birthday set` | [Setup and commands](communityplus/README.md) |
 | LevelPlus | XP, custom achievements, streaks, monthly seasons, filtered boards and rank cards | `[p]level`, `[p]achievement`, `/streak` | [Setup and commands](levelplus/README.md) |
 | LogPlus | Event logs, retained history, burst alerts, daily digests and staff incidents | `[p]log`, `[p]logalerts`, `/incident list` | [Setup and commands](logplus/README.md) |
@@ -97,7 +97,7 @@ Read the cog's guide before loading it on an existing server. Some features star
 | Cog | Initial behavior |
 | --- | --- |
 | AudioPlus | Runs music search and playback locally with `[p]play` or `/play`. Joins your voice channel, or the available channel with the most people if you are not in voice. Disconnects after the queue is idle for 10 seconds. Unload Red's bundled Audio cog before loading AudioPlus. Check dependencies with `[p]audiostatus`; enable and sync slash commands once as the bot owner. |
-| IntroPlus | Automatic intros are enabled only for members who have a saved clip. Use `[p]intro set 8 <YouTube video or search>` and `[p]intro test`. Clip length is bounded to 0.5–30 seconds; cooldown defaults to 60 seconds. Uses the native AudioPlus prerequisites and can install independently. |
+| IntroPlus | Automatic intros are enabled only for members who have a saved clip. Use `[p]intro set 8 <YouTube video or search>`, check local-copy readiness with `[p]intro show` and preview with `[p]intro test`. Prepares the selected 0.5–30 second segment locally for faster joins; ready copies survive restarts. Cooldown defaults to 60 seconds. Uses the native AudioPlus prerequisites and can install independently. |
 | CommunityPlus | Sticky roles, activity tracking, and solo voice cleanup are enabled. Solo voice cleanup defaults to 900 seconds. Autorole and welcome/goodbye targets need to be configured. |
 | LevelPlus | Message, reaction, and voice XP are enabled, along with level-up announcements. |
 | LogPlus | Needs a destination channel or route before it can post logs. |

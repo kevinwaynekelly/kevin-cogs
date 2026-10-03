@@ -70,7 +70,7 @@ class Voice(FakeVoice):
 
 
 @pytest.fixture
-async def intro_runtime(red_command_runtime, monkeypatch):
+async def intro_runtime(red_command_runtime, monkeypatch, tmp_path):
     bot, audio, member, invoke = red_command_runtime
     init_events(bot, parse_cli_flags([]))
     monkeypatch.setattr(bot, "_delete_delay", AsyncMock())
@@ -83,6 +83,7 @@ async def intro_runtime(red_command_runtime, monkeypatch):
     for text in guild.channels:
         if isinstance(text, discord.TextChannel):
             text.permissions_for.side_effect = lambda target: target.guild_permissions
+    monkeypatch.setattr("introplus.cog.cog_data_path", lambda cog: tmp_path / "IntroPlus")
     cog = IntroPlus(bot)
     await bot.add_cog(cog)
     video = Track(
@@ -92,7 +93,15 @@ async def intro_runtime(red_command_runtime, monkeypatch):
     cog._resolver.resolve = AsyncMock(
         return_value=Stream("https://cdn.invalid/audio?token=private")
     )
-    cog._source_factory = PCMSource
+
+    async def download(stream, clip, path):
+        source = PCMSource(stream, volume=100, duration=max(20, int(clip["duration"] * 1000)))
+        frames = []
+        while data := source.read():
+            frames.append(data)
+        path.write_bytes(b"".join(frames))
+
+    cog._cache._download = download
     monkeypatch.setattr("introplus.cog.require_voice", lambda: None)
     monkeypatch.setattr(audio, "_require_voice", lambda: None)
 
@@ -244,17 +253,15 @@ async def test_flag_updates_disabled_cog_scope_bots_and_cooldowns_do_not_replay(
     assert not cog._workers
 
 
-async def test_leaving_during_resolution_cancels_it_without_connecting(intro_runtime):
+async def test_leaving_during_preparation_cancels_voice_but_keeps_local_download(intro_runtime):
     _, _, cog, member, channel, _ = intro_runtime
     await saved_intro(cog, member)
-    started, cancelled = asyncio.Event(), asyncio.Event()
+    started, ready = asyncio.Event(), asyncio.Event()
 
     async def blocked(track):
         started.set()
-        try:
-            await asyncio.Event().wait()
-        finally:
-            cancelled.set()
+        await ready.wait()
+        return Stream("https://cdn.invalid/audio")
 
     cog._resolver.resolve = blocked
     await join(cog, member, channel)
@@ -264,7 +271,10 @@ async def test_leaving_during_resolution_cancels_it_without_connecting(intro_run
         member, SimpleNamespace(channel=channel), SimpleNamespace(channel=None)
     )
     await eventually(lambda: not cog._workers)
-    assert cancelled.is_set() and channel.connect.await_count == 0
+    assert cog._cache.jobs and channel.connect.await_count == 0
+    ready.set()
+    await eventually(lambda: not cog._cache.jobs)
+    assert cog._cache.entries and channel.connect.await_count == 0
 
 
 async def test_bounded_queue_serializes_members_and_expires_stale_requests(intro_runtime):

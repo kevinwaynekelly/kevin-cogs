@@ -1,6 +1,6 @@
 # IntroPlus
 
-Personal YouTube entrance clips for regular Discord voice channels, using the same native yt-dlp and FFmpeg decoder as AudioPlus. IntroPlus can be installed on its own. It shares the repository's presentation theme and supports prefix and slash commands.
+Personal YouTube entrance clips for regular Discord voice channels, using AudioPlus's native yt-dlp and FFmpeg approach. IntroPlus downloads the selected segment ahead of time and plays a local PCM copy on joins. It can be installed on its own, shares the repository's presentation theme and supports prefix and slash commands.
 
 ## Install
 
@@ -28,6 +28,14 @@ The bot needs **View Channel**, **Connect**, and **Speak** in the destination. S
 
 This chooses a video, starts at second 35, and plays up to eight seconds when you join voice. A YouTube video link can replace search terms. Setting another video resets the start offset to zero. Duration supports **0.5–30 seconds**; start supports **0–86,400 seconds**, before the known end of the video. Playback ends early if the video ends first. PCM trimming uses 20 ms frames and never plays the full video just because it is longer than the selected clip.
 
+## Faster local playback
+
+Setting a video or changing its duration/start begins a background download of **only the selected audio segment**. Use `[p]intro show` or `/intro show` to see whether the local copy is ready, preparing or failed. A first download still needs YouTube extraction; later joins read the prepared PCM file directly, without another YouTube request, expiring stream URL or FFmpeg startup. Discord still needs to establish voice if the bot is disconnected, and simultaneous joins still wait their turn.
+
+Ready copies live in Red's persistent IntroPlus data directory and survive cog reloads and bot restarts. On upgrade, existing saved intros are prepared automatically in the background, with two concurrent preparations and at most 256 missing clips scheduled per load. A missing or evicted segment is prepared when previewed or requested. If a download fails, `intro test` retries it and `intro status` shows the safe playback result.
+
+The cache holds at most **256 clips and 128 MiB**, evicting least recently used copies. A 30-second stereo PCM segment uses about 5.5 MiB. Up to two temporary downloads can exist alongside the ready cache. Changing a video or its timing cancels the previous preparation, removes the old copy and builds its replacement; volume changes apply while reading and need no download. Clearing a clip, member/server removal and user-data deletion remove the associated audio. Unload cancels pending downloads and removes partial files while preserving completed copies. Full-length videos and signed stream URLs are never saved.
+
 Personal configuration is separate in each server. Members can set, view, change and clear their own clips. Members need no special permission to preview their own intro; they must be in a regular voice channel. Managers can assign/remove other members' intros and preview them in the manager's current channel. Automatic playback starts enabled, but only members with a saved clip have an intro. Clearing your clip opts out.
 
 ## Commands
@@ -36,10 +44,10 @@ Every row has the matching `/intro` slash subcommand, except the additional pref
 
 | Prefix command | Purpose |
 | --- | --- |
-| `[p]intro` or `[p]intro status` | Server policy, your setup, queue and latest safe result. Slash: `/intro status`. |
+| `[p]intro` or `[p]intro status` | Server policy, your setup, local-copy readiness, queue and latest safe result. Slash: `/intro status`. |
 | `[p]intro help` | Command help. |
 | `[p]intro set <seconds> <video-or-search>` | Set your video and duration. |
-| `[p]intro show [member]` | Show a member's public video and timing. |
+| `[p]intro show [member]` | Show a member's public video, timing and local-copy readiness. |
 | `[p]intro duration <seconds>` | Change your clip length. |
 | `[p]intro start <seconds>` | Change your clip's starting point. |
 | `[p]intro clear` | Remove your clip and cancel its pending playback. |
@@ -51,7 +59,7 @@ Every row has the matching `/intro` slash subcommand, except the additional pref
 | `[p]intro cooldown <10–3600>` | Manager: set per-member automatic cooldown; default 60 seconds. |
 | `[p]intro channel [voice-channel]` | Manager: restrict intros to one channel; omit to allow all regular voice channels. |
 | `[p]intro stop` | Manager: stop current/queued intros while preserving AudioPlus music. |
-| `[p]intro diagnostics` | Check local dependencies and latest result. Does not verify live YouTube or Discord access. |
+| `[p]intro diagnostics` | Check local dependencies, cache size, pending preparations and latest result. Does not verify live YouTube or Discord access. |
 
 Manager commands require Red administrator or Manage Server, subject to Red's normal owner/permission rules. Administrator controls and parent command restrictions apply to slash commands too. Slash replies are ephemeral; prefix replies use the shared theme and suppress mentions.
 
@@ -61,9 +69,9 @@ When AudioPlus is actively playing PCM music **in the same channel**, IntroPlus 
 
 When no cog owns voice, IntroPlus joins, plays its clip and disconnects immediately afterward. Updated AudioPlus can cancel this temporary session and take over on `play`. The two cogs coordinate native connections through one per-server lock. If another cog owns voice, the bot is in another channel, AudioPlus is idle/paused/preparing, or the source uses Opus rather than PCM, the intro is skipped without moving or replacing that session. Intros do not interrupt arbitrary other cogs.
 
-Each server handles one intro at a time, with at most five waiting, and queued requests expire after two minutes. At most 100 servers have active workers. Rapid duplicate joins and members still within cooldown do not queue extra clips. Mute/deafen changes in the same channel do not trigger intros. Moving to another regular voice channel counts as a join, subject to cooldown. Leaving during lookup/playback, clearing a clip, disabling intros, stopping, removing the server/member or unloading cancels the related owned work. Failures are recorded as bounded safe server results, visible through `intro status`; raw provider/HTTP errors and signed stream URLs are not printed.
+Each server handles one intro at a time, with at most five waiting, and queued requests expire after two minutes. At most 100 servers have active workers. Rapid duplicate joins and members still within cooldown do not queue extra clips. Mute/deafen changes in the same channel do not trigger intros. Moving to another regular voice channel counts as a join, subject to cooldown. Leaving voice, disabling intros or stopping cancels pending playback; background preparation may finish for a future join. Clearing/changing a clip, removing the server/member, privacy deletion or unloading also cancels associated preparation. Failures are recorded as bounded safe server results, visible through `intro status`; raw provider/HTTP errors and signed stream URLs are not printed.
 
-YouTube resolution runs in owned cancellable subprocesses, with at most two simultaneous lookups and a 45-second deadline. Voice connection uses a 30-second timeout; clip playback has a duration-plus-five-second deadline, and voice disconnect has a ten-second deadline. Cleanup closes/reaps owned FFmpeg processes and preserves active AudioPlus sources.
+YouTube resolution runs in owned cancellable subprocesses with a 45-second deadline. Cache preparation allows two concurrent jobs and at most 128 pending jobs; each FFmpeg download has a 60-second deadline and a frame/byte output limit. Voice connection uses a 30-second timeout; clip playback has a duration-plus-five-second deadline, and voice disconnect has a ten-second deadline. Cleanup closes/reaps owned FFmpeg processes and preserves active AudioPlus sources.
 
 ## YouTube configuration
 
@@ -71,6 +79,6 @@ Lavalink's `youtube.oauth` and `youtube.remoteCipher` YAML do not configure this
 
 ## Data and verification
 
-Saved records include the member's public video metadata and selected start/duration, plus server policy. No audio downloads, yt-dlp cache, signed streams, OAuth/cipher secrets or cookies are persisted. Cooldowns, queued member IDs and safe server results are transient and bounded. User-data export returns only that user's clips. Deletion removes clips and cancels related pending jobs/commands; member departure deletes that server's personal clip, server departure deletes its settings/clips, and unload clears transient work while preserving saved choices.
+Saved records include the member's public video metadata and selected start/duration, plus server policy. The bounded local PCM cache associates the selected audio segment with server/member IDs and clip timing. No full-length downloads, yt-dlp cache, signed streams, OAuth/cipher secrets or cookies are persisted. Cooldowns, queued member IDs and safe server results are transient and bounded. User-data export returns only that user's saved choices/timing, not audio files. Deletion removes choices and cached segments and cancels related pending jobs/commands; member departure deletes that server's personal clip/cache, server departure deletes its settings/clips/cache, and unload clears transient work while preserving saved choices and ready copies.
 
-Tests run real Red prefix/slash checks and Config, real PCM mixing and local FFmpeg seek/trimming. Discord and YouTube boundaries are mocked. Live Scarlet voice/YouTube playback remains unverified.
+Tests run real Red prefix/slash checks and Config, real PCM mixing and local FFmpeg segment downloads, seek/trimming and file playback. They verify lookup-free replays, restart reuse, timing replacement, LRU bounds, orphan cleanup, subprocess cancellation/timeout and privacy deletion. Discord and YouTube boundaries are mocked. Live Scarlet voice/YouTube playback remains unverified.

@@ -14,8 +14,17 @@ from urllib.parse import urlsplit
 
 import discord
 from redbot.core import Config, commands
+from redbot.core.data_manager import cog_data_path
 
 from .backend import diagnostics, require_voice
+from .cache import (
+    FRAME_BYTES,
+    MAX_CACHE_ITEMS,
+    CachedSource,
+    ClipCache,
+    clip_duration,
+    clip_key,
+)
 from .command_support import check_command, finish_configuration_audit, prepare_hybrid
 from .constants import (
     DEFAULTS_GUILD,
@@ -29,7 +38,6 @@ from .constants import (
 from .playback import play_overlay, play_standalone
 from .presentation import Presentation
 from .resolver import MediaError, MediaResolver, Track, normalize_query
-from .source import NativeSource
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +111,8 @@ class IntroPlus(commands.Cog):
         self.config.register_member(**DEFAULTS_MEMBER)
         self._presentation = Presentation("IntroPlus", "intro")
         self._resolver = MediaResolver()
-        self._source_factory = NativeSource
+        self._cache = ClipCache(cog_data_path(self) / "clips", self._resolver)
+        self._warm_task = None
         self._voice_locks = defaultdict(asyncio.Lock)
         self._queues = defaultdict(deque)
         self._workers = {}
@@ -115,6 +124,79 @@ class IntroPlus(commands.Cog):
         self._commands = {}
         self._closing = False
         self._stopping = set()
+
+    async def cog_load(self):
+        allowed = {}
+        for guild_id, members in (await self.config.all_members()).items():
+            for member_id, data in members.items():
+                clip = data.get("clip")
+                if not clip:
+                    continue
+                try:
+                    saved_track(clip)
+                    key = clip_key(guild_id, member_id, clip)
+                    allowed[key] = max(1, int(clip_duration(clip) * 1000) // 20) * FRAME_BYTES
+                except MediaError:
+                    continue
+        await asyncio.to_thread(self._cache.initialize, allowed)
+        self._warm_task = asyncio.create_task(self._warm_existing(), name="IntroPlus local clips")
+
+    async def _warm_existing(self):
+        await self.bot.wait_until_red_ready()
+        count = 0
+        for guild_id, members in (await self.config.all_members()).items():
+            guild = self.bot.get_guild(guild_id)
+            if not guild or await self.bot.cog_disabled_in_guild(self, guild):
+                continue
+            for member_id in members:
+                if self._closing or count >= MAX_CACHE_ITEMS:
+                    return
+                # Backfill only the active slots. Fresh settings/preview jobs
+                # should not wait behind a large startup download queue.
+                while len(self._cache.jobs) >= 2:
+                    await asyncio.wait(
+                        tuple(self._cache.jobs.values()), return_when=asyncio.FIRST_COMPLETED
+                    )
+                group = self.config.member_from_ids(guild_id, member_id)
+                async with group.clip.get_lock():
+                    clip = await group.clip()
+                    if not clip:
+                        continue
+                    try:
+                        track = saved_track(clip)
+                        if self._cache.path(guild_id, member_id, clip) is None:
+                            self._cache.schedule(guild_id, member_id, clip, track)
+                            count += 1
+                    except MediaError:
+                        continue
+
+    async def _local_source(self, request, track):
+        group = self.config.member_from_ids(request.guild_id, request.member_id)
+        async with group.clip.get_lock():
+            if self._closing or await group.clip() != request.clip:
+                raise MediaError("Skipped: the saved intro changed.")
+            path = self._cache.path(request.guild_id, request.member_id, request.clip)
+            task = (
+                None
+                if path
+                else self._cache.schedule(request.guild_id, request.member_id, request.clip, track)
+            )
+        if task:
+            path = await asyncio.shield(task)
+        # Open before waiting for voice. LRU eviction cannot remove audio from
+        # an already-open file, including during a slow Discord handshake.
+        try:
+            return CachedSource(path, volume=100, start=int(request.clip["start"] * 1000))
+        except OSError as error:
+            raise MediaError("The cached intro was removed. Use intro test to retry.") from error
+
+    def _prepare_later(self, member, clip):
+        try:
+            if not self._cache.path(member.guild.id, member.id, clip):
+                self._cache.schedule(member.guild.id, member.id, clip, saved_track(clip))
+        except MediaError:
+            # Saving a valid choice succeeds even while the download queue is full.
+            pass
 
     async def cog_before_invoke(self, ctx):
         if getattr(ctx, "interaction", None) and not ctx.interaction.response.is_done():
@@ -253,13 +335,11 @@ class IntroPlus(commands.Cog):
             self._result(request.guild_id, "Skipped: the member, clip or channel policy changed.")
             return
         track = saved_track(request.clip)
-        stream = await self._resolver.resolve(track)
-        duration = request.clip["duration"]
-        if track.length:
-            duration = min(duration, track.length / 1000 - request.clip["start"])
+        duration = clip_duration(request.clip)
         source = None
         owned = None
         try:
+            source = await self._local_source(request, track)
             async with self._voice_lock(request.guild_id):
                 selected = await self._eligible(request)
                 if not selected:
@@ -296,12 +376,7 @@ class IntroPlus(commands.Cog):
                     if not await self._eligible(request):
                         return
                     overlay = False
-                source = self._source_factory(
-                    stream,
-                    volume=policy["volume"],
-                    start=int(request.clip["start"] * 1000),
-                    duration=max(20, int(duration * 1000)),
-                )
+                source.volume = policy["volume"]
             if overlay:
                 await play_overlay(voice, source, duration)
             else:
@@ -422,12 +497,15 @@ class IntroPlus(commands.Cog):
     async def cog_unload(self):
         self._closing = True
         tasks = set(self._workers.values()) | set(self._commands)
+        if self._warm_task:
+            tasks.add(self._warm_task)
         tasks.discard(asyncio.current_task())
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for guild_id, voice in tuple(self._voices.items()):
             await self._disconnect(guild_id, voice)
+        await self._cache.close()
         await self._resolver.close()
         self._commands.clear()
         self._cooldowns.clear()
@@ -456,13 +534,14 @@ class IntroPlus(commands.Cog):
             await self._check_write(ctx)
             if self._closing or ctx.guild.get_member(member.id) is None:
                 raise commands.BadArgument("The member is no longer in this server.")
-            await self.config.member(member).clip.set(
-                {"track": asdict(tracks[0]), "duration": duration, "start": 0.0}
-            )
+            clip = {"track": asdict(tracks[0]), "duration": duration, "start": 0.0}
+            await self.config.member(member).clip.set(clip)
+            await self._cache.remove(guild_id=ctx.guild.id, member_id=member.id)
+            self._prepare_later(member, clip)
         await self._cancel_member(ctx.guild.id, member.id)
         await self._reply(
             ctx,
-            f"Saved **{tracks[0].title}** as a **{duration:g}-second** intro for {member.mention}.",
+            f"Saved **{tracks[0].title}** as a **{duration:g}-second** intro for {member.mention}.\nDownloading the selected segment for faster joins. Use `intro show` to check readiness.",
             tone="success",
         )
 
@@ -472,10 +551,17 @@ class IntroPlus(commands.Cog):
         """Manage personal YouTube clips played when someone joins voice."""
         policy = await self.config.guild(ctx.guild).all()
         clip = await self.config.member(ctx.author).clip()
+        cache = "no intro set"
+        if clip:
+            try:
+                saved_track(clip)
+                cache = self._cache.status(ctx.guild.id, ctx.author.id, clip)
+            except MediaError:
+                cache = "invalid saved clip; set your intro again"
         channel = f"<#{policy['channel']}>" if policy["channel"] else "all regular voice channels"
         await self._reply(
             ctx,
-            f"**Automatic intros** · {'on' if policy['enabled'] else 'off'}\n**Your intro** · {'set' if clip else 'not set'}\n**Volume** · {policy['volume']}%\n**Cooldown** · {policy['cooldown']} seconds\n**Channel** · {channel}\n**Waiting** · {len(self._queues.get(ctx.guild.id, ()))}\n**Latest result** · {self._last.get(ctx.guild.id, 'No playback yet.')}\nUse `intro set 8 <YouTube link or search>` to choose your clip.",
+            f"**Automatic intros** · {'on' if policy['enabled'] else 'off'}\n**Your intro** · {'set' if clip else 'not set'}\n**Local copy** · {cache}\n**Volume** · {policy['volume']}%\n**Cooldown** · {policy['cooldown']} seconds\n**Channel** · {channel}\n**Waiting** · {len(self._queues.get(ctx.guild.id, ()))}\n**Latest result** · {self._last.get(ctx.guild.id, 'No playback yet.')}\nUse `intro set 8 <YouTube link or search>` to choose your clip.",
         )
 
     @intro.command(name="help")
@@ -506,6 +592,7 @@ class IntroPlus(commands.Cog):
             if ctx is not None:
                 await self._check_write(ctx)
             await self.config.member(member).clip.clear()
+            await self._cache.remove(guild_id=member.guild.id, member_id=member.id)
         await self._cancel_member(member.guild.id, member.id)
 
     @intro.command(name="clear")
@@ -532,7 +619,7 @@ class IntroPlus(commands.Cog):
         track = saved_track(clip)
         await self._reply(
             ctx,
-            f"**Member** · {member.mention}\n**Video** · [{track.title}]({track.uri})\n**Duration** · {clip['duration']:g} seconds\n**Start** · {clip['start']:g} seconds",
+            f"**Member** · {member.mention}\n**Video** · [{track.title}]({track.uri})\n**Duration** · {clip['duration']:g} seconds\n**Start** · {clip['start']:g} seconds\n**Local copy** · {self._cache.status(ctx.guild.id, member.id, clip)}",
         )
 
     async def _clip_setting(self, ctx, field, value):
@@ -544,8 +631,14 @@ class IntroPlus(commands.Cog):
             clip[field] = value
             saved_track(clip)
             await self.config.member(ctx.author).clip.set(clip)
+            await self._cache.remove(guild_id=ctx.guild.id, member_id=ctx.author.id)
+            self._prepare_later(ctx.author, clip)
         await self._cancel_member(ctx.guild.id, ctx.author.id)
-        await self._reply(ctx, f"Your intro {field} is **{value:g} seconds**.", tone="success")
+        await self._reply(
+            ctx,
+            f"Your intro {field} is **{value:g} seconds**.\nPreparing the updated local copy. Use `intro show` to check readiness.",
+            tone="success",
+        )
 
     @intro.command(name="duration")
     async def intro_duration(self, ctx, value: float):
@@ -654,9 +747,10 @@ class IntroPlus(commands.Cog):
         voice = "\n".join(
             f"**{name}** · {status}" for name, status in state["voice_packages"].items()
         )
+        cached = sum(self._cache.entries.values()) / (1024 * 1024)
         await self._reply(
             ctx,
-            f"**Local prerequisites** · {'ready' if state['ready'] else 'incomplete'}\n{packages}\n{voice}\n**FFmpeg** · {state['ffmpeg']}\n**JavaScript** · {', '.join(state['runtimes']) or 'missing'}\n**Latest result** · {self._last.get(ctx.guild.id, 'No playback yet.')}\nLocal checks do not test YouTube access or a live Discord connection.",
+            f"**Local prerequisites** · {'ready' if state['ready'] else 'incomplete'}\n{packages}\n{voice}\n**FFmpeg** · {state['ffmpeg']}\n**JavaScript** · {', '.join(state['runtimes']) or 'missing'}\n**Local cache** · {len(self._cache.entries)} clips, {cached:.1f} MiB\n**Preparing** · {len(self._cache.jobs)} clips\n**Latest result** · {self._last.get(ctx.guild.id, 'No playback yet.')}\nLocal checks do not test YouTube access or a live Discord connection.",
         )
 
     @commands.Cog.listener()
@@ -693,6 +787,7 @@ class IntroPlus(commands.Cog):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.config.clear_all_members(guild)
+        await self._cache.remove(guild_id=guild.id)
         await self.config.guild(guild).clear()
         self._voice_locks.pop(guild.id, None)
         self._last.pop(guild.id, None)
@@ -721,6 +816,7 @@ class IntroPlus(commands.Cog):
         for key in list(self._cooldowns):
             if key[1] == user_id:
                 self._cooldowns.pop(key, None)
+        await self._cache.remove(member_id=user_id)
 
     async def red_get_data_for_user(self, *, user_id):
         result = {

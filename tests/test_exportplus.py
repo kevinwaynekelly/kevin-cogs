@@ -617,6 +617,7 @@ async def test_all_ten_cogs_register_valid_slash_payloads_and_identical_helpers(
 
     bot, hub, member, invoke = hub_runtime
     monkeypatch.setattr("exportplus.cog.cog_data_path", lambda cog: tmp_path / "ExportPlus")
+    monkeypatch.setattr("introplus.cog.cog_data_path", lambda cog: tmp_path / "IntroPlus")
     await bot.add_cog(EmojiStealerPlus(bot))
     await bot.add_cog(ExportPlus(bot))
     await bot.add_cog(BackupPlus(bot))

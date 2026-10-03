@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-03: IntroPlus prepared local clips
+
+- Download only each chosen intro segment in the background when a video, start or duration is saved; prepare existing choices on load. Play cached PCM files directly without YouTube resolution or FFmpeg startup on subsequent joins.
+- Persist ready copies across reloads/restarts, bound the cache to 256 clips and 128 MiB, coalesce duplicate jobs, limit preparation to two concurrent jobs, and remove partial/orphan files. Show local-copy readiness and cache diagnostics through existing prefix/slash commands.
+- Invalidate changed clips, remove cached audio with personal/server deletion and cancel owned subprocesses on interruption/unload, including cancellation during spawn. Preserve AudioPlus mixing, queues, pause and voice handoff. Verify real local FFmpeg downloads/replays; external YouTube and Discord voice transport remain mocked.
+
 ## 2026-10-03: IntroPlus personal voice entrance clips
 
 - Add independently installable IntroPlus with personal YouTube videos, 0.5–30 second duration limits, start offsets, previews, manager assignment, cooldown/volume/channel controls and 16 slash actions.

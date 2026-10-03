@@ -14,6 +14,11 @@ __red_end_user_data_statement__ = (
     "IDs, cooldowns and the latest sanitized server result are bounded transient memory and "
     "clear on unload; user-data hooks export/delete that member's saved clip and pending work. "
     "Leaving a server clears its intro settings and clips; member removal clears that member's "
-    "clip. No downloaded audio, signed stream URLs, cookies, OAuth tokens or cipher passwords "
-    "are persisted. YouTube and Discord receive requests necessary for playback."
+    "clip. Stores the selected audio segment as local PCM in Red's IntroPlus data directory, "
+    "associated with server/member IDs and clip timing, bounded to 256 clips and 128 MiB. "
+    "Ready copies survive reloads/restarts; changing or clearing a clip, member/server removal "
+    "and user-data deletion remove its cached audio and cancel pending downloads. User-data "
+    "export returns saved choices/timing, not audio files. Signed stream URLs, cookies, OAuth "
+    "tokens and cipher passwords are not persisted. YouTube and Discord receive requests "
+    "necessary for preparation and playback."
 )
