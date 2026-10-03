@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-03: PresencePlus saved bot status
+
+- Add independently installable PresencePlus with owner-only prefix controls and 24 slash actions, five activity types, availability, saved named profiles, rotation, dynamic placeholders and read-only previews. Loading starts disabled; valid configuration survives restarts.
+- Add non-overlapping timezone-aware weekly schedules with overnight/DST handling and opt-in global listening status from one selected AudioPlus server. AudioPlus exposes only a read-only active title/listener snapshot; paused/stopped playback returns to the effective profile.
+- Own/cancel the worker and pending writers, rate-limit/coalesce gateway updates, refresh after reconnects and restore the prior session presence when still owned. Bound records/text, validate before atomic Config commits and repeat owner/Red checks after writer waits.
+- Document global visibility and data handling; validate all eleven cogs together at 401 slash actions and 85 roots. Tests use actual Red/Config/SDK behavior with mocked Discord gateway and voice transport.
+
 ## 2026-10-03: IntroPlus prepared local clips
 
 - Download only each chosen intro segment in the background when a video, start or duration is saved; prepare existing choices on load. Play cached PCM files directly without YouTube resolution or FFmpeg startup on subsequent joins.

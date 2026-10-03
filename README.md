@@ -1,8 +1,8 @@
 # Kevin Cogs
 
-Nine feature cogs and an optional shared settings hub for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
+Ten feature cogs and an optional shared settings hub for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
 
-Music, personal voice entrance clips, community tools, leveling, event logging, message transformations, automatic emoji capture, readable chat exports and server structure backups. Each cog can be installed separately.
+Music, personal voice entrance clips, saved bot status profiles, community tools, leveling, event logging, message transformations, automatic emoji capture, readable chat exports and server structure backups. Each cog can be installed separately.
 
 ## Cogs
 
@@ -10,6 +10,7 @@ Music, personal voice entrance clips, community tools, leveling, event logging, 
 | --- | --- | --- | --- |
 | AudioPlus | Native playback, recovery, normalization, shared playlists, DJ policies and daily checks | `[p]play`, `/play`, `[p]audioset` | [Setup and commands](audioplus/README.md) |
 | IntroPlus | Cached personal YouTube voice entrance clips, duration/start controls and music overlays | `[p]intro set`, `/intro test`, `[p]intro duration` | [Setup and commands](introplus/README.md) |
+| PresencePlus | Owner-only saved bot status, rotation, timezone schedules and selected-server music presence | `[p]presence set`, `/presence preview`, `[p]presence music` | [Setup and commands](presenceplus/README.md) |
 | CommunityPlus | Roles, welcomes, temporary rooms, onboarding, birthdays and recurring events | `[p]community`, `[p]voiceroom`, `/birthday set` | [Setup and commands](communityplus/README.md) |
 | LevelPlus | XP, custom achievements, streaks, monthly seasons, filtered boards and rank cards | `[p]level`, `[p]achievement`, `/streak` | [Setup and commands](levelplus/README.md) |
 | LogPlus | Event logs, retained history, burst alerts, daily digests and staff incidents | `[p]log`, `[p]logalerts`, `/incident list` | [Setup and commands](logplus/README.md) |
@@ -35,7 +36,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | EmojiStealerPlus | `[p]emoji` or `/emoji status` | Automatic external emoji capture and checked manual `[p]yoink` controls. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The original five feature cogs expose 310 slash actions; EmojiStealerPlus adds six, ExportPlus adds nine, BackupPlus adds 13, IntroPlus adds 16 and optional SettingsHub adds 23, for 377 total actions. The ten cogs together register 84 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
+The original five feature cogs expose 310 slash actions; EmojiStealerPlus adds six, ExportPlus adds nine, BackupPlus adds 13, IntroPlus adds 16, PresencePlus adds 24 and optional SettingsHub adds 23, for 401 total actions. The eleven cogs together register 85 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
@@ -50,7 +51,7 @@ Install optional [SettingsHub](settingshub/README.md) for `[p]settings` or `/set
 
 ## Discord presentation
 
-All ten cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
+All eleven cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
 
 Red's native `[p]help` lists descriptions for every cog command. Use `[p]help community`, `[p]help level`, or `[p]help log` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
 
@@ -98,6 +99,7 @@ Read the cog's guide before loading it on an existing server. Some features star
 | --- | --- |
 | AudioPlus | Runs music search and playback locally with `[p]play` or `/play`. Joins your voice channel, or the available channel with the most people if you are not in voice. Disconnects after the queue is idle for 10 seconds. Unload Red's bundled Audio cog before loading AudioPlus. Check dependencies with `[p]audiostatus`; enable and sync slash commands once as the bot owner. |
 | IntroPlus | Automatic intros are enabled only for members who have a saved clip. Use `[p]intro set 8 <YouTube video or search>`, check local-copy readiness with `[p]intro show` and preview with `[p]intro test`. Prepares the selected 0.5–30 second segment locally for faster joins; ready copies survive restarts. Cooldown defaults to 60 seconds. Uses the native AudioPlus prerequisites and can install independently. |
+| PresencePlus | Bot-owner controls only. Automation defaults off; `[p]presence set custom <text>` enables it. Saved profiles rotate every five minutes by default, with optional weekly timezone schedules and `[p]presence music true` for one selected AudioPlus server. Status is visible across all the bot's servers. No extra dependencies. |
 | CommunityPlus | Sticky roles, activity tracking, and solo voice cleanup are enabled. Solo voice cleanup defaults to 900 seconds. Autorole and welcome/goodbye targets need to be configured. |
 | LevelPlus | Message, reaction, and voice XP are enabled, along with level-up announcements. |
 | LogPlus | Needs a destination channel or route before it can post logs. |
@@ -196,7 +198,9 @@ Settings and persistent records use Red's Config system. CommunityPlus records a
 
 AudioPlus preserves legacy Lavalink connection settings, including the old node password, for rollback. Native playback ignores them. The optional daily monitor stores recipient/test/schedule/result records. Personal/shared playlists retain public metadata and proposer/requester attribution. Listening history starts enabled and retains 100 public playback starts for 30 days, capped at 512 KiB, with requester export/deletion. Opt-in queue recovery retains up to 100 public records and playback state for seven days; ordinary queues remain transient when recovery is off. Extracted stream URLs, downloaded audio and yt-dlp disk caches are not persisted.
 
-LogPlus posts edited/deleted text to configured Discord channels. Opt-in history retains bounded event details for 1 to 90 days; staff incident cases retain selected log excerpts/notes and attribution for up to 90 days. Daily digests store aggregate counts, and owner error policies store the configuring recipient. OwoPlus reposts transformed messages through webhooks and attempts to delete originals. Each guide and `info.json` describes its records and limits. All ten cogs implement Red's user-data hooks. Deletion removes or anonymizes associated records; messages already posted to Discord remain managed there.
+PresencePlus stores global owner-supplied status profiles/templates, availability, rotation, timezone, weekly rules and an optional music source server ID. Dynamic song/listener information is read from memory and not persisted. Status text is visible across the bot's servers. It has no member records; the owner can reset all presence settings explicitly.
+
+LogPlus posts edited/deleted text to configured Discord channels. Opt-in history retains bounded event details for 1 to 90 days; staff incident cases retain selected log excerpts/notes and attribution for up to 90 days. Daily digests store aggregate counts, and owner error policies store the configuring recipient. OwoPlus reposts transformed messages through webhooks and attempts to delete originals. Each guide and `info.json` describes its records and limits. All eleven cogs implement Red's user-data hooks. Deletion removes or anonymizes associated records; messages already posted to Discord remain managed there.
 
 ExportPlus reads chat history only on explicit administrator requests and privately sends readable text/JSONL ZIPs. Temporary exports expire after 24 hours or are cleared on cancellation/unload and user-data deletion. Only accessible history is included; skipped sources and partial results are listed. See the [export guide](exportplus/README.md).
 

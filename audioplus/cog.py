@@ -398,6 +398,29 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         """Coordinate optional IntroPlus connections with music joins and moves."""
         return self._player_locks[guild_id]
 
+    def music_presence(self, guild_id):
+        """Read-only status protocol for optional PresencePlus, without voice side effects."""
+        guild = self.bot.get_guild(guild_id)
+        player = self._get_player(guild) if guild else None
+        if (
+            not player
+            or not player.current
+            or player.preparing
+            or player.paused
+            or not player.playing
+            or not player.voice.is_connected()
+        ):
+            return None
+        listeners = sum(
+            1
+            for member in player.voice.channel.members
+            if not member.bot
+            and getattr(member, "voice", None)
+            and not member.voice.deaf
+            and not member.voice.self_deaf
+        )
+        return {"song": player.current.title, "listeners": listeners}
+
     async def _stage_unsuppress_if_needed(self, guild, channel):
         if not isinstance(channel, discord.StageChannel):
             return

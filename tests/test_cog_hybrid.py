@@ -60,7 +60,7 @@ async def invoke_slash(bot, invoke, monkeypatch, path, **options):
     """Run the actual hybrid prepare/convert/check/hook/error/callback pipeline."""
     ctx = await invoke("!help")
     command = bot.get_command(path)
-    if command is None and " " in path:
+    if (command is None or command.app_command is None) and " " in path:
         parent, fallback = path.rsplit(" ", 1)
         command = bot.get_command(parent)
         app = command.app_command.get_command(fallback)
