@@ -191,6 +191,10 @@ For another base-image family, add FFmpeg, libopus, and a supported JavaScript r
 
 ## Playback
 
+Optional [IntroPlus](../introplus/README.md) plays personal YouTube entrance clips. Update both cogs for a shared native connection lock and `play` handoff from temporary intro sessions. When music is playing in the same channel, intros mix over PCM audio with music at 30% volume for the clip; the queue and music progress keep advancing. Paused, idle, other-channel and other-cog sessions are skipped. The shared decoder in `source.py` also supports finite clips with 20 ms frame bounds and FFmpeg duration limits.
+
+Lavalink YouTube `oauth` and `remoteCipher` YAML do not configure AudioPlus's native yt-dlp backend. Remote cipher is documented for [youtube-source's Lavaplayer/Lavalink integration](https://github.com/lavalink-devs/youtube-source#using-a-remote-cipher-server). Current [yt-dlp documentation](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#logging-in-with-oauth) says YouTube OAuth no longer works with yt-dlp and recommends cookies when an account is required. AudioPlus resolves public media with local yt-dlp/EJS and a supported JavaScript runtime; it does not store the supplied OAuth or cipher credentials.
+
 Run a play command in your server. AudioPlus joins your voice channel when you are in one. If you are not in voice, it chooses the available voice channel with the most people, excluding bots from the count. It skips the AFK channel, channels where it lacks View Channel/Connect/Speak, and full channels unless it has permission to bypass the member limit. Ties, including empty channels, follow the server's channel order. If no channel is available, it explains the permissions or capacity needed. Automatic selection uses ordinary voice channels; joining your existing Stage channel still uses the Stage-speaking checks.
 
 Try:

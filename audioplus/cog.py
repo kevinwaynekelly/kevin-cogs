@@ -394,6 +394,10 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             player if player and not player.closed and guild.voice_client is player.voice else None
         )
 
+    def voice_connection_lock(self, guild_id):
+        """Coordinate optional IntroPlus connections with music joins and moves."""
+        return self._player_locks[guild_id]
+
     async def _stage_unsuppress_if_needed(self, guild, channel):
         if not isinstance(channel, discord.StageChannel):
             return
@@ -571,6 +575,11 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             player = self._get_player(ctx.guild)
             previous = self._players.get(ctx.guild.id)
             existing = ctx.guild.voice_client
+            get_cog = getattr(self.bot, "get_cog", lambda name: None)
+            intro = get_cog("IntroPlus")
+            if existing and intro and intro.owns_voice(existing):
+                await intro.release_voice(ctx.guild)
+                existing = ctx.guild.voice_client
             if existing and (previous is None or existing is not previous.voice):
                 raise commands.CommandError(
                     "Another cog owns the voice connection. Disconnect it before using AudioPlus."

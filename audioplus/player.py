@@ -3,88 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-import audioop
 import logging
-import os
 import random
-import shlex
-import threading
 from collections import deque
 
 import discord
 
 from .failures import log_failure, safe_exception
-from .resolver import MAX_TRACKS, MediaError, Stream, Track
+from .resolver import MAX_TRACKS, MediaError, Track
+from .source import NativeSource
 
 log = logging.getLogger(__name__)
 IDLE_DISCONNECT_SECONDS = 10
 
 
-class NativeSource(discord.AudioSource):
-    def __init__(self, stream: Stream, *, volume: int, start: int = 0, normalize: bool = False):
-        before = "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 15000000 -protocol_whitelist http,https,tcp,tls,crypto,pipe"
-        if stream.headers:
-            headers = "".join(f"{key}: {value}\r\n" for key, value in stream.headers.items())
-            before += " -headers " + shlex.quote(headers)
-        if start:
-            before += f" -ss {start / 1000:.3f}"
-        self._stderr = open(os.devnull, "wb")
-        try:
-            self._audio = discord.FFmpegPCMAudio(
-                stream.url,
-                before_options=before,
-                options="-vn -loglevel error"
-                + (" -af loudnorm=I=-16:TP=-1.5:LRA=11" if normalize else ""),
-                stderr=self._stderr,
-            )
-        except BaseException:
-            self._stderr.close()
-            raise
-        self.volume = volume
-        self.start = start
-        self.frames = 0
-        self._cleaned = False
-        self._cleanup_lock = threading.Lock()
-
-    @property
-    def position(self):
-        return self.start + self.frames * 20
-
-    def read(self):
-        data = self._audio.read()
-        if not data:
-            # EOF can be a decoder/network failure rather than a natural track end.
-            code = self._audio._process.wait(timeout=2)
-            if code or not self.frames:
-                raise MediaError(
-                    "FFmpeg could not read this audio stream. Try another track or run audio tone to test the local player."
-                )
-            return b""
-        self.frames += 1
-        return audioop.mul(data, 2, self.volume / 100) if self.volume != 100 else data
-
-    def is_opus(self):
-        return False
-
-    def cleanup(self):
-        if getattr(self, "_cleaned", True):
-            return
-        # Discord's audio thread and the event loop can both request cleanup.
-        # A completed flag must mean the child is reaped, not merely claimed.
-        with self._cleanup_lock:
-            if self._cleaned:
-                return
-            try:
-                self._audio.cleanup()
-            finally:
-                self._stderr.close()
-                self._cleaned = True
-
-
 class GuildPlayer:
     def __init__(
         self,
-        voice,
+        voice: discord.VoiceClient,
         resolver,
         report_error,
         *,

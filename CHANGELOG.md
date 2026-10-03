@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-03: IntroPlus personal voice entrance clips
+
+- Add independently installable IntroPlus with personal YouTube videos, 0.5–30 second duration limits, start offsets, previews, manager assignment, cooldown/volume/channel controls and 16 slash actions.
+- Reuse the native yt-dlp resolver, voice checks and extracted PCM decoder; enforce trimming in FFmpeg and decoded frame counts. Coordinate AudioPlus connections and hand off temporary intro voice sessions on music requests.
+- Mix intros over same-channel active PCM music while preserving queue/progress, user pause and replacement sources. Bound pending joins and process lifetimes; cancel owned work on leave, clear, stop, unload and data deletion.
+- Document the native backend's separation from Lavalink OAuth/remote-cipher settings, preserve credentials outside code, and check all ten cogs together at 377 slash actions and 84 roots. Discord/YouTube networking is mocked; local FFmpeg decoding is exercised.
+
 ## 2026-10-02: BackupPlus permission mask compatibility
 
 - Fix backup creation rejecting server role permissions that contain reserved or newer bits absent from Discord.py's named flags. Keep bounded integer validation and existing restore authorization checks.

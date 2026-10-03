@@ -1,0 +1,28 @@
+{
+  "author": [
+    "Kevin Kelly"
+  ],
+  "short": "Personal YouTube entrance clips with duration, start offsets and music overlays.",
+  "description": "Play each member's saved YouTube intro when they join a regular voice channel. Configurable 0.5-30 second clips, starting offsets, per-server member choices, prefix/slash controls, administrator assignment, cooldowns, volume and channel restriction. Uses cancellable yt-dlp and native FFmpeg/Discord voice independently of AudioPlus. Updated AudioPlus supports shared connection locking, temporary voice handoff and PCM overlays that preserve music progress and queues. Bounded sequential queues and owned cleanup on leave, clear, stop, unload and privacy deletion. No Lavalink server is needed.",
+  "install_msg": "Read https://github.com/kevinwaynekelly/kevin-cogs/blob/main/introplus/README.md. Install native PyNaCl>=1.5.0,<1.6 and davey>=0.1.6 once in Red's environment, plus FFmpeg, libopus and Deno 2.3+ or Node.js 22+; restart after changing voice libraries. Downloader installs yt-dlp/EJS. Update/reload AudioPlus if installed for music voice handoff. Use [p]intro set 8 <YouTube video or search>, [p]intro start 35 and [p]intro test. Run [p]intro diagnostics for local prerequisites. The bot owner enables slash commands using [p]slash enablecog introplus and [p]slash sync.",
+  "requirements": [
+    "yt-dlp[default]>=2026.8.19"
+  ],
+  "tags": [
+    "audio",
+    "youtube",
+    "voice",
+    "intro",
+    "ffmpeg"
+  ],
+  "min_bot_version": "3.5.24",
+  "min_python_version": [
+    3,
+    10,
+    0
+  ],
+  "type": "COG",
+  "hidden": false,
+  "disabled": false,
+  "end_user_data_statement": "Stores each member's chosen public YouTube video URL, title, author, source duration, intro duration and start offset in per-server Red Config. Server settings store automatic playback, volume, cooldown and an optional voice-channel restriction. Queued joins, member IDs, cooldowns and the latest sanitized server result are bounded transient memory and clear on unload; user-data hooks export/delete that member's saved clip and pending work. Leaving a server clears its intro settings and clips; member removal clears that member's clip. No downloaded audio, signed stream URLs, cookies, OAuth tokens or cipher passwords are persisted. YouTube and Discord receive requests necessary for playback."
+}
