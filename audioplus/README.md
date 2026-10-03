@@ -50,7 +50,7 @@ After loading AudioPlus, run these commands as the bot owner:
 
 Use the lowercase module name `audioplus`. Red keeps application commands disabled until the owner enables them. Then choose `/play` and enter a song name or URL in its `query` option. All 20 direct controls in the command table below have matching slash commands. Prefix aliases such as `[p]p` do not create additional slash names.
 
-When updating an installation that already enabled AudioPlus slash commands, run `[p]slash sync` after reloading to publish command changes. If commands still do not appear, use Red's `[p]invite` to ensure the bot was invited with application-command access.
+When updating an installation that already enabled AudioPlus slash commands, run `[p]slash enablecog audioplus` again after reloading to enable any new root commands, then `[p]slash sync` to publish the changes. Red saves enablement by command name, so syncing alone does not enable a new group such as `audiocache`. If commands still do not appear, use Red's `[p]invite` to ensure the bot was invited with application-command access.
 
 ## Upgrading from the Lavalink backend
 
@@ -352,7 +352,7 @@ The shared bot storage budget is **2 GiB or 2,000 songs**, with a **16 MiB per-s
 | `[p]audiocache` | `/audiocache status` | Show this server's count, storage, preparations, next expiry and a safe cache notice. |
 | `[p]audiocache clear` | `/audiocache clear` | Red administrators or Manage Server erase this server's copies and cancel its preparations. Current playback keeps running; future requests can cache songs again. |
 
-`[p]audiostatus` also shows this server's cache usage. After updating and reloading AudioPlus, use `[p]slash sync` to publish the two cache actions. Existing Config identifiers/defaults are unchanged, and caching begins automatically for new playback.
+`[p]audiostatus` also shows this server's cache usage. After updating and reloading AudioPlus, use `[p]slash enablecog audioplus` and then `[p]slash sync` to enable and publish the new cache group. Existing Config identifiers/defaults are unchanged, and caching begins automatically for new playback.
 
 Cache metadata stores the server ID, a hash of the public source URL, duration, byte size, creation time and up to 128 associated requester IDs per song. Additional requesters create no attribution record. Titles, raw source/stream URLs, credentials and HTTP headers are excluded. Red user-data exports include identified cache metadata; deletion removes whole associated copies, including shared copies, and cancels associated downloads. Cache files are outside SettingsHub settings backups.
 
