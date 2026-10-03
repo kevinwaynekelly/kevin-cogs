@@ -12,13 +12,15 @@ Saved bot status profiles, rotating messages, weekly schedules and optional Audi
 [p]load presenceplus
 [p]slash enablecog presenceplus
 [p]slash sync
-[p]presence set custom Use !help for commands
+[p]presence set custom Use /play or /search
 [p]presence add watching {servers} servers
 [p]presence add playing Music for {members} members
 [p]presence interval 300
 ```
 
 Use your existing repository alias if it differs from `kevin-cogs`, such as `kevin`. Requires Red 3.5.24+ and Python 3.10/3.11, with no additional dependencies. Loading the cog starts with automation **disabled** and preserves your current status. `set`, `add`, `profile use` and enabling music also enable automation. Other edits leave the enabled flag as it was.
+
+The stock custom status is `Use /play or /search`, referring to AudioPlus's slash commands. On the first update/reload, existing `default` profile entries that exactly match the old stock `Use !help for commands` are replaced under the configuration lock. Custom text, other named profiles, availability, automation and schedules are preserved. An internal migration version prevents later owner edits from being rewritten. Red's built-in help remains the prefix command `[p]help`.
 
 `[p]presence` / `/presence show` shows the editable base profile, the effective scheduled profile, music source, rendered preview and latest safe error type. Changes reach Discord within 15 seconds. Gateway failures retry on subsequent checks.
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-03: PresencePlus slash command hint
+
+- Change the stock custom status to `Use /play or /search`, matching AudioPlus's real slash commands. Red's built-in help remains prefix-only.
+- Migrate exact old stock entries in the existing `default` profile once on load, preserving custom text, other profiles, automation, availability and schedules. Save the migration version under the same global settings lock so later owner edits survive reloads.
+
 ## 2026-10-03: PresencePlus saved bot status
 
 - Add independently installable PresencePlus with owner-only prefix controls and 24 slash actions, five activity types, availability, saved named profiles, rotation, dynamic placeholders and read-only previews. Loading starts disabled; valid configuration survives restarts.

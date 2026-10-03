@@ -7,7 +7,14 @@ from typing import Literal
 from redbot.core import Config, commands
 
 from .command_support import check_command, finish_configuration_audit, prepare_hybrid
-from .constants import DEFAULTS, MAX_ENTRIES, MAX_PROFILES, MAX_SCHEDULES
+from .constants import (
+    DEFAULT_COMMAND_HINT,
+    DEFAULTS,
+    LEGACY_COMMAND_HINT,
+    MAX_ENTRIES,
+    MAX_PROFILES,
+    MAX_SCHEDULES,
+)
 from .controller import PresenceController
 from .presentation import Presentation
 from .profiles import describe_rule, minute, name, template, validate, weekdays, zone
@@ -22,13 +29,29 @@ class PresencePlus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=702035013, force_registration=True)
-        self.config.register_global(settings=deepcopy(DEFAULTS))
+        self.config.register_global(settings=deepcopy(DEFAULTS), command_hint_version=0)
         self._presentation = Presentation("PresencePlus", "presence")
         self._controller = PresenceController(self)
         self._commands = set()
         self._closing = False
 
     async def cog_load(self):
+        async with self.config.settings.get_lock():
+            if await self.config.command_hint_version() == 0:
+                settings = await self.config.settings()
+                profiles = settings.get("profiles", {}) if isinstance(settings, dict) else {}
+                profile = profiles.get("default", {}) if isinstance(profiles, dict) else {}
+                entries = profile.get("entries", []) if isinstance(profile, dict) else []
+                changed = False
+                if isinstance(entries, list):
+                    for entry in entries:
+                        if entry == {"kind": "custom", "text": LEGACY_COMMAND_HINT}:
+                            entry["text"] = DEFAULT_COMMAND_HINT
+                            changed = True
+                if changed:
+                    await self.config.settings.set(settings)
+                # A later owner choice of the old text must survive future reloads.
+                await self.config.command_hint_version.set(1)
         self._controller.start()
 
     async def cog_unload(self):

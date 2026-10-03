@@ -20,7 +20,12 @@ from test_native_audio import FakeVoice, eventually, track
 
 from audioplus.player import GuildPlayer
 from presenceplus import PresencePlus
-from presenceplus.constants import DEFAULTS, __red_end_user_data_statement__
+from presenceplus.constants import (
+    DEFAULT_COMMAND_HINT,
+    DEFAULTS,
+    LEGACY_COMMAND_HINT,
+    __red_end_user_data_statement__,
+)
 from presenceplus.controller import PresenceController, signature
 from presenceplus.profiles import effective_profile, minute, render, template, validate, weekdays
 
@@ -214,6 +219,59 @@ async def test_prefix_slash_messages_profiles_and_restart_persistence(
     assert await reloaded.config.settings() == saved
     ctx = await invoke_slash(bot, invoke, monkeypatch, "presence show")
     assert not ctx.command_failed and "default" in ctx.send.await_args.kwargs["embed"].description
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_stock_hint_upgrade_preserves_settings_and_later_owner_edits(
+    presence_runtime, enabled
+):
+    bot, _, cog, _, invoke = presence_runtime
+    await bot.remove_cog("PresencePlus")
+    settings = deepcopy(DEFAULTS)
+    settings["enabled"] = enabled
+    settings["interval"] = 600
+    settings["profiles"]["default"]["status"] = "idle"
+    settings["profiles"]["default"]["entries"] = [
+        {"kind": "custom", "text": LEGACY_COMMAND_HINT},
+        {"kind": "watching", "text": "Owner's custom message"},
+    ]
+    settings["profiles"]["personal"] = {
+        "status": "dnd",
+        "entries": [{"kind": "custom", "text": LEGACY_COMMAND_HINT}],
+    }
+    settings["schedules"]["night"] = {"profile": "personal", "start": 1320, "end": 420, "days": [4]}
+    await cog.config.settings.set(settings)
+    await cog.config.command_hint_version.set(0)
+    upgraded = PresencePlus(bot)
+    await bot.add_cog(upgraded)
+    expected = deepcopy(settings)
+    expected["profiles"]["default"]["entries"][0]["text"] = DEFAULT_COMMAND_HINT
+    assert await upgraded.config.settings() == expected
+    assert await upgraded.config.command_hint_version() == 1
+    assert not (await invoke("!presence preview")).command_failed
+
+    # Once the upgrade has run, an owner's exact choice of the old text is custom.
+    assert not (await invoke(f"!presence set custom {LEGACY_COMMAND_HINT}")).command_failed
+    chosen = await upgraded.config.settings()
+    await bot.remove_cog("PresencePlus")
+    reloaded = PresencePlus(bot)
+    await bot.add_cog(reloaded)
+    assert await reloaded.config.settings() == chosen
+
+
+async def test_custom_default_hint_survives_first_upgrade(presence_runtime):
+    bot, _, cog, _, _ = presence_runtime
+    await bot.remove_cog("PresencePlus")
+    settings = deepcopy(DEFAULTS)
+    settings["profiles"]["default"]["entries"] = [
+        {"kind": "custom", "text": "Kevin's chosen status"}
+    ]
+    await cog.config.settings.set(settings)
+    await cog.config.command_hint_version.set(0)
+    upgraded = PresencePlus(bot)
+    await bot.add_cog(upgraded)
+    assert await upgraded.config.settings() == settings
+    assert await upgraded.config.command_hint_version() == 1
 
 
 @pytest.mark.parametrize("slash", [False, True])
@@ -451,7 +509,7 @@ async def test_disable_does_not_restore_until_gateway_cooldown_expires(controlle
     settings["enabled"] = False
     await cog.config.settings.set(settings)
     await controller.tick()
-    assert bot.activity.name == "Use !help for commands"
+    assert bot.activity.name == DEFAULT_COMMAND_HINT
     clock[0] += 15
     await controller.tick()
     assert bot.activity.name == "Before"

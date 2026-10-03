@@ -1,5 +1,8 @@
 """Global presence defaults and bounded policies."""
 
+DEFAULT_COMMAND_HINT = "Use /play or /search"
+LEGACY_COMMAND_HINT = "Use !help for commands"
+
 DEFAULTS = {
     "enabled": False,
     "selected": "default",
@@ -8,7 +11,7 @@ DEFAULTS = {
     "profiles": {
         "default": {
             "status": "online",
-            "entries": [{"kind": "custom", "text": "Use !help for commands"}],
+            "entries": [{"kind": "custom", "text": DEFAULT_COMMAND_HINT}],
         }
     },
     "schedules": {},
@@ -28,7 +31,8 @@ PLACEHOLDERS = {"servers", "members", "uptime", "song", "listeners"}
 __red_end_user_data_statement__ = (
     "Stores bot-owner configured global status profiles, availability, rotation interval, "
     "timezone, weekly schedules and an optional AudioPlus source server ID and music template "
-    "in Red Config. Profiles and templates store the text the owner supplies; do not include "
+    "and an internal default-hint migration version in Red Config. Profiles and templates "
+    "store the text the owner supplies; do not include "
     "private personal information. No member-specific records, listening histories or tokens "
     "are collected. Dynamic member counts and the selected server's current song/listener "
     "count are read from memory and not persisted. Enabled status text is sent to Discord "
