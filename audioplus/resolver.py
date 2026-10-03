@@ -34,6 +34,9 @@ class Track:
 class Stream:
     url: str
     headers: dict[str, str] = field(default_factory=dict)
+    length: int = 0
+    live: bool = False
+    local: bool = False
 
 
 def http_url(value: object) -> str:
@@ -237,7 +240,18 @@ class MediaResolver:
                 and not any(ord(c) < 32 for c in value)
             ):
                 headers[str(name)] = value
-        return Stream(url, headers)
+        duration = data.get("duration")
+        length = (
+            max(0, int(duration * 1000))
+            if type(duration) in (int, float) and math.isfinite(duration)
+            else 0
+        )
+        live = bool(data.get("is_live")) or data.get("live_status") in {
+            "is_live",
+            "is_upcoming",
+            "post_live",
+        }
+        return Stream(url, headers, length=length, live=live)
 
     async def close(self):
         self._closed = True

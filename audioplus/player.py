@@ -9,6 +9,7 @@ from collections import deque
 
 import discord
 
+from .cache import song_key
 from .failures import log_failure, safe_exception
 from .resolver import MAX_TRACKS, MediaError, Track
 from .source import NativeSource
@@ -29,6 +30,7 @@ class GuildPlayer:
         on_start=None,
         on_end=None,
         on_finish=None,
+        cache=None,
     ):
         self.voice = voice
         self.resolver = resolver
@@ -38,6 +40,7 @@ class GuildPlayer:
         self.on_start = on_start
         self.on_end = on_end
         self.on_finish = on_finish
+        self.cache = cache
         self.fair_queue = False
         self.autoplay = False
         self._autoplay_generation = 0
@@ -201,51 +204,83 @@ class GuildPlayer:
 
     async def _play_one(self, track, start=0, paused=False):
         self.preparing = True
-        source = None
+        requester = self._requesters.get(id(track), 0)
+        epoch = self.cache.epoch if self.cache else 0
+        stream = self.cache.get(self.guild.id, track, requester) if self.cache else None
+        notified = False
         try:
-            stream = await self.resolver.resolve(track)
-            if not self.voice.is_connected():
-                raise MediaError("Discord voice disconnected. Use audio rejoin or audio join.")
-            options = {"normalize": True} if self.normalize else {}
-            source = self.source_factory(stream, volume=self.volume, start=start, **options)
-            self.source = source
-            loop = asyncio.get_running_loop()
-            ended = loop.create_future()
-
-            def complete(error):
-                if not ended.done():
-                    ended.set_result(error)
-
-            def after(error):
-                if not loop.is_closed():
-                    loop.call_soon_threadsafe(complete, error)
-
-            self.voice.play(source, after=after)
-            if paused:
-                self.voice.pause()
-            self.preparing = False
-            self.last_error = None
-            if self.on_start:
+            for attempt in range(2):
+                source = None
+                if stream is None:
+                    stream = await self.resolver.resolve(track)
                 try:
-                    await self.on_start(self)
+                    if not self.voice.is_connected():
+                        raise MediaError(
+                            "Discord voice disconnected. Use audio rejoin or audio join."
+                        )
+                    options = {"normalize": True} if self.normalize else {}
+                    source = self.source_factory(stream, volume=self.volume, start=start, **options)
+                    self.source = source
+                    loop = asyncio.get_running_loop()
+                    ended = loop.create_future()
+
+                    def complete(error, future=ended):
+                        if not future.done():
+                            future.set_result(error)
+
+                    def after(error, callback=complete):
+                        if not loop.is_closed():
+                            loop.call_soon_threadsafe(callback, error)
+
+                    self.voice.play(source, after=after)
+                    if paused:
+                        self.voice.pause()
+                    self.preparing = False
+                    self.last_error = None
+                    if self.cache:
+                        self.cache.schedule(self.guild.id, track, stream, requester, epoch=epoch)
+                    if self.on_start and not notified:
+                        notified = True
+                        try:
+                            await self.on_start(self)
+                        except Exception:
+                            log.warning("Could not update the music panel", exc_info=True)
+                    error = await ended
+                    if error:
+                        raise error
+                    return
                 except Exception:
-                    log.warning("Could not update the music panel", exc_info=True)
-            error = await ended
-            if error:
-                raise error
+                    if (
+                        attempt
+                        or not getattr(stream, "local", False)
+                        or not self.voice.is_connected()
+                    ):
+                        raise
+                    # Discard an unreadable copy, retry the provider once, and
+                    # continue after any frames already sent without another start record.
+                    self.cache.invalidate(song_key(self.guild.id, track))
+                    if source:
+                        start = source.position
+                    stream = None
+                    self.preparing = True
+                finally:
+                    self.source = None
+                    # A cancelled start must not leave a decoder behind the queue.
+                    if source is not None:
+                        self.voice.stop()
+                        source.cleanup()
+                        if self.on_finish:
+                            try:
+                                frames = getattr(source, "frames", 0)
+                                await self.on_finish(
+                                    self, track, frames * 20 if type(frames) is int else 0
+                                )
+                            except Exception:
+                                log.warning(
+                                    "Could not account for music session playback", exc_info=True
+                                )
         finally:
             self.preparing = False
-            self.source = None
-            # A cancelled preparation/start must not leave a decoder playing behind the queue.
-            if source is not None:
-                self.voice.stop()
-                source.cleanup()
-                if self.on_finish:
-                    try:
-                        frames = getattr(source, "frames", 0)
-                        await self.on_finish(self, track, frames * 20 if type(frames) is int else 0)
-                    except Exception:
-                        log.warning("Could not account for music session playback", exc_info=True)
 
     async def _run(self):
         try:

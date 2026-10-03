@@ -13,9 +13,11 @@ from zoneinfo import ZoneInfo
 import discord
 from redbot.core import Config, app_commands, checks, commands
 from redbot.core.bot import Red
+from redbot.core.data_manager import cog_data_path
 
 from .backend import diagnostics, require_voice
-from .command_support import finish_configuration_audit, prepare_hybrid
+from .cache import MAX_CACHE_BYTES, SongCache
+from .command_support import check_command, finish_configuration_audit, prepare_hybrid
 from .continuity import CONTINUITY_DEFAULTS, AudioContinuity
 from .dependencies import VoiceDependencyRepair
 from .failures import log_failure, playback_stage
@@ -61,6 +63,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             **DEFAULTS_GUILD, continuity=CONTINUITY_DEFAULTS, recovery={}, server_playlists={}
         )
         self._resolver = MediaResolver()
+        self._cache = SongCache()
         self._voice_repair = VoiceDependencyRepair()
         self._players = {}
         self._player_locks = defaultdict(asyncio.Lock)
@@ -104,6 +107,16 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
     async def cog_load(self):
         # Setup/help remain available when the container needs dependencies.
         self._closing = False
+        preparing = asyncio.create_task(
+            asyncio.to_thread(self._cache.initialize, cog_data_path(self) / "songs")
+        )
+        try:
+            await asyncio.shield(preparing)
+        except asyncio.CancelledError:
+            await preparing
+            await self._cache.close()
+            raise
+        self._cache.start()
         self._watchdog.start()
         self._continuity_task = asyncio.create_task(self._continuity_loop())
 
@@ -118,6 +131,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             except Exception:
                 log.exception("Could not checkpoint queue on unload")
         await self._voice_repair.close()
+        await self._cache.close()
         await self._watchdog.close()
         await close_views(self)
         for guild_id in tuple(self._panels):
@@ -636,6 +650,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
                         on_start=self._track_started,
                         on_end=self._autoplay_next,
                         on_finish=self._session_segment,
+                        cache=self._cache,
                     )
                     player.normalize = (await self.config.guild(ctx.guild).continuity())[
                         "normalize"
@@ -778,6 +793,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
                     on_start=self._track_started,
                     on_end=self._autoplay_next,
                     on_finish=self._session_segment,
+                    cache=self._cache,
                 )
                 self._players[guild.id] = player
                 await self._restore(player, snapshot)
@@ -827,6 +843,14 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
                 or "Missing, install Deno 2.3+ or Node.js 22+ in the Red container"
             ),
         ]
+        cache = self._cache.status(ctx.guild.id)
+        lines.append(
+            f"**Song cache** · {cache['songs']} songs, {cache['bytes'] / 1024**2:.1f} MiB, {cache['pending']} downloading · under 5 minutes, kept for 3 months"
+        )
+        if cache["error"]:
+            lines.append(
+                f"**Cache notice** · {cache['error']} · uncached songs still stream normally"
+            )
         if state["voice_error"]:
             lines.append("\n" + state["voice_error"])
         check = await self.config.watchdog()
@@ -1418,7 +1442,34 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         """Reconnect and restore the track, pause state, and queue."""
         return await self._invoke_control(ctx, self.audio_rejoin)
 
+    @commands.hybrid_group(name="audiocache", invoke_without_command=True, fallback="status")
+    @GUILD_ONLY
+    async def audio_cache(self, ctx):
+        """Show this server's short-song cache and three-month expiry."""
+        await check_command(ctx, self.play)
+        await check_command(ctx, self.audio_play)
+        state = self._cache.status(ctx.guild.id)
+        expiry = f"<t:{int(state['next_expiry'])}:f>" if state["next_expiry"] else "No cached songs"
+        await self._reply(
+            ctx,
+            f"**Local copies** · {state['songs']} songs, {state['bytes'] / 1024**2:.1f} MiB\n**Downloading** · {state['pending']}\n**Eligibility** · Videos under 5 minutes, with a known duration\n**Retention** · 3 calendar months from download\n**Next expiry** · {expiry}\n**Storage limit** · {MAX_CACHE_BYTES / 1024**3:g} GiB across the bot\n**Cache notice** · {state['error'] or ('None' if state['ready'] else 'Unavailable')}\nThe first play streams normally while a copy downloads. Later plays use the local audio. Searches still contact the provider; daily checks bypass this cache.",
+            title="Song cache",
+        )
+
+    @audio_cache.command(name="clear")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def audio_cache_clear(self, ctx):
+        """Erase this server's song copies and cancel pending downloads."""
+        await self._cache.remove(guild_id=ctx.guild.id)
+        await self._reply(
+            ctx,
+            "This server's song cache was cleared. Music keeps playing; future requests can cache songs again.",
+            title="Song cache cleared",
+            tone="success",
+        )
+
     async def red_delete_data_for_user(self, *, requester, user_id):
+        await self._cache.remove(user_id=user_id)
         self._session_user_data(user_id, delete=True)
         await self._continuity_delete_user(user_id)
         await self._delete_listening_user(user_id)
@@ -1433,6 +1484,9 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
     async def red_get_data_for_user(self, *, user_id):
         state = await self.config.watchdog()
         data = {"watchdog": state} if state["recipient_id"] == user_id else {}
+        cache = self._cache.user_data(user_id)
+        if cache:
+            data["song_cache"] = cache
         data["shared_music"] = await self._continuity_user_data(user_id)
         if not data["shared_music"]:
             data.pop("shared_music")
@@ -1457,6 +1511,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         await self._dispose_player(guild.id)
+        await self._cache.remove(guild_id=guild.id)
         self._player_locks.pop(guild.id, None)
 
     @commands.Cog.listener()

@@ -118,6 +118,8 @@ def forbidden():
 
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
+    monkeypatch.setattr("audioplus.cog.cog_data_path", lambda cog: tmp_path / "AudioPlus")
+
     def get_conf(cog, identifier, force_registration=False):
         name = type(cog).__name__
         driver = JsonDriver(name, str(identifier), data_path_override=tmp_path / name)

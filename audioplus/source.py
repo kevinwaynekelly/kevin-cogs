@@ -20,7 +20,11 @@ class NativeSource(discord.AudioSource):
         normalize: bool = False,
         duration: int = 0,
     ):
-        before = "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 15000000 -protocol_whitelist http,https,tcp,tls,crypto,pipe"
+        before = (
+            "-nostdin -protocol_whitelist file,pipe"
+            if stream.local
+            else "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 15000000 -protocol_whitelist http,https,tcp,tls,crypto,pipe"
+        )
         if stream.headers:
             headers = "".join(f"{key}: {value}\r\n" for key, value in stream.headers.items())
             before += " -headers " + shlex.quote(headers)

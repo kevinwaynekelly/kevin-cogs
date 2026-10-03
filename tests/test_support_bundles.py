@@ -134,7 +134,7 @@ async def test_all_seven_cogs_register_valid_slash_options_and_share_helpers(hub
     await bot.add_cog(emoji)
     try:
         roots = {**bot.tree._global_commands, **bot.tree._disabled_global_commands}
-        assert len(roots) == 81
+        assert len(roots) == 82
         counts = {}
         for root in roots.values():
             leaves = (
@@ -145,7 +145,7 @@ async def test_all_seven_cogs_register_valid_slash_options_and_share_helpers(hub
                     name = leaf.binding.qualified_name
                     counts[name] = counts.get(name, 0) + 1
         assert counts == {
-            "AudioPlus": 60,
+            "AudioPlus": 62,
             "CommunityPlus": 80,
             "LevelPlus": 74,
             "LogPlus": 41,

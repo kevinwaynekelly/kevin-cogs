@@ -19,7 +19,7 @@ Music search, playback, queues, and Discord voice control inside Red. AudioPlus 
 - Red **3.5.24 or newer**, with a Discord.py version that supports DAVE voice. Development checks use Red 3.5.24 and Discord.py 2.7.1 on Python 3.10/3.11.
 - Downloader-managed Python package: `yt-dlp[default]>=2026.8.19`, declared in `info.json`. The default extra includes its matching `yt-dlp-ejs` challenge solver.
 - Required native voice libraries: `PyNaCl>=1.5.0,<1.6` and `davey>=0.1.6`, installed once in **Red's Python environment** using the instructions below. Working copies already installed by Downloader remain supported. Cog updates do not reinstall these libraries.
-- The **FFmpeg executable** and **libopus** in the Red container or host. Installing a Python package named ffmpeg does not install the executable.
+- The **FFmpeg executable** and **libopus** in the Red container or host. Installing a Python package named ffmpeg does not install the executable. Song caching additionally uses FFmpeg's `libopus` encoder and the bundled `ffprobe` executable; a cache preparation failure leaves normal streaming available.
 - A supported JavaScript runtime in Red's `PATH`, preferably **Deno 2.3+** or **Node.js 22+**, for full YouTube extraction. AudioPlus enables detected Deno, Node, and QuickJS runtimes in yt-dlp.
 - Network access from the **Red container** to media providers and Discord voice, including UDP. Playback no longer uses the Lavalink container's network connection.
 
@@ -218,6 +218,8 @@ Play and tone confirmations show the selected track's title, artist/uploader, du
 
 Each guild has an independent in-memory player. The queue holds at most 100 upcoming tracks. A paused current track stays paused when additional tracks are queued. Provider stream URLs are resolved immediately before playback to avoid using links that expired while waiting in the queue. Direct media URLs are used as supplied. yt-dlp runs in bounded subprocesses outside Red's event loop, with two concurrent lookups and a 45-second extraction timeout.
 
+Eligible tracks with ready local copies use the song cache instead of resolving another remote stream. Search terms still use the provider's search service. Rejoin and seek can use a cached copy while preserving volume, normalization and pause state.
+
 Natural completion advances once. Skip cancels the current lookup or playback before advancing. Failed tracks are reported in the latest request channel and the player tries the next queued track. A failed or skipped track is not repeated. Stop clears upcoming tracks and cancels the active playback operation. Rejoin refreshes the stream and restores position, pause state, volume, and the queue for seekable audio. Live streams may restart at their live edge. If reconnection fails, tracks remain available in memory for a later `[p]join` or `/join`.
 
 **AudioPlus disconnects automatically after the queue has been idle for 10 seconds.** Adding a song or starting a new play/tone search cancels the countdown. A failed, cancelled, or empty search starts a fresh countdown once all pending searches finish. Paused tracks, active stream preparation, and repeating playback keep the connection active. Stop, skipping the last track, and exhausting failed tracks also leave after the queue becomes idle. Each server has its own timer, and disconnect/reload/unload cancels it. The next play command connects again using the same channel-selection rules.
@@ -241,6 +243,8 @@ All playback and voice commands are server commands. The bot needs Connect and S
 | `[p]shuffle` | `/shuffle` | Shuffle upcoming tracks. |
 | `[p]repeat [off\|track\|queue]` | `/repeat` | Show/set repeat mode; default off. Slash offers the three modes as choices. |
 | `[p]audiostatus` | `/audiostatus` | Check local dependencies and latest playback failure; prefix alias `pingnode`. |
+| `[p]audiocache` | `/audiocache status` | Show this server's local song count, storage, active downloads and next expiry. |
+| `[p]audiocache clear` | `/audiocache clear` | Red administrators or Manage Server: cancel this server's downloads and erase its song copies. |
 | `[p]audiorepair` | Prefix only | Bot owner: repair failing PyNaCl/davey imports in Red's Python environment, then restart. |
 | `[p]playerstate` | `/playerstate` | Inspect the native player's state. |
 | `[p]debugvc` | `/debugvc` | Inspect Discord voice flags and local playback state. |
@@ -288,7 +292,7 @@ The bot owner can enable a daily check that privately reports failures:
 
 Enable it in the server to test. The bot sends a setup DM to your account before enabling, so allow direct messages from the bot. The default schedule is **09:00 America/Chicago**, following Central daylight saving time. The first scheduled check is the next occurrence of that time; `now` tests immediately and counts as today's check. Successful scheduled checks send no messages.
 
-The probe uses the same yt-dlp lookup, stream resolution, FFmpeg decoder, native player, and Discord audio thread as `play`. It sends three seconds of decoded audio **at zero volume** through a temporary voice connection, then closes the decoder and disconnects. It chooses the busiest available ordinary voice channel unless you supply a dedicated channel with `audiocheck enable <voice channel>`. Channel permissions and capacity still apply. No songs are added to the normal queue and its volume/repeat settings are untouched.
+The probe uses the same yt-dlp lookup, stream resolution, FFmpeg decoder, native player, and Discord audio thread as `play`, but deliberately bypasses the local song cache and creates no cached copy. It sends three seconds of decoded audio **at zero volume** through a temporary voice connection, then closes the decoder and disconnects. It chooses the busiest available ordinary voice channel unless you supply a dedicated channel with `audiocheck enable <voice channel>`. Channel permissions and capacity still apply. No songs are added to the normal queue and its volume/repeat settings are untouched.
 
 If any voice connection or retained music queue is present, the probe waits and retries in 15 minutes, including connections owned by other cogs. Disabling AudioPlus in the test server also postpones the check. This avoids interrupting listening sessions; a bot that is continuously in voice can keep postponing its daily probe.
 
@@ -329,13 +333,34 @@ For bug reports, include Red/Discord.py versions, `[p]audiostatus`, `[p]playerst
 
 Legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The daily monitor adds an optional `watchdog` section, disabled by default, without changing those legacy values. Red initializes the added defaults on existing installations. It stores the recipient's Discord ID, test server/channel IDs, public test video URL, schedule/timezone, daily cursor, latest safe result, and pending failure alert/delivery state. User-data hooks export that recipient's monitor record or remove it and disable checking. Deletion does not remove already delivered Discord DMs.
 
-Guild Config additionally stores music panel/DJ/vote preferences, and member-specific saved playlists/favorites containing supplied public source URLs and track metadata. These are exported/deleted by the user's Red data hooks. The new sections use merged defaults, preserving all legacy values. The cog does not store extracted signed streams, audio files, or yt-dlp disk caches. Normal command contexts, errors, live queues, volume, repeat settings, skip votes, and panel references stay in memory.
+Guild Config additionally stores music panel/DJ/vote preferences, and member-specific saved playlists/favorites containing supplied public source URLs and track metadata. These are exported/deleted by the user's Red data hooks. The new sections use merged defaults, preserving all legacy values. The short-song cache below stores local audio and bounded metadata outside Config, separately from playlists, histories and settings backups. Extracted signed stream URLs, provider credentials, HTTP headers and yt-dlp disk caches are not saved. Normal command contexts, errors, live queues, volume, repeat settings, skip votes, and panel references stay in memory.
 
-Unload closes only AudioPlus's players and cancels the daily scheduler/probe, owned lookups/decoders, and idle timers. Other cogs' voice connections are left alone. Removing a guild also closes its player. Each cog remains independently installable through Downloader.
+Unload closes only AudioPlus's players and cancels the daily scheduler/probe, owned lookups/decoders, idle timers and cache downloads/expiry worker. Completed song copies survive reload/restart; partial files are removed. Other cogs' voice connections are left alone. Removing a guild closes its player and deletes its song copies. Each cog remains independently installable through Downloader.
+
+## Automatic short-song cache
+
+AudioPlus automatically downloads an audio-only local copy when normal playback starts for a provider track whose full extraction metadata reports a known duration **strictly under five minutes**. Exactly five minutes, longer videos, live/upcoming sources, unknown durations and direct media URLs are streamed without caching. This works for YouTube and other supported providers, including SoundCloud, when they supply suitable finite metadata. Existing files are not backfilled from listening history.
+
+The first play streams normally while a background download prepares the copy. Later plays in the same server read the cached audio through FFmpeg and skip remote stream extraction. Searches still contact the provider, so this is faster playback rather than an offline search catalog. Cached playback retains the normal queue, volume, seek, pause, normalization and IntroPlus overlay behavior. A missing or unreadable copy falls back to streaming; a decoding failure discards that copy and retries the provider once without another playback-start record. Daily playback checks bypass this cache so they continue testing current YouTube access.
+
+Each copy expires **three calendar months after its completed download**, measured in UTC. For dates that do not exist in the target month, expiry uses that month's last day. Replaying does not extend the deadline. Expired files are pruned on startup, every hour and when accessed; an expired copy is never selected for playback. Previously cached copies remain through container updates and restarts when Red's data directory is on the container's persistent volume. Files live in the AudioPlus cog data directory under `songs/`; do not put that directory on an ephemeral container layer.
+
+The shared bot storage budget is **2 GiB or 2,000 songs**, with a **16 MiB per-song** limit and at most two concurrent preparations. It reserves space for pending copies and leaves at least 256 MiB of free disk space at admission. Downloads time out after 90 seconds and local validation after ten seconds. Audio is saved as stereo 48 kHz Opus at 128 kbit/s with source metadata removed. Cache failures, unavailable encoders/FFprobe, full storage and low free space skip preparation while normal streaming continues. A full cache keeps its admitted unexpired songs; it does not evict them early to admit another song. Manual clearing, privacy deletion, damaged files and server removal can remove copies sooner.
+
+| Text command | Slash command | Purpose |
+| --- | --- | --- |
+| `[p]audiocache` | `/audiocache status` | Show this server's count, storage, preparations, next expiry and a safe cache notice. |
+| `[p]audiocache clear` | `/audiocache clear` | Red administrators or Manage Server erase this server's copies and cancel its preparations. Current playback keeps running; future requests can cache songs again. |
+
+`[p]audiostatus` also shows this server's cache usage. After updating and reloading AudioPlus, use `[p]slash sync` to publish the two cache actions. Existing Config identifiers/defaults are unchanged, and caching begins automatically for new playback.
+
+Cache metadata stores the server ID, a hash of the public source URL, duration, byte size, creation time and up to 128 associated requester IDs per song. Additional requesters create no attribution record. Titles, raw source/stream URLs, credentials and HTTP headers are excluded. Red user-data exports include identified cache metadata; deletion removes whole associated copies, including shared copies, and cancels associated downloads. Cache files are outside SettingsHub settings backups.
 
 ## Development and references
 
 Regression tests cover Red Config/command compatibility, real Red hybrid command registration, slash option conversion and callbacks, initial response deferral, automatic channel selection, the 10-second idle deadline and cancellation, queue races, paused playback, stale callbacks, repeat, reconnect recovery, provider errors, process cancellation, and real yt-dlp/FFmpeg against a local HTTP audio fixture. The native Discord audio thread and Opus encoding are exercised against local audio too. Discord command synchronization, voice networking, and external YouTube/SoundCloud behavior are mocked. A successful test suite does not establish live playback on your server.
+
+Cache tests additionally exercise real FFmpeg/FFprobe preparation and local replay, strict duration/live-source eligibility, fixed calendar expiry, restart reuse, coalescing, disk reservations, corruption fallback, interrupted child spawn, requester/server deletion and prefix/slash administrator checks.
 
 - [yt-dlp documentation](https://github.com/yt-dlp/yt-dlp)
 - [yt-dlp JavaScript runtime setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS)

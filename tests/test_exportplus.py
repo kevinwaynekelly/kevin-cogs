@@ -626,7 +626,7 @@ async def test_all_eleven_cogs_register_valid_slash_payloads_and_identical_helpe
     await bot.add_cog(PresencePlus(bot))
     try:
         roots = {**bot.tree._global_commands, **bot.tree._disabled_global_commands}
-        assert len(roots) == 85
+        assert len(roots) == 86
         counts = {}
         for root in roots.values():
             leaves = (
@@ -637,7 +637,7 @@ async def test_all_eleven_cogs_register_valid_slash_payloads_and_identical_helpe
                     name = leaf.binding.qualified_name
                     counts[name] = counts.get(name, 0) + 1
         assert (
-            sum(counts.values()) == 401
+            sum(counts.values()) == 403
             and counts["ExportPlus"] == 9
             and counts["BackupPlus"] == 13
             and counts["IntroPlus"] == 16

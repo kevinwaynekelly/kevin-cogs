@@ -48,7 +48,15 @@ CONTROLS = {
     "recoverqueue",
     "replay",
 }
-NEW_GROUPS = {"search", "audioset", "playlist", "favorite", "serverplaylist", "history"}
+NEW_GROUPS = {
+    "search",
+    "audioset",
+    "playlist",
+    "favorite",
+    "serverplaylist",
+    "history",
+    "audiocache",
+}
 
 
 @pytest.fixture

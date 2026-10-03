@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-03: AudioPlus three-month short-song cache
+
+- Automatically prepare audio-only local copies of known non-live provider songs strictly under five minutes after playback starts. The initial play keeps streaming; subsequent same-server plays skip stream extraction and read local audio. Preserve cached seek, pause, volume, normalization and IntroPlus overlays; retry a damaged copy from the provider once without duplicate start records.
+- Keep complete copies across reloads/restarts in the persistent AudioPlus data directory, with fixed three-calendar-month UTC expiry, hourly/startup/access pruning, a 2 GiB/2,000-song bot-wide cap, 16 MiB file limits, two concurrent preparations and free-space reservations. Do not extend expiry on replay or evict unexpired copies to admit more songs. Daily YouTube checks bypass the cache.
+- Add `[p]audiocache` and `/audiocache status`, administrator/Manage Server `clear` controls, diagnostic usage, safe notices and requester/server deletion/export hooks. Cache metadata excludes raw URLs, credentials and headers. Own/cancel download, validation and expiry tasks, including cancellation during process spawn.
+- Cover real FFmpeg/FFprobe preparation, local decoding and restart reuse, exact duration/live boundaries, calendar expiry, coalescing, disk limits, corruption fallback, late-lookup invalidation, privacy cleanup and actual Red prefix/slash permission checks. Synchronize the independently installable IntroPlus resolver and PCM decoder.
+
 ## 2026-10-03: PresencePlus slash command hint
 
 - Change the stock custom status to `Use /play or /search`, matching AudioPlus's real slash commands. Red's built-in help remains prefix-only.

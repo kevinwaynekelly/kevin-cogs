@@ -28,6 +28,8 @@ Playback error helpers in `failures.py` identify probe stages and preserve safe 
 
 AudioPlus also adds guild music preferences and bounded member playlists/favorites through merged defaults. Collection writers and data-deletion hooks share their field locks. Components build a fresh checked context for the clicking member, including Red permission and disabled-command rules. Cancel owned player-panel tasks and close views on disconnect/unload. The compatibility test permits these named additive sections while retaining the original snapshot.
 
+AudioPlus's `cache.py` warms server-scoped short-song copies after playback starts, with full extraction duration/live checks, calendar-month expiry, bounded disk admission and hashed source metadata outside Config. Preserve completed copies on reload, never extend retention on replay or evict valid copies to admit another song, and cancel owned FFmpeg/FFprobe preparations and hourly pruning on unload. Keep normal streaming available when preparation fails, reject incomplete/oversized copies, and prevent pre-clear lookups from repopulating erased entries. Cached decoder failure retries remote playback once without another start record; keep accounting, seek, normalization and IntroPlus overlays consistent. Daily probes must bypass cached audio. Test actual local downloads/decoding, expiry, restart reuse, privacy/server deletion, spawn cancellation and prefix/slash permission paths. Keep the independently vendored IntroPlus resolver/decoder copies synchronized.
+
 ## Local checks
 
 Use Python 3.10 or 3.11, supported by the pinned Red test version:
