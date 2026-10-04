@@ -21,6 +21,7 @@ class Setting:
     off: str = ""
     global_scope: bool = False
     choices: tuple = ()
+    description: str = ""
 
     def command(self, value=True):
         return self.off if self.off and (not value or value == "0") else self.path
@@ -73,17 +74,46 @@ class Setting:
 
 
 EDITORS = [
-    Setting("music.panel", "AudioPlus", "Now-playing panel", "audioset panel", "music.panel"),
     Setting(
-        "music.votes", "AudioPlus", "Listener skip votes", "audioset voteskip", "music.vote_skip"
+        "music.panel",
+        "AudioPlus",
+        "Now-playing panel",
+        "audioset panel",
+        "music.panel",
+        description="Post and update an automatic player panel while music plays. Turning this off closes the current panel.",
     ),
     Setting(
-        "music.fair", "AudioPlus", "Fair request order", "audioset fairqueue", "music.fair_queue"
+        "music.votes",
+        "AudioPlus",
+        "Listener skip votes",
+        "audioset voteskip",
+        "music.vote_skip",
+        description="Require listener votes to skip a song for members without DJ privileges. Changing this setting clears current votes.",
     ),
     Setting(
-        "music.autoplay", "AudioPlus", "Autoplay suggestions", "audioset autoplay", "music.autoplay"
+        "music.fair",
+        "AudioPlus",
+        "Fair request order",
+        "audioset fairqueue",
+        "music.fair_queue",
+        description="Alternate between requesters while keeping each person's songs in their original order. Applies to the current queue too.",
     ),
-    Setting("music.history", "AudioPlus", "Listening history", "audioset history", "music.history"),
+    Setting(
+        "music.autoplay",
+        "AudioPlus",
+        "Autoplay suggestions",
+        "audioset autoplay",
+        "music.autoplay",
+        description="Find another song when the queue ends and listeners remain. If no suggestion is available, the bot uses its normal idle departure.",
+    ),
+    Setting(
+        "music.history",
+        "AudioPlus",
+        "Listening history",
+        "audioset history",
+        "music.history",
+        description="Save recent song starts for browsing and replay. Turning this off also erases this server's saved listening history.",
+    ),
     Setting(
         "music.limits",
         "AudioPlus",
@@ -91,9 +121,15 @@ EDITORS = [
         "audioset limits",
         "music",
         "limits",
+        description="Limit song length in seconds and active tracks per person. Zero means unlimited. DJs, members with Manage Server and bot owners are exempt; existing tracks stay queued.",
     ),
     Setting(
-        "music.recovery", "AudioPlus", "Queue recovery", "audioset recovery", "continuity.recovery"
+        "music.recovery",
+        "AudioPlus",
+        "Queue recovery",
+        "audioset recovery",
+        "continuity.recovery",
+        description="Save the current song, position and queue for manual recovery after a restart. Turning this off clears the saved checkpoint.",
     ),
     Setting(
         "music.normalize",
@@ -101,6 +137,7 @@ EDITORS = [
         "Volume normalization",
         "audioset normalize",
         "continuity.normalize",
+        description="Use FFmpeg loudness normalization to reduce volume differences between songs. Applies when the next audio decoder starts.",
     ),
     Setting(
         "community.sticky",
@@ -109,6 +146,7 @@ EDITORS = [
         "community sticky enable",
         "sticky.enabled",
         off="community sticky disable",
+        description="Restore saved roles when a member rejoins this server, subject to ignored roles and the bot's role permissions and hierarchy.",
     ),
     Setting(
         "community.welcome",
@@ -117,6 +155,7 @@ EDITORS = [
         "community welcome enable",
         "welcome.enabled",
         off="community welcome disable",
+        description="Send the configured welcome message when someone joins. A welcome channel must also be selected and writable by the bot.",
     ),
     Setting(
         "community.tracking",
@@ -124,6 +163,7 @@ EDITORS = [
         "Activity tracking",
         "community tracking",
         "seen.enabled",
+        description="Record member activity, last-seen details, games and voice time. Turning this off stops new collection and keeps previously saved records.",
     ),
     Setting(
         "community.solo",
@@ -132,6 +172,7 @@ EDITORS = [
         "community vcsolo enable",
         "vcsolo.enabled",
         off="community vcsolo disable",
+        description="Disconnect eligible members left alone in voice after the timeout. Bots do not count as companions; configured exemptions still apply.",
     ),
     Setting(
         "community.idle",
@@ -142,18 +183,39 @@ EDITORS = [
         "int",
         60,
         604800,
+        description="Seconds a member can remain alone before solo voice cleanup disconnects them. Minimum 60 seconds; changing this restarts active solo timers.",
     ),
-    Setting("level.message", "LevelPlus", "Message XP", "level message enable", "message.enabled"),
     Setting(
-        "level.reaction", "LevelPlus", "Reaction XP", "level reaction enable", "reaction.enabled"
+        "level.message",
+        "LevelPlus",
+        "Message XP",
+        "level message enable",
+        "message.enabled",
+        description="Award XP for eligible messages using the configured amount, cooldown and exclusions. Turning this off keeps existing XP.",
     ),
-    Setting("level.voice", "LevelPlus", "Voice XP", "level voice enable", "voice.enabled"),
+    Setting(
+        "level.reaction",
+        "LevelPlus",
+        "Reaction XP",
+        "level reaction enable",
+        "reaction.enabled",
+        description="Award reaction XP to authors, reactors or both according to the saved policy, cooldown and exclusions. Existing XP is retained when disabled.",
+    ),
+    Setting(
+        "level.voice",
+        "LevelPlus",
+        "Voice XP",
+        "level voice enable",
+        "voice.enabled",
+        description="Award XP for eligible voice participation using the configured interval, member minimum and AFK rules. Turning this off keeps existing XP.",
+    ),
     Setting(
         "level.announce",
         "LevelPlus",
         "Level-up announcements",
         "level levelup enable",
         "levelup.enabled",
+        description="Announce level increases using the saved template and announcement channel, or the server's system channel when no target is selected.",
     ),
     Setting(
         "level.multiplier",
@@ -164,6 +226,7 @@ EDITORS = [
         "float",
         0.1,
         10,
+        description="Scale the XP needed to reach each level from 0.1 to 10 times the selected curve. Higher values make leveling slower without changing saved XP.",
     ),
     Setting(
         "log.channel",
@@ -173,6 +236,7 @@ EDITORS = [
         "log_channel",
         "channel",
         off="log clearchannel",
+        description="Fallback destination for enabled event logs when no more specific route matches. Clearing this leaves existing channel and category routes active.",
     ),
     Setting(
         "log.compact",
@@ -181,6 +245,7 @@ EDITORS = [
         "log style compact",
         "style.compact",
         "onoff",
+        description="Include each event's configured emoji in its log title. Turning this off removes these emoji headers.",
     ),
     Setting(
         "log.history",
@@ -188,6 +253,7 @@ EDITORS = [
         "Retain local event history",
         "log history enabled",
         "history_settings.enabled",
+        description="Collect local event records for searches and timelines. Turning this off pauses collection; old Discord messages are never imported.",
     ),
     Setting(
         "log.days",
@@ -198,6 +264,7 @@ EDITORS = [
         "int",
         1,
         90,
+        description="Keep local event records for 1 to 90 days. Saving a shorter retention period immediately removes records older than that limit.",
     ),
     Setting(
         "emoji.capture",
@@ -205,6 +272,7 @@ EDITORS = [
         "Capture external emoji",
         "emoji enabled",
         "capture.enabled",
+        description="Automatically copy external custom emoji into this server when members use them, subject to the capture channel, permissions and available emoji slots.",
     ),
     Setting(
         "emoji.reactions",
@@ -212,6 +280,7 @@ EDITORS = [
         "Capture reaction emoji",
         "emoji reactions",
         "capture.reactions",
+        description="Also capture external custom emoji used in member reactions. Automatic emoji capture must be enabled for reaction capture to run.",
     ),
     Setting(
         "emoji.notify",
@@ -219,6 +288,7 @@ EDITORS = [
         "Capture notifications",
         "emoji notify",
         "capture.notify",
+        description="Announce successful emoji copies in the channel where the emoji was used. Turning this off keeps capture running silently.",
     ),
     Setting(
         "owo.enabled",
@@ -227,6 +297,7 @@ EDITORS = [
         "owo enable",
         "enabled",
         off="owo disable",
+        description="Allow automatic message transformations in this server. Channel restrictions, member opt-outs and the configured chances still apply.",
     ),
     Setting(
         "owo.chance",
@@ -237,10 +308,26 @@ EDITORS = [
         "int",
         1,
         1000000,
+        description="Chance of a full transformation for an eligible message: 1 means every message, 10 means about one in ten. Larger values make transformations rarer.",
     ),
-    Setting("intro.enabled", "IntroPlus", "Automatic voice intros", "intro enable", "enabled"),
     Setting(
-        "intro.volume", "IntroPlus", "Intro volume (%)", "intro volume", "volume", "int", 1, 100
+        "intro.enabled",
+        "IntroPlus",
+        "Automatic voice intros",
+        "intro enable",
+        "enabled",
+        description="Play a member's saved intro when they join an eligible voice channel. Turning this off stops current and queued intros but keeps saved clips.",
+    ),
+    Setting(
+        "intro.volume",
+        "IntroPlus",
+        "Intro volume (%)",
+        "intro volume",
+        "volume",
+        "int",
+        1,
+        100,
+        description="Playback volume for upcoming intro clips, from 1 to 100 percent. Does not change AudioPlus music volume.",
     ),
     Setting(
         "intro.cooldown",
@@ -251,6 +338,7 @@ EDITORS = [
         "int",
         10,
         3600,
+        description="Minimum seconds between automatic intros for the same member in this server. Choose 10 to 3600 seconds to avoid repeated join clips.",
     ),
     Setting(
         "presence.enabled",
@@ -259,6 +347,7 @@ EDITORS = [
         "presence enable",
         "settings.enabled",
         global_scope=True,
+        description="Run saved presence profiles, rotations, schedules and enabled music overrides across every server. Turning this off restores the presence from before automation.",
     ),
     Setting(
         "presence.interval",
@@ -270,6 +359,7 @@ EDITORS = [
         60,
         86400,
         global_scope=True,
+        description="Seconds between rotating presence messages, from 60 to 86400. This is global, so the bot's displayed status changes in every server.",
     ),
 ]
 SETTINGS = {setting.id: setting for setting in EDITORS}

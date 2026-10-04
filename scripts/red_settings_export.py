@@ -170,7 +170,7 @@ GUILD = {
     },
 }
 GLOBAL = {
-    "DashboardPlus": {"settings": {**fields("enabled bind port"), "hosts": List(SCALAR)}},
+    "DashboardPlus": {"settings": {**fields("enabled bind port url"), "hosts": List(SCALAR)}},
     "AudioPlus": {"watchdog": fields("enabled guild_id channel_id video_url hour minute timezone")},
     "PresencePlus": {
         "settings": {

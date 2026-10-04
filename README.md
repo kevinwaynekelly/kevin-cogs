@@ -20,7 +20,7 @@ Music, personal voice entrance clips, saved bot status profiles, community tools
 | BackupPlus | Named role/channel/permission snapshots, private restore previews and optional automatic backups | `[p]backup create`, `/backup preview`, `[p]backup restore` | [Setup and commands](backupplus/README.md) |
 | SettingsHub | Shared themes, command discovery, diagnostics, configuration history, readiness checks and snapshots | `[p]settings`, `/theme show`, `[p]snapshots` | [Setup and commands](settingshub/README.md) |
 | DownloaderPlus | Themed native Downloader replies and checked owner-only installation, updates and repository controls | `[p]download`, `/download update`, `[p]download repos` | [Setup and commands](downloaderplus/README.md) |
-| DashboardPlus | Private locally hosted web dashboard for music, common cog settings and server/cog status | `[p]dashboard start`, `/dashboard login` | [Setup and commands](dashboardplus/README.md) |
+| DashboardPlus | Private local dashboard for music, explained settings and searchable data from every suite cog | `[p]dashboard start`, `/dashboard login` | [Setup and commands](dashboardplus/README.md) |
 | CorePlus | Category help, `/help`, themed native Core replies and checked bot-management controls | `[p]help`, `/core status`, `[p]core reload` | [Setup and commands](coreplus/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
@@ -39,7 +39,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | EmojiStealerPlus | `[p]emoji` or `/emoji status` | Automatic external emoji capture and checked manual `[p]yoink` controls. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The original five feature cogs expose 312 slash actions; EmojiStealerPlus adds six, ExportPlus adds nine, BackupPlus adds 13, IntroPlus adds 16, PresencePlus adds 24, optional SettingsHub adds 23, CorePlus adds 14, DownloaderPlus adds 19 and DashboardPlus adds nine, for 445 total actions. The fourteen cogs together register 90 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
+The original five feature cogs expose 312 slash actions; EmojiStealerPlus adds six, ExportPlus adds nine, BackupPlus adds 13, IntroPlus adds 16, PresencePlus adds 24, optional SettingsHub adds 23, CorePlus adds 14, DownloaderPlus adds 19 and DashboardPlus adds ten, for 446 total actions. The fourteen cogs together register 90 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
@@ -54,7 +54,9 @@ Install optional [SettingsHub](settingshub/README.md) for `[p]settings` or `/set
 
 ## Local web dashboard
 
-Install optional [DashboardPlus](dashboardplus/README.md) for a private browser dashboard hosted inside Red, with server/channel selection, current track thumbnails and queue controls, 32 reviewed cog settings and loaded/enabled status. Use `[p]dashboard start` and `[p]dashboard login`; default URL is `http://127.0.0.1:8765`. For a container, bind to `0.0.0.0` and publish TCP port `8765`, then open your Red host's IP. Listener/start settings survive restarts; login codes and sessions stay in bounded memory. No separate frontend service or bot-token input is needed. Changes use existing Red command checks, converters, hooks and validation.
+Install optional [DashboardPlus](dashboardplus/README.md) for a private browser dashboard hosted inside Red, with server/channel selection, current track thumbnails and queue controls, 32 explained settings and 33 searchable, paginated data views across all fourteen suite cogs. Browse intro owners and clip timing, Community activity and games, Level XP and rewards, music history and saved collections, and the other cogs' reviewed records. Data loads when requested, rather than being copied into another database or refreshed with every music update. Current source permissions still apply.
+
+Use `[p]dashboard start` and `[p]dashboard login`; the initial URL is `http://127.0.0.1:8765`. For the Red host at `10.10.1.200`, bind to `0.0.0.0`, publish TCP port `8765`, and save `[p]dashboard url http://10.10.1.200:8765/` so login/status show the correct link. Open [http://10.10.1.200:8765/](http://10.10.1.200:8765/). Listener/start/link settings survive restarts; login codes and sessions stay in bounded memory. No separate frontend service or bot-token input is needed. Changes use existing Red command checks, converters, hooks and validation.
 
 ## Discord presentation
 

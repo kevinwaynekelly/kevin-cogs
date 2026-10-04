@@ -16,7 +16,7 @@ from test_native_audio import FakeSource, FakeVoice, eventually, track
 
 from audioplus.player import GuildPlayer
 from dashboardplus import DashboardPlus
-from dashboardplus.auth import Auth, digest, hostname, listener
+from dashboardplus.auth import Auth, dashboard_url, digest, hostname, listener
 from dashboardplus.constants import COOKIE, IDLE_SECONDS, MAX_SESSIONS, SESSION_SECONDS
 from dashboardplus.schema import EDITORS, SETTINGS, music_arguments, public_url, track_card
 
@@ -76,6 +76,7 @@ async def test_assets_no_auth_and_private_api_single_use_cookie(dashboard_runtim
         assert response.headers["X-Content-Type-Options"] == "nosniff"
         assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
     assert (await client.get("/api/overview")).status == 401
+    assert (await client.get(f"/api/data/{member.guild.id}?cog=level.members")).status == 401
     headers, code, response = await login(dashboard_runtime)
     cookie = response.cookies[COOKIE]
     assert cookie["httponly"] and cookie["samesite"] == "Strict"
@@ -227,6 +228,35 @@ async def test_private_login_prefix_slash_and_owner_checks(dashboard_runtime, mo
         cog._runner = None
 
 
+async def test_advertised_url_survives_reload_and_private_login(dashboard_runtime, monkeypatch):
+    bot, cog, audio, member, invoke, ctx, client = dashboard_runtime
+    ctx = await invoke("!dashboard url http://10.10.1.200:8765/")
+    assert not ctx.command_failed, bot.on_command_error.call_args
+    assert cog._url() == "http://10.10.1.200:8765"
+    assert (await cog.config.settings())["url"] == cog._url()
+    # Changing a displayed URL never changes the actual listening or Host policy.
+    assert cog._listener["bind"] == "127.0.0.1"
+    assert not cog._host_allowed("10.10.1.200:8765")
+    cog._runner = SimpleNamespace(cleanup=AsyncMock())
+    try:
+        await invoke("!dashboard login")
+        assert "http://10.10.1.200:8765" in member.send.call_args.kwargs["embed"].description
+    finally:
+        cog._runner = None
+    await bot.remove_cog("DashboardPlus")
+    replacement = DashboardPlus(bot)
+    await bot.add_cog(replacement)
+    await replacement._startup
+    assert replacement._url() == "http://10.10.1.200:8765"
+    ctx = await invoke_slash(bot, invoke, monkeypatch, "dashboard url", address="")
+    assert not ctx.command_failed, bot.on_command_error.call_args
+    assert replacement._url() == "http://127.0.0.1:8765"
+    bot.owner_ids.remove(member.id)
+    ctx = await invoke("!dashboard url http://10.10.1.200:8765")
+    assert ctx.command_failed
+    assert (await replacement.config.settings())["url"] == ""
+
+
 async def test_unexpected_errors_do_not_echo_secrets(dashboard_runtime, monkeypatch):
     bot, cog, audio, member, invoke, ctx, client = dashboard_runtime
     headers, _, _ = await login(dashboard_runtime)
@@ -267,6 +297,7 @@ async def test_all_editor_paths_keys_and_toggles_use_existing_cogs(
         assert response.status == 200, await response.text()
         data = await response.json()
         assert {item["id"] for item in data["settings"]} == set(SETTINGS)
+        assert all(len(item["description"]) > 30 for item in data["settings"])
         for spec in EDITORS:
             command = bot.get_command(spec.path)
             assert command and command.cog.qualified_name == spec.cog
@@ -326,6 +357,18 @@ async def test_real_listener_lifecycle_reboot_policy_port_conflict_and_privacy(
     assert replacement._runner is None and not (await replacement.config.settings())["enabled"]
 
 
+async def test_previous_listener_policy_keeps_values_with_new_url_default(dashboard_runtime):
+    bot, cog, audio, member, invoke, ctx, client = dashboard_runtime
+    previous = {"enabled": False, "bind": "0.0.0.0", "port": 9876, "hosts": ["aria.home"]}
+    await cog.config.settings.set(previous)
+    await bot.remove_cog("DashboardPlus")
+    replacement = DashboardPlus(bot)
+    await bot.add_cog(replacement)
+    await replacement._startup
+    assert await replacement.config.settings() == {**previous, "url": ""}
+    assert replacement._url() == "http://127.0.0.1:9876"
+
+
 def test_bounded_auth_expiry_rates_revocation_and_validation():
     now = [0]
     auth = Auth(clock=lambda: now[0])
@@ -361,6 +404,24 @@ def test_bounded_auth_expiry_rates_revocation_and_validation():
         with pytest.raises(ValueError):
             hostname(host)
     assert hostname("Aria.Home.") == "aria.home"
+    assert dashboard_url("http://10.10.1.200:8765/") == "http://10.10.1.200:8765"
+    assert dashboard_url("https://Aria.Home/") == "https://aria.home"
+    assert dashboard_url("http://[::1]:8765") == "http://[::1]:8765"
+    assert dashboard_url("") == ""
+    for value in (
+        "javascript:alert(1)",
+        "https://user:secret@example.com/",
+        "https://example.com/path",
+        "https://example.com/?token=secret",
+        "https://example.com/#code",
+        "http://example.com:65536/",
+        "http://0.0.0.0:8765/",
+        "http://[::]:8765/",
+        "http://elsewhere.invalid\\@example.com",
+        "http://example.com\n",
+    ):
+        with pytest.raises(ValueError):
+            dashboard_url(value)
 
 
 def test_action_validation_and_public_track_artwork():

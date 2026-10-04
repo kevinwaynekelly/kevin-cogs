@@ -7,6 +7,7 @@ import secrets
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from .constants import CODE_SECONDS, IDLE_SECONDS, MAX_SESSIONS, SESSION_SECONDS
 
@@ -37,6 +38,45 @@ def listener(bind, port):
     if type(port) is not int or not 1024 <= port <= 65535:
         raise ValueError("Use a port from 1024 to 65535.")
     return address, port
+
+
+def dashboard_url(value):
+    """Validate a display-only root URL without probing or changing the listener."""
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        if (
+            len(value) > 300
+            or any(char.isspace() or ord(char) < 32 for char in value)
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+            or "\\" in value
+        ):
+            raise ValueError
+        host = parsed.hostname
+        try:
+            address = ipaddress.ip_address(host)
+            if address.is_unspecified:
+                raise ValueError
+            host = f"[{address}]" if address.version == 6 else str(address)
+        except ValueError:
+            host = hostname(host)
+            if host in {"0.0.0.0", "::"}:
+                raise ValueError
+        port = parsed.port
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ValueError(
+            "Use a root HTTP/HTTPS URL such as http://10.10.1.200:8765, without credentials."
+        ) from None
+    return f"{parsed.scheme}://{host}" + (f":{port}" if port is not None else "")
 
 
 @dataclass

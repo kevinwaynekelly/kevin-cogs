@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-04: DashboardPlus all-cog data and setting explanations
+
+- Add 33 searchable, paginated read-only datasets across all fourteen suite cogs, including intro owners and clip timing, Community activity and games, Level XP and rewards, music history and collections, and reviewed operational records. Read source records on demand with current server/channel/source-command checks instead of copying databases or changing retention.
+- Explain all 32 settings through help controls available by hover, keyboard focus and tap. Keep editable settings separate from data browsing and preserve source command validation/auditing.
+- Inspect IntroPlus local-copy readiness without moving cache entries, deleting damaged files or scheduling media work. Older IntroPlus versions still expose saved clips and show an update hint for readiness.
+- Add the owner-only `[p]dashboard url` / `/dashboard url` control for the link shown in status/login. Document `http://10.10.1.200:8765/`, container port mapping and DNS/proxy setup; the displayed URL does not change binding or allowed hosts. Merge the empty URL default on upgrade without rewriting existing listener/startup policy.
+- Keep chat archives, secrets, resolved stream headers, local paths and raw database files out of data responses. Core/Downloader views expose runtime/native inventory and ExportPlus isolates job metadata to the requester. The fourteen-cog slash surface is 90 roots and 446 actions.
+- Validate all 33 views with real Red storage/HTTP boundaries, plus stale-request and tooltip frontend interactions. The 1,068-test suite passes on Python 3.10 and 3.11; Discord/media networking is mocked and browser pixel rendering is not tested.
+
 ## 2026-10-04: DashboardPlus local web controls
 
 - Add a self-contained responsive DashboardPlus web interface hosted in Red: owner login, server/channel selection, live public song artwork/progress/queue, checked playback controls, 32 reviewed settings across eight cogs and enabled/loaded status.

@@ -37,6 +37,8 @@ jobs:
         run: python -m pytest -q
       - name: Dashboard script syntax
         run: node --check dashboardplus/web/app.js
+      - name: Dashboard interactions
+        run: node tests/dashboard_frontend.js
       - name: Syntax, metadata, and whitespace
         run: |
           python -m compileall -q audioplus communityplus levelplus logplus owoplus settingshub emojistealerplus exportplus backupplus introplus presenceplus coreplus downloaderplus dashboardplus

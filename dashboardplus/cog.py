@@ -14,10 +14,11 @@ import discord
 from aiohttp import web
 from redbot.core import Config, commands
 
-from .auth import Auth, digest, hostname, listener
+from .auth import Auth, dashboard_url, digest, hostname, listener
 from .command_support import check_command, finish_configuration_audit, prepare_hybrid
 from .constants import COOKIE, DEFAULTS, SESSION_SECONDS
 from .context import execute, make_context
+from .data import DATASETS, read_dataset
 from .presentation import Presentation
 from .schema import EDITORS, MUSIC, SETTINGS, music_arguments, track_card
 
@@ -57,6 +58,7 @@ class DashboardPlus(commands.Cog):
         self._requests = set()
         self._lifecycle = asyncio.Lock()
         self._actions = asyncio.Semaphore(4)
+        self._data_reads = asyncio.Semaphore(2)
         self._closing = False
         self._listener = dict(DEFAULTS)
         self._error = ""
@@ -103,6 +105,8 @@ class DashboardPlus(commands.Cog):
         await self._presentation.command_error(ctx, error)
 
     def _url(self):
+        if self._listener.get("url"):
+            return self._listener["url"]
         bind = self._listener["bind"]
         host = (
             "127.0.0.1"
@@ -213,7 +217,7 @@ class DashboardPlus(commands.Cog):
             self._error = type(getattr(error, "original", error)).__name__
             log.warning("Dashboard request failed (%s)", self._error)
             response = web.json_response(
-                {"error": f"Action failed ({self._error}). Check Red's logs or /audiostatus."},
+                {"error": f"Request failed ({self._error}). Check Red's logs."},
                 status=500,
             )
         finally:
@@ -231,6 +235,7 @@ class DashboardPlus(commands.Cog):
         app.router.add_post("/api/logout", self._logout)
         app.router.add_get("/api/overview", self._overview)
         app.router.add_get("/api/guild/{guild}", self._guild)
+        app.router.add_get("/api/data/{guild}", self._data)
         app.router.add_post("/api/action", self._action)
         return app
 
@@ -382,6 +387,7 @@ class DashboardPlus(commands.Cog):
                     "id": spec.id,
                     "cog": spec.cog,
                     "label": spec.label,
+                    "description": spec.description,
                     "kind": spec.kind,
                     "value": value,
                     "min": spec.minimum,
@@ -420,6 +426,58 @@ class DashboardPlus(commands.Cog):
             )
         return state
 
+    async def _dataset_source(self, ctx, spec):
+        source = self.bot.get_cog(spec.cog)
+        if source is None or getattr(source, "_closing", False):
+            raise web.HTTPNotFound(reason=f"Load {spec.cog} to view its data.")
+        for path in spec.commands:
+            await check_command(ctx, self._command(path, spec.cog))
+        return source
+
+    async def _datasets(self, ctx):
+        result = []
+        for spec in DATASETS.values():
+            try:
+                await self._dataset_source(ctx, spec)
+            except (web.HTTPException, commands.CommandError):
+                continue
+            result.append(spec.catalog())
+        return result
+
+    async def _data(self, request):
+        if set(request.query) - {"channel", "cog", "page", "query", "sort"}:
+            raise web.HTTPBadRequest(reason="Choose a listed cog data view.")
+        spec = DATASETS.get(request.query.get("cog", ""))
+        if spec is None:
+            raise web.HTTPBadRequest(reason="Choose a listed cog data view.")
+        page = request.query.get("page", "1")
+        query = request.query.get("query", "")
+        sort = request.query.get("sort", "")
+        if (
+            not page.isascii()
+            or not page.isdecimal()
+            or len(page) > 9
+            or int(page) < 1
+            or len(query) > 120
+            or any(ord(char) < 32 for char in query)
+            or (sort and sort.lstrip("-") not in {key for key, _ in spec.columns})
+        ):
+            raise web.HTTPBadRequest(reason="Use a valid page, search or sort column.")
+        ctx, _ = await self._context(
+            request["session"].owner_id,
+            request.match_info["guild"],
+            request.query.get("channel", ""),
+        )
+        source = await self._dataset_source(ctx, spec)
+        if self._data_reads.locked():
+            raise web.HTTPTooManyRequests(reason="Data views are loading. Try again shortly.")
+        async with self._data_reads:
+            result = await asyncio.wait_for(
+                read_dataset(spec, source, ctx, page=int(page), query=query, sort=sort),
+                timeout=30,
+            )
+        return web.json_response(result)
+
     async def _guild(self, request):
         ctx, channels = await self._context(
             request["session"].owner_id,
@@ -445,6 +503,7 @@ class DashboardPlus(commands.Cog):
                 "channels": [{"id": str(channel.id), "name": channel.name} for channel in channels],
                 "cogs": cogs,
                 "settings": await self._editors(ctx),
+                "datasets": await self._datasets(ctx),
                 "music": await self._music(ctx),
                 "colors": colors,
             }
@@ -571,6 +630,19 @@ class DashboardPlus(commands.Cog):
                 policy["hosts"].append(name)
             self._listener["hosts"] = list(policy["hosts"])
         await self._presentation.send(ctx, f"Allowed dashboard hostname: `{name}`.", tone="success")
+
+    @dashboard.command(name="url")
+    async def dashboard_url(self, ctx, address: str = ""):
+        """Set the URL shown in private login/status replies; omit it for automatic links."""
+        try:
+            address = dashboard_url(address)
+        except ValueError as error:
+            raise commands.BadArgument(str(error)) from None
+        async with self._lifecycle:
+            async with self.config.settings() as policy:
+                policy["url"] = address
+                self._listener["url"] = address
+        await self._presentation.send(ctx, f"Dashboard link saved: {self._url()}", tone="success")
 
     @dashboard.command(name="unhost")
     async def dashboard_unhost(self, ctx, name: str):

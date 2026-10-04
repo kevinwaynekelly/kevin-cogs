@@ -1,7 +1,7 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const state = { csrf: "", guild: null, page: "overview", overview: null, forms: new Map(), filter: "All", generation: 0, refreshing: false, pendingReset: true, polledAt: 0 };
+const state = { csrf: "", guild: null, page: "overview", overview: null, forms: new Map(), filter: "All", generation: 0, refreshing: false, pendingReset: true, polledAt: 0, datasets: [], dataset: "", dataPage: 1, dataQuery: "", data: null, dataRequest: 0, dataLoading: false };
 let toastTimer;
 
 function node(tag, className = "", text = "") {
@@ -50,6 +50,7 @@ function signedOut() {
   state.forms.clear();
   state.pendingReset = true;
   state.generation++;
+  resetData();
   $("app").hidden = true;
   $("signin").hidden = false;
   $("code").value = "";
@@ -65,13 +66,15 @@ async function api(path, body) {
   const data = await response.json();
   if (!response.ok) {
     if (response.status === 401 && path !== "/api/login") signedOut();
-    throw new Error(data.error || "The dashboard could not complete this request.");
+    const error = new Error(data.error || "The dashboard could not complete this request.");
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
 
 function page(name) {
-  if (!["overview", "music", "settings", "cogs"].includes(name)) return;
+  if (!["overview", "music", "settings", "data", "cogs"].includes(name)) return;
   state.page = name;
   for (const element of document.querySelectorAll(".page")) element.hidden = element.id !== name;
   for (const button of document.querySelectorAll("[data-page]")) {
@@ -79,6 +82,7 @@ function page(name) {
     button.setAttribute("aria-current", button.dataset.page === name ? "page" : "false");
   }
   $("page-label").textContent = name[0].toUpperCase() + name.slice(1);
+  if (name === "data" && !state.data && !state.dataLoading) loadData();
 }
 
 async function initialise() {
@@ -136,16 +140,19 @@ async function refresh(reset = false) {
     renderMusic(guild.music);
     renderCogs(guild.cogs);
     renderSettings(guild.settings, reset);
+    renderDatasets(guild.datasets || []);
     $("refresh-state").textContent = "Live · refreshed just now";
   } catch (error) {
+    if (generation !== state.generation || !state.csrf) return;
     $("refresh-state").textContent = "Connection needs attention";
     $("server-error").textContent = error.message;
     $("server-error").hidden = false;
-    if (reset) {
+    if (reset || error.status === 403) {
       state.guild = null;
       renderMusic({ available: false, connected: false, current: null, queue: [] });
       $("settings-grid").replaceChildren();
       $("cog-list").replaceChildren();
+      renderDatasets([]);
     }
   } finally {
     state.refreshing = false;
@@ -229,6 +236,33 @@ function settingRow(spec) {
   const label = node("label", "setting-label", spec.label);
   label.htmlFor = `setting-${spec.id}`;
   if (spec.global) label.append(node("small", "", "Applies across all bot servers"));
+  const heading = node("div", "setting-heading");
+  const help = node("span", "setting-help");
+  const helpButton = node("button", "help-button", "?");
+  helpButton.type = "button";
+  helpButton.setAttribute("aria-label", `About ${spec.label}`);
+  const tooltip = node("span", "setting-tooltip", spec.description || `Configure ${spec.label.toLowerCase()} for this cog.`);
+  tooltip.id = `help-${spec.id}`;
+  tooltip.setAttribute("role", "tooltip");
+  helpButton.setAttribute("aria-describedby", tooltip.id);
+  const showHelp = () => {
+    for (const other of document.querySelectorAll(".setting-help.help-open")) other.classList.remove("help-open");
+    help.classList.add("help-open");
+    const anchor = help.getBoundingClientRect();
+    const width = tooltip.getBoundingClientRect().width;
+    const left = Math.max(12, Math.min(anchor.left - 35, window.innerWidth - width - 12));
+    tooltip.style.left = `${left - anchor.left}px`;
+    tooltip.style.right = "auto";
+    tooltip.style.setProperty("--tip-arrow", `${anchor.left + 5 - left}px`);
+  };
+  help.addEventListener("mouseenter", showHelp);
+  help.addEventListener("mouseleave", () => { if (document.activeElement !== helpButton) help.classList.remove("help-open"); });
+  helpButton.addEventListener("focus", showHelp);
+  helpButton.addEventListener("blur", () => help.classList.remove("help-open"));
+  helpButton.addEventListener("click", () => { showHelp(); });
+  helpButton.addEventListener("keydown", (event) => { if (event.key === "Escape") { help.classList.remove("help-open"); event.stopPropagation(); } });
+  help.append(helpButton, tooltip);
+  heading.append(label, help);
   const controls = node("div", "setting-value");
   const fields = [];
   const saved = { spec, row, fields, dirty: false };
@@ -274,7 +308,8 @@ function settingRow(spec) {
       if (await action("setting", spec.id, value, save)) saved.dirty = false;
     });
   }
-  row.append(label, controls);
+  for (const field of fields) field.setAttribute("aria-describedby", tooltip.id);
+  row.append(heading, controls);
   state.forms.set(spec.id, saved);
   return row;
 }
@@ -318,6 +353,158 @@ function filterSettings() {
   for (const button of document.querySelectorAll("[data-filter]")) button.classList.toggle("active", button.dataset.filter === state.filter);
 }
 
+function resetData() {
+  state.dataRequest++;
+  state.dataLoading = false;
+  state.datasets = [];
+  state.dataset = "";
+  state.dataPage = 1;
+  state.dataQuery = "";
+  state.data = null;
+  $("data-query").value = "";
+  $("data-cog").replaceChildren();
+  $("data-title").textContent = "Cog records";
+  $("data-description").textContent = "";
+  $("data-total").textContent = "No data selected";
+  $("data-page-status").textContent = "";
+  $("data-results").replaceChildren(node("div", "empty-state", "Choose an available server and channel to browse cog records."));
+  $("data-results").setAttribute("aria-busy", "false");
+  dataControls();
+}
+
+function dataControls() {
+  const available = Boolean(state.guild && state.datasets.length);
+  $("data-cog").disabled = !available;
+  $("data-query").disabled = !available;
+  $("data-search-form").querySelector("button").disabled = !available || state.dataLoading;
+  $("data-refresh").disabled = !available || state.dataLoading;
+  $("data-previous").disabled = !state.data || state.dataLoading || state.data.page <= 1;
+  $("data-next").disabled = !state.data || state.dataLoading || state.data.page >= state.data.pages;
+}
+
+function renderDatasets(datasets) {
+  const changed = JSON.stringify(state.datasets) !== JSON.stringify(datasets);
+  const previous = state.dataset;
+  state.datasets = datasets;
+  if (!datasets.some((item) => item.id === state.dataset)) state.dataset = datasets[0]?.id || "";
+  if (changed) {
+    $("data-cog").replaceChildren();
+    for (const dataset of datasets) {
+      const option = node("option", "", dataset.label);
+      option.value = dataset.id;
+      $("data-cog").append(option);
+    }
+    $("data-cog").value = state.dataset;
+  }
+  if (previous !== state.dataset) {
+    state.dataRequest++;
+    state.dataLoading = false;
+    state.data = null;
+    state.dataPage = 1;
+    state.dataQuery = "";
+    $("data-query").value = "";
+  }
+  const selected = datasets.find((item) => item.id === state.dataset);
+  if (!state.data) {
+    $("data-title").textContent = selected?.label || "Cog records";
+    $("data-description").textContent = selected?.description || "";
+  }
+  if (!datasets.length) {
+    state.dataRequest++;
+    state.dataLoading = false;
+    state.data = null;
+    $("data-total").textContent = "No available views";
+    $("data-page-status").textContent = "";
+    $("data-results").replaceChildren(node("div", "empty-state", "No cog data views are available in this channel. Check loaded cogs and command permissions."));
+    $("data-results").setAttribute("aria-busy", "false");
+  }
+  dataControls();
+  if (state.page === "data" && selected && !state.data && !state.dataLoading) loadData();
+}
+
+function dataValue(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return new Intl.NumberFormat().format(value);
+  return String(value);
+}
+
+function renderData(result) {
+  $("data-title").textContent = result.title;
+  $("data-description").textContent = result.description;
+  $("data-total").textContent = `${new Intl.NumberFormat().format(result.total)} ${result.total === 1 ? "record" : "records"}`;
+  $("data-results").replaceChildren();
+  if (!result.rows.length) {
+    $("data-results").append(node("div", "empty-state", state.dataQuery ? "No records match this search. Try a member name, ID or another term." : "There are no records to display for this cog yet."));
+  } else {
+    const wrap = node("div", "data-table-wrap");
+    const table = node("table", "data-table");
+    const caption = node("caption", "sr-only", `${result.title} records`);
+    const head = node("thead");
+    const headRow = node("tr");
+    for (const column of result.columns) { const cell = node("th", "", column.label); cell.scope = "col"; headRow.append(cell); }
+    head.append(headRow);
+    const body = node("tbody");
+    for (const record of result.rows) {
+      const row = node("tr");
+      result.columns.forEach((column, index) => {
+        const cell = node("td");
+        cell.dataset.label = column.label;
+        const content = node("div", index === 0 ? "data-identity" : "data-cell");
+        if (index === 0 && safeUrl(record.image)) content.append(image(record.image, "data-art", "Record thumbnail"));
+        const text = node("span", "data-value", dataValue(record.values[column.key]));
+        if (index === 0 && safeUrl(record.url)) {
+          const link = node("a", "data-source", "Open source ↗");
+          link.href = safeUrl(record.url); link.target = "_blank"; link.rel = "noopener noreferrer";
+          const detail = node("div"); detail.append(text, link); content.append(detail);
+        } else content.append(text);
+        cell.append(content); row.append(cell);
+      });
+      body.append(row);
+    }
+    table.append(caption, head, body); wrap.append(table); $("data-results").append(wrap);
+  }
+  const first = result.total ? (result.page - 1) * result.page_size + 1 : 0;
+  const last = Math.min(result.page * result.page_size, result.total);
+  $("data-page-status").textContent = result.total ? `${first}–${last} of ${new Intl.NumberFormat().format(result.total)} · Page ${result.page} of ${result.pages}` : "0 records";
+}
+
+async function loadData() {
+  if (!state.csrf || !state.guild || !state.dataset) { dataControls(); return; }
+  const request = ++state.dataRequest;
+  const generation = state.generation;
+  const guild = state.guild.id;
+  const channel = state.guild.channel;
+  const dataset = state.dataset;
+  const params = new URLSearchParams({ channel, cog: dataset, page: String(state.dataPage), query: state.dataQuery });
+  state.dataLoading = true;
+  state.data = null;
+  $("data-total").textContent = "Loading…";
+  $("data-page-status").textContent = "";
+  $("data-results").setAttribute("aria-busy", "true");
+  $("data-results").replaceChildren(node("div", "empty-state", "Reading cog records…"));
+  dataControls();
+  try {
+    const result = await api(`/api/data/${encodeURIComponent(guild)}?${params}`);
+    if (request !== state.dataRequest || generation !== state.generation || !state.csrf) return;
+    state.data = result;
+    state.dataPage = result.page;
+    renderData(result);
+  } catch (error) {
+    if (request !== state.dataRequest || generation !== state.generation) return;
+    $("data-total").textContent = "Could not load records";
+    const message = node("div", "empty-state error-text", error.message);
+    message.setAttribute("role", "alert");
+    $("data-results").replaceChildren(message);
+  } finally {
+    if (request === state.dataRequest && generation === state.generation) {
+      state.dataLoading = false;
+      $("data-results").setAttribute("aria-busy", "false");
+      dataControls();
+    }
+  }
+}
+
 function plain(value) {
   return String(value || "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[*`]/g, "").replace(/<#[0-9]+>/g, "the selected channel");
 }
@@ -344,8 +531,20 @@ $("login-form").addEventListener("submit", async (event) => {
 for (const id of ["logout", "mobile-logout"]) $(id).addEventListener("click", async () => { try { await api("/api/logout", {}); signedOut(); } catch (error) { toast(error.message, true); } });
 for (const button of document.querySelectorAll("[data-page],[data-open]")) button.addEventListener("click", () => page(button.dataset.page || button.dataset.open));
 for (const button of document.querySelectorAll("[data-action]")) button.addEventListener("click", () => action("music", button.dataset.action, null, button));
-$("server").addEventListener("change", () => { state.generation++; state.pendingReset = true; state.guild = null; state.forms.clear(); refresh(true); });
-$("channel").addEventListener("change", () => { state.generation++; state.pendingReset = false; state.guild = null; state.forms.clear(); refresh(false); });
+$("server").addEventListener("change", () => { state.generation++; state.pendingReset = true; state.guild = null; state.forms.clear(); resetData(); refresh(true); });
+$("channel").addEventListener("change", () => { state.generation++; state.pendingReset = false; state.guild = null; state.forms.clear(); resetData(); refresh(false); });
+$("data-cog").addEventListener("change", () => {
+  state.dataset = $("data-cog").value; state.dataPage = 1; state.dataQuery = ""; $("data-query").value = "";
+  const selected = state.datasets.find((item) => item.id === state.dataset);
+  $("data-title").textContent = selected?.label || "Cog records";
+  $("data-description").textContent = selected?.description || "";
+  loadData();
+});
+$("data-search-form").addEventListener("submit", (event) => { event.preventDefault(); state.dataPage = 1; state.dataQuery = $("data-query").value.trim(); loadData(); });
+$("data-refresh").addEventListener("click", () => loadData());
+$("data-previous").addEventListener("click", () => { state.dataPage = Math.max(1, state.dataPage - 1); loadData(); });
+$("data-next").addEventListener("click", () => { if (state.data) state.dataPage = Math.min(state.data.pages, state.dataPage + 1); loadData(); });
+document.addEventListener("click", (event) => { if (!event.target.closest(".setting-help")) for (const help of document.querySelectorAll(".setting-help.help-open")) help.classList.remove("help-open"); });
 $("play-form").addEventListener("submit", async (event) => { event.preventDefault(); if (await action("music", "play", $("query").value, $("play-form").querySelector("button"))) $("query").value = ""; });
 $("volume").addEventListener("input", () => { $("volume-output").textContent = `${$("volume").value}%`; });
 $("volume").addEventListener("change", () => action("music", "volume", Number($("volume").value), $("volume")));
