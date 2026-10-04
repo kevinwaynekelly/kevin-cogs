@@ -10,11 +10,13 @@ import logging
 import math
 import os
 import re
+import shlex
 import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .media_network import REMOTE_OPTIONS, NetworkPolicyError, create_relay, settle_owned
 from .resolver import MediaError, Stream
 
 log = logging.getLogger(__name__)
@@ -317,6 +319,10 @@ class SongCache:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise MediaError("FFmpeg is missing from the Red container.")
+        try:
+            relay = await create_relay(stream.url, stream.headers)
+        except NetworkPolicyError as error:
+            raise MediaError(str(error)) from error
         args = [
             ffmpeg,
             "-nostdin",
@@ -331,17 +337,11 @@ class SongCache:
             "5",
             "-rw_timeout",
             "15000000",
-            "-protocol_whitelist",
-            "http,https,httpproxy,tcp,tls,crypto,pipe",
+            *shlex.split(REMOTE_OPTIONS),
         ]
-        if stream.headers:
-            args += [
-                "-headers",
-                "".join(f"{key}: {value}\r\n" for key, value in stream.headers.items()),
-            ]
         args += [
             "-i",
-            stream.url,
+            relay.url,
             "-map",
             "0:a:0",
             "-vn",
@@ -363,9 +363,12 @@ class SongCache:
             "ogg",
             "pipe:1",
         ]
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as output:
-            await self._process(args, stdout=output, timeout=DOWNLOAD_TIMEOUT)
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as output:
+                await self._process(args, stdout=output, timeout=DOWNLOAD_TIMEOUT)
+        finally:
+            await settle_owned(asyncio.create_task(asyncio.to_thread(relay.close)))
 
     async def _duration(self, path):
         ffprobe = shutil.which("ffprobe")

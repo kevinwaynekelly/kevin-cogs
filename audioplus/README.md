@@ -166,14 +166,30 @@ ffmpeg -version
 node --version
 ```
 
-For Deno, run these commands as root in the Red container's console:
+For Deno, use a fixed official release archive and verify its matching SHA-256 before installing it. The example below targets Linux x86-64 and pins release `2.9.6` and its reviewed checksum. For ARM64, choose `deno-aarch64-unknown-linux-gnu.zip` and its own published checksum. Review both values when changing architecture or release. See [Deno's manual installation guide](https://docs.deno.com/runtime/getting_started/installation/#manual-download) and [published release checksums](https://docs.deno.com/runtime/reference/cli/upgrade/#checksum-verification).
+
+Run in the Red container's console as root:
 
 ```sh
+set -eu
 apt-get update
-apt-get install -y --no-install-recommends curl unzip libopus0
-curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- --yes --no-modify-path
+apt-get install -y --no-install-recommends curl unzip libopus0 ca-certificates
+deno_version=2.9.6
+deno_archive=deno-x86_64-unknown-linux-gnu.zip
+deno_sha256=394f07f4da2bebe6ce6f1e7ce0fa16429b29b08c35e3fac3fe25972676dff4b2
+deno_setup_dir=$(mktemp -d)
+trap 'rm -rf "$deno_setup_dir"' EXIT
+cd "$deno_setup_dir"
+deno_release="https://github.com/denoland/deno/releases/download/v${deno_version}"
+curl --fail --location --proto '=https' --proto-redir '=https' --output "$deno_archive" "$deno_release/$deno_archive"
+printf '%s  %s\n' "$deno_sha256" "$deno_archive" > expected.sha256sum
+sha256sum --check --strict expected.sha256sum
+unzip "$deno_archive" deno
+install -m 0755 deno /usr/local/bin/deno
 deno --version
 ```
+
+The checksum must pass before extraction or execution. These commands download a versioned binary over HTTPS and check a pinned checksum; they do not execute an unversioned remote installer. For stricter reproducible deployments, record the reviewed checksum or image digest in your deployment configuration. The included persistent Node image recipe below already supplies a supported runtime, so it does not need Deno as well.
 
 This places Deno in `/usr/local/bin`, rather than root's private home directory, so Red can find it. Only one supported JavaScript runtime is needed. Node.js and QuickJS may still show `missing` when Deno is available. Run `[p]audiostatus` again, then test `[p]tone` and a YouTube search. These console changes survive a container restart but can disappear when the container is recreated.
 
@@ -188,6 +204,12 @@ docker build -f audioplus/Dockerfile --build-arg RED_IMAGE=phasecorex/red-discor
 If you already use a different PhasecoreX tag, pass that same tag as `RED_IMAGE`. In Unraid, use `kevin-red-native` as the Red container's Repository image, keeping its existing `/data` mapping, environment variables, and other settings. Do not replace your appdata mapping. This Dockerfile is an image recipe; automated checks do not build or deploy it to your server.
 
 For another base-image family, add FFmpeg, libopus, and a supported JavaScript runtime using that image's package manager. AudioPlus's `[p]audiostatus` reports what Red can actually use.
+
+## Public media network boundary
+
+Member URLs can only reach public Internet destinations. The resolver's child Python worker checks every outbound socket destination, pins validated DNS answers, and uses the standard-library HTTP handler so native curl transports cannot bypass the check. Every provider/direct stream and redirect goes through a public-address-checked relay before FFmpeg receives the bytes. Private, loopback, link-local, multicast and reserved targets, including cloud metadata addresses, are blocked. The relay's local URL is an internal random capability, not an accepted member source URL. The same boundary covers short-song cache downloads and independently installed IntroPlus clip downloads. Resolver admission allows two active lookups and at most 16 admitted lookups including waiters. On POSIX, cancellation and timeouts terminate the complete lookup process group, including JavaScript solver children.
+
+Only ordinary HTTP/HTTPS audio containers are decoded. HLS, DASH and other remote manifests are unsupported, including live sources that only offer those formats, because they can direct native decoders to additional destinations. Public YouTube/SoundCloud audio and direct MP3, M4A, WebM, Ogg, WAV, FLAC and AAC remain supported. MOV external data references remain disabled by FFmpeg's defaults. HTTP/HTTPS/ALL proxy environment settings are explicitly refused by this backend; remove them from Red's environment and restart Red before using music or intros. Stored legacy Lavalink configuration is preserved and remains unused by native playback.
 
 ## Playback
 
@@ -327,7 +349,7 @@ The scheduler runs inside the cog while Red is online, checks due work once per 
 2. Run `[p]stop`, then `[p]tone`. If it fails, inspect Red's voice permissions, UDP egress, FFmpeg/Opus availability, and access to the MP3 source.
 3. If direct audio works but YouTube fails, update yt-dlp and its matching EJS package, verify Deno/Node meets the required version, and retry a public track. Some provider requests can require authentication or be denied by a provider even with current extraction software. This cog does not automatically collect browser cookies or bypass authentication.
 4. Test SoundCloud independently with `[p]play scsearch:artist and song`. SoundCloud access is independent of YouTube access.
-5. Playback errors appear in the request channel and remain in local diagnostics until the next successful track start. Dependency installation, lookup, voice connection, and decoder failures are reported separately. FFmpeg failures identify an HTTP status, network failure, unsupported format/protocol or unreadable local copy when available. HTTP 403 means the media server denied the stream; refreshing cannot guarantee access. Decoder diagnostics retain at most 16 KiB of stderr in memory, classify it into fixed safe messages, and discard it on cleanup; raw signed URLs, headers and provider error text are never printed or saved. HTTPS transport supports a configured HTTP proxy while cached local decoding remains limited to file/pipe protocols.
+5. Playback errors appear in the request channel and remain in local diagnostics until the next successful track start. Dependency installation, lookup, voice connection, and decoder failures are reported separately. FFmpeg failures identify an HTTP status, network failure, unsupported format/protocol or unreadable local copy when available. HTTP 403 means the media server denied the stream; refreshing cannot guarantee access. Decoder diagnostics retain at most 16 KiB of stderr in memory, classify it into fixed safe messages, and discard it on cleanup; raw signed URLs, headers and provider error text are never printed or saved. Remote transport uses a public-address-checked loopback relay; cached local decoding remains limited to file/pipe protocols.
 
 For intermittent gaps, run `/playerstate` or `/audiostatus` during playback. Source-buffer stalls indicate the player ran out of decoded audio; the buffer can absorb a short delay but cannot cover an indefinite outage. Compare a ready cached replay with `/tone`: if local cached playback still cuts out without source stalls, investigate host load, Discord voice transport and listener connections. IntroPlus intentionally lowers music volume during entrance clips, so a dip at a member's join is separate from a buffer stall. Diagnostics describe decoded audio supply, not proof that listeners received every voice packet.
 
@@ -346,6 +368,10 @@ For bug reports, include Red/Discord.py versions, `[p]audiostatus`, `[p]playerst
 Legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The daily monitor adds an optional `watchdog` section, disabled by default, without changing those legacy values. Red initializes the added defaults on existing installations. It stores the recipient's Discord ID, test server/channel IDs, public test video URL, schedule/timezone, daily cursor, latest safe result, and pending failure alert/delivery state. User-data hooks export that recipient's monitor record or remove it and disable checking. Deletion does not remove already delivered Discord DMs.
 
 Guild Config additionally stores music panel/DJ/vote preferences, and member-specific saved playlists/favorites containing supplied public source URLs and track metadata. These are exported/deleted by the user's Red data hooks. The new sections use merged defaults, preserving all legacy values. The short-song cache below stores local audio and bounded metadata outside Config, separately from playlists, histories and settings backups. Extracted signed stream URLs, provider credentials, HTTP headers and yt-dlp disk caches are not saved. Normal command contexts, errors, live queues, volume, repeat settings, skip votes, and panel references stay in memory.
+
+Media commands admit at most 32 simultaneous requests across the bot and 16 per server, including requests waiting for voice, provider search, saved-song playback and collection lookups. Excess requests receive a retry message before they create a lookup task or wait for a voice lock. Autoplay shares the admission budget and leaves normally when no request slot is available. These resource bounds do not change saved music settings or the 100-track queue limit.
+
+User-data deletion cancels and waits for already running requests that can save that user's collections or requester attribution before removing stored records. New writes for the user are rejected while deletion runs. Queue recovery and reconnect snapshots containing the user's attribution are invalidated, retained history/session writes are serialized with deletion, and existing playback attribution becomes anonymous before cache deletion finishes. A new deliberate request after deletion can create fresh data. The barrier retains no permanent deleted-user list.
 
 Unload closes only AudioPlus's players and cancels the daily scheduler/probe, owned lookups/decoders, idle timers and cache downloads/expiry worker. Completed song copies survive reload/restart; partial files are removed. Other cogs' voice connections are left alone. Removing a guild closes its player and deletes its song copies. Each cog remains independently installable through Downloader.
 

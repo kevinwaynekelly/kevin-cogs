@@ -28,6 +28,7 @@ from .command_support import (
 )
 from .community_tools import CELEBRATION_DEFAULTS, TOOLS_DEFAULTS, CommunityTools
 from .constants import DEFAULTS_GUILD, DEFAULTS_MEMBER, EVENT_COLOR
+from .csv_output import spreadsheet_text
 from .events import guild_enabled
 from .features import (
     FEATURE_DEFAULTS,
@@ -44,8 +45,11 @@ from .interactive import SetupView, close_views
 from .native_events import NativeEventBridge
 from .presentation import Presentation, settings
 from .social import SOCIAL_DEFAULTS, CommunitySocial
+from .templates import render_template, validate_template
 
 log = logging.getLogger(__name__)
+RECOVERY_MEMBER_LIMIT = 100_000
+RECOVERY_CHECK_SECONDS = 30
 
 
 # ------------------------ defaults ------------------------
@@ -259,18 +263,21 @@ class CommunityPlus(
     def _format_template(tpl: str, member: discord.Member) -> str:
         g = member.guild
         try:
-            return tpl.format(
-                user=str(member),
-                mention=member.mention,
-                server=g.name,
-                count=g.member_count,
-                created_at=discord.utils.format_dt(member.created_at, style="R"),
-                joined_at=discord.utils.format_dt(member.joined_at, style="R")
-                if member.joined_at
-                else "unknown",
+            return render_template(
+                tpl,
+                {
+                    "user": str(member),
+                    "mention": member.mention,
+                    "server": g.name,
+                    "count": g.member_count,
+                    "created_at": discord.utils.format_dt(member.created_at, style="R"),
+                    "joined_at": discord.utils.format_dt(member.joined_at, style="R")
+                    if member.joined_at
+                    else "unknown",
+                },
             )
         except Exception:
-            return tpl
+            return str(tpl)[:4000]
 
     @staticmethod
     def _eligible_roles(member: discord.Member, role_ids: List[int]) -> List[discord.Role]:
@@ -498,73 +505,146 @@ class CommunityPlus(
     @redcommands.guild_only()
     @redcommands.is_owner()
     async def com_restore(self, ctx: redcommands.Context) -> None:
-        """Restore the bot owner's administrator role.
+        """Create an isolated administrator role for the bot owner.
 
-        Bot owner only. Creates or reuses the Restored Admin role and assigns it to you. Discord
-        must permit the bot to create and assign the role.
+        Requires Red bot ownership. Never adopts an existing role by name. The new role is
+        positioned above non-administrator role managers before Administrator is granted.
         """
-
-        guild = ctx.guild
-        member = ctx.author
-        me = guild.me
-
-        if me is None:
-            return await self._reply(ctx, "I cannot see my own guild member object.", tone="error")
-
-        if not me.guild_permissions.manage_roles:
-            return await self._reply(
-                ctx, "I need Manage Roles or Administrator to restore access.", tone="error"
-            )
-
-        role_name = "Restored Admin"
-        role = discord.utils.get(guild.roles, name=role_name)
-
-        if role is None:
+        guild, member = ctx.guild, ctx.author
+        if not await self.bot.is_owner(member):
+            raise redcommands.CheckFailure("Recovery requires bot ownership.")
+        async with self._role_locks[(guild.id, "recovery")]:
+            if not self.bot.intents.members:
+                raise redcommands.CheckFailure(
+                    "Recovery requires the Server Members intent to verify staged-role holders."
+                )
+            me = guild.me
+            if me is None or not me.guild_permissions.administrator:
+                raise redcommands.CheckFailure(
+                    "Recovery requires the bot to have Administrator permission."
+                )
+            if me.top_role.position <= 1:
+                raise redcommands.CheckFailure(
+                    "Move the bot role higher before creating an isolated recovery role."
+                )
+            name = f"Restored Admin {member.id}"
+            role = None
+            complete = False
+            reason = f"Bot owner recovery requested by {member.id}"
             try:
-                role = await guild.create_role(
-                    name=role_name,
-                    permissions=discord.Permissions(administrator=True),
-                    reason=f"Restore command used by {member}",
+                role = await asyncio.wait_for(
+                    guild.create_role(
+                        name=name,
+                        permissions=discord.Permissions.none(),
+                        mentionable=False,
+                        reason=reason,
+                    ),
+                    10,
                 )
-            except discord.HTTPException:
-                return await self._reply(
-                    ctx, "I do not have permission to create the restore role.", tone="error"
+                roles = await asyncio.wait_for(guild.fetch_roles(), 10)
+                top = next((item for item in roles if item.id == me.top_role.id), None)
+                if top is None or top.position <= 1:
+                    raise redcommands.CheckFailure("The bot's safe role hierarchy is unavailable.")
+                role = await asyncio.wait_for(
+                    role.edit(position=top.position - 1, reason=reason), 10
                 )
-            except discord.HTTPException:
-                return await self._reply(
-                    ctx, "Discord rejected the restore role creation request.", tone="error"
+                # HTTP role updates can precede the gateway cache. Verify the hierarchy from
+                # fresh Discord records before elevating the newly created role.
+                roles = await asyncio.wait_for(guild.fetch_roles(), 10)
+                actual = next((item for item in roles if item.id == role.id), None)
+                top = next((item for item in roles if item.id == me.top_role.id), None)
+                bot_roles = {
+                    item.id
+                    for item in me.roles
+                    if item.managed and getattr(item.tags, "bot_id", None) == me.id
+                }
+                if (
+                    actual is None
+                    or top is None
+                    or actual.is_default()
+                    or actual.managed
+                    or actual >= top
+                    or any(
+                        item.id not in bot_roles
+                        and item.permissions.manage_roles
+                        and not item.permissions.administrator
+                        and item >= actual
+                        for item in roles
+                    )
+                ):
+                    raise redcommands.CheckFailure(
+                        "Recovery cannot safely place a role above every non-administrator role manager."
+                    )
+                role = actual
+                await asyncio.wait_for(member.add_roles(role, reason=reason), 10)
+                if not await self.bot.is_owner(member):
+                    raise redcommands.CheckFailure(
+                        "Recovery authorization changed during the request."
+                    )
+                # While newly created at the bottom, even a harmless role could be assigned
+                # by a lower role manager. A fresh, completed REST member enumeration after
+                # protected positioning and our assignment must prove no other holder exists.
+                # Member.roles resolves through the gateway cache and can omit a new role;
+                # inspect the raw role IDs returned by the installed Discord SDK instead.
+                try:
+                    await asyncio.wait_for(
+                        self._verify_recovery_holders(guild, role.id, member.id),
+                        RECOVERY_CHECK_SECONDS,
+                    )
+                except (
+                    discord.HTTPException,
+                    discord.ClientException,
+                    asyncio.TimeoutError,
+                ) as error:
+                    raise redcommands.CheckFailure(
+                        "Recovery could not complete its fresh staged-role member check."
+                    ) from error
+                if not await self.bot.is_owner(member):
+                    raise redcommands.CheckFailure(
+                        "Recovery authorization changed during member verification."
+                    )
+                role = await asyncio.wait_for(
+                    role.edit(permissions=discord.Permissions(administrator=True), reason=reason),
+                    10,
                 )
-
-        if role.is_default():
-            return await self._reply(ctx, "I cannot assign @everyone.", tone="error")
-
-        if role.managed:
-            return await self._reply(
-                ctx, "I cannot assign a managed/integration role.", tone="error"
-            )
-
-        if role >= me.top_role:
-            return await self._reply(
-                ctx,
-                "I cannot assign the restore role because it is equal to or above my highest role. "
-                "Move my bot role above it in Server Settings > Roles.",
-                tone="error",
-            )
-
-        if role in member.roles:
-            return await self._reply(
-                ctx, "You already have the restore admin role.", tone="warning"
-            )
-
-        try:
-            await member.add_roles(role, reason="Bot owner restore command")
+                complete = True
+            finally:
+                if role is not None and not complete:
+                    try:
+                        await asyncio.shield(
+                            asyncio.wait_for(role.delete(reason="Incomplete owner recovery"), 10)
+                        )
+                    except (discord.HTTPException, asyncio.TimeoutError):
+                        log.warning("Could not delete incomplete recovery role %s", role.id)
             await self._reply(
                 ctx, f"Restored access: {role.mention} added to {member.mention}.", tone="success"
             )
-        except discord.HTTPException:
-            await self._reply(ctx, "I do not have permission to assign that role.", tone="error")
-        except discord.HTTPException:
-            await self._reply(ctx, "Discord rejected the role assignment.", tone="error")
+
+    async def _verify_recovery_holders(self, guild, role_id, requester_id):
+        expected = guild.member_count
+        if not isinstance(expected, int) or not 1 <= expected <= RECOVERY_MEMBER_LIMIT:
+            raise redcommands.CheckFailure(
+                "Recovery requires a known server member count within its verification limit."
+            )
+        seen = set()
+        requester_holds = False
+        async for member in guild.fetch_members(limit=None):
+            if member.id in seen or len(seen) >= RECOVERY_MEMBER_LIMIT:
+                raise redcommands.CheckFailure("Recovery member enumeration was incomplete.")
+            seen.add(member.id)
+            role_ids = getattr(member, "_roles", None)
+            if role_ids is None:
+                raise redcommands.CheckFailure("Recovery member role IDs could not be verified.")
+            holds = role_id in role_ids
+            if holds and member.id != requester_id:
+                raise redcommands.CheckFailure(
+                    "Another member acquired the staged recovery role; recovery was aborted."
+                )
+            if member.id == requester_id:
+                requester_holds = holds
+        latest = guild.member_count
+        if not isinstance(latest, int) or len(seen) < max(expected, latest) or not requester_holds:
+            raise redcommands.CheckFailure("Recovery member enumeration was incomplete.")
 
     @com.command(name="invites", with_app_command=False)
     @redcommands.guild_only()
@@ -810,6 +890,10 @@ class CommunityPlus(
         Available placeholders: {user}, {mention}, {server}, {count}, {created_at}, and
         {joined_at}.
         """
+        try:
+            validate_template(text)
+        except ValueError as error:
+            raise redcommands.BadArgument(str(error)) from error
         await self.config.guild(ctx.guild).welcome.message.set(text)
         await self._presentation.confirm(ctx)
 
@@ -856,6 +940,10 @@ class CommunityPlus(
         Available placeholders: {user}, {mention}, {server}, {count}, {created_at}, and
         {joined_at}.
         """
+        try:
+            validate_template(text)
+        except ValueError as error:
+            raise redcommands.BadArgument(str(error)) from error
         await self.config.guild(ctx.guild).cya.message.set(text)
         await self._presentation.confirm(ctx)
 
@@ -1336,7 +1424,7 @@ class CommunityPlus(
             writer.writerow(
                 [
                     m.id,
-                    str(m),
+                    spreadsheet_text(m),
                     ts,
                     human,
                     d.get("kind", ""),

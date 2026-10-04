@@ -8,6 +8,7 @@ import threading
 
 import discord
 
+from .media_network import REMOTE_OPTIONS, MediaRelay, NetworkPolicyError
 from .resolver import MediaError, Stream
 
 
@@ -32,7 +33,12 @@ class _DecoderStderr:
         self._tail = bytearray()
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._drain, name="AudioDecoderStderr", daemon=True)
-        self._thread.start()
+        try:
+            self._thread.start()
+        except BaseException:
+            self.reader.close()
+            self.writer.close()
+            raise
 
     def _drain(self):
         try:
@@ -101,20 +107,28 @@ class NativeSource(discord.AudioSource):
         normalize: bool = False,
         duration: int = 0,
     ):
+        self._relay = None
+        if not stream.local:
+            try:
+                self._relay = MediaRelay(stream.url, stream.headers)
+            except NetworkPolicyError as error:
+                raise MediaError(str(error)) from error
         before = (
             "-nostdin -protocol_whitelist file,pipe"
             if stream.local
-            else "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 15000000 -protocol_whitelist http,https,httpproxy,tcp,tls,crypto,pipe"
+            else "-nostdin -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 15000000 "
+            + REMOTE_OPTIONS
         )
-        if stream.headers:
+        if stream.headers and stream.local:
             headers = "".join(f"{key}: {value}\r\n" for key, value in stream.headers.items())
             before += " -headers " + shlex.quote(headers)
         if start:
             before += f" -ss {start / 1000:.3f}"
-        self._stderr = _DecoderStderr()
+        self._stderr = None
         try:
+            self._stderr = _DecoderStderr()
             self._audio = discord.FFmpegPCMAudio(
-                stream.url,
+                self._relay.url if self._relay else stream.url,
                 before_options=before,
                 options="-vn -loglevel warning"
                 + (f" -t {duration / 1000:.3f}" if duration else "")
@@ -122,7 +136,10 @@ class NativeSource(discord.AudioSource):
                 stderr=self._stderr.writer,
             )
         except BaseException:
-            self._stderr.close()
+            if self._stderr:
+                self._stderr.close()
+            if self._relay:
+                self._relay.close()
             raise
         # The child owns its inherited write descriptor until it exits.
         self._stderr.writer.close()
@@ -166,4 +183,6 @@ class NativeSource(discord.AudioSource):
                 self._audio.cleanup()
             finally:
                 self._stderr.close()
+                if self._relay:
+                    self._relay.close()
                 self._cleaned = True

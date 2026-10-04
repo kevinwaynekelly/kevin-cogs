@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import threading
 from collections import OrderedDict
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import discord
 
+from .media_network import REMOTE_OPTIONS, NetworkPolicyError, create_relay, settle_owned
 from .resolver import MediaError
 
 FRAME_BYTES = 3840
@@ -216,6 +218,10 @@ class ClipCache:
         if not ffmpeg:
             raise MediaError("FFmpeg is missing. Install it in Red's container.")
         duration = max(0.02, int(clip_duration(clip) * 1000) // 20 * 0.02)
+        try:
+            relay = await create_relay(stream.url, stream.headers)
+        except NetworkPolicyError as error:
+            raise MediaError(str(error)) from error
         args = [
             ffmpeg,
             "-nostdin",
@@ -230,19 +236,13 @@ class ClipCache:
             "5",
             "-rw_timeout",
             "15000000",
-            "-protocol_whitelist",
-            "http,https,httpproxy,tcp,tls,crypto,pipe",
+            *shlex.split(REMOTE_OPTIONS),
         ]
-        if stream.headers:
-            args += [
-                "-headers",
-                "".join(f"{key}: {value}\r\n" for key, value in stream.headers.items()),
-            ]
         if clip["start"]:
             args += ["-ss", f"{clip['start']:.3f}"]
         args += [
             "-i",
-            stream.url,
+            relay.url,
             "-t",
             f"{duration:.3f}",
             "-vn",
@@ -256,36 +256,39 @@ class ClipCache:
             "s16le",
             "pipe:1",
         ]
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        process = None
-        with os.fdopen(descriptor, "wb") as output:
-            spawning = asyncio.create_task(
-                asyncio.create_subprocess_exec(
-                    *args, stdout=output, stderr=asyncio.subprocess.DEVNULL
-                )
-            )
-            try:
-                process = await asyncio.shield(spawning)
-                await asyncio.wait_for(process.wait(), DOWNLOAD_TIMEOUT)
-                if process.returncode:
-                    raise MediaError(
-                        "The intro clip could not be downloaded. Try another public video."
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            process = None
+            with os.fdopen(descriptor, "wb") as output:
+                spawning = asyncio.create_task(
+                    asyncio.create_subprocess_exec(
+                        *args, stdout=output, stderr=asyncio.subprocess.DEVNULL
                     )
-            except asyncio.CancelledError:
-                if process is None:
-                    process = await spawning
-                raise
-            except asyncio.TimeoutError as error:
-                raise MediaError(
-                    "The intro download timed out. Use intro test to retry."
-                ) from error
-            finally:
-                if process is not None and process.returncode is None:
-                    try:
-                        process.kill()
-                    except ProcessLookupError:
-                        pass
-                    await process.wait()
+                )
+                try:
+                    process = await asyncio.shield(spawning)
+                    await asyncio.wait_for(process.wait(), DOWNLOAD_TIMEOUT)
+                    if process.returncode:
+                        raise MediaError(
+                            "The intro clip could not be downloaded. Try another public video."
+                        )
+                except asyncio.CancelledError:
+                    if process is None:
+                        process = await spawning
+                    raise
+                except asyncio.TimeoutError as error:
+                    raise MediaError(
+                        "The intro download timed out. Use intro test to retry."
+                    ) from error
+                finally:
+                    if process is not None and process.returncode is None:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                        await process.wait()
+        finally:
+            await settle_owned(asyncio.create_task(asyncio.to_thread(relay.close)))
 
     async def remove(self, *, guild_id=None, member_id=None):
         def matches(key):

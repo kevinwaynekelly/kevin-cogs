@@ -298,7 +298,10 @@ async def test_prepare_timeout_keeps_child_cleanup_owned(monkeypatch):
     assert decoder.cleaned.is_set() and not source._thread.is_alive()
 
 
-async def test_real_ffmpeg_blocked_network_read_is_reaped_on_cancelled_prefill():
+async def test_real_ffmpeg_blocked_network_read_is_reaped_on_cancelled_prefill(monkeypatch):
+    from test_security_media import allow_test_loopback
+
+    allow_test_loopback(monkeypatch)
     connected = asyncio.Event()
     release = asyncio.Event()
     app = web.Application()

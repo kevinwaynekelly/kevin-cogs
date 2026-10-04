@@ -117,6 +117,20 @@ def forbidden():
 
 
 @pytest.fixture(autouse=True)
+def isolated_media_proxy_environment(monkeypatch):
+    """Media tests never inherit runner proxies; explicit proxy tests set their own."""
+    for name in (
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def isolated_config(monkeypatch, tmp_path):
     monkeypatch.setattr("audioplus.cog.cog_data_path", lambda cog: tmp_path / "AudioPlus")
 

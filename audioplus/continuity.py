@@ -8,6 +8,7 @@ from copy import deepcopy
 from redbot.core import commands
 
 from .features import collection_name, load_saved, privileged, saved_track
+from .requests import personal_request, privacy_write
 from .resolver import MAX_TRACKS
 
 log = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ CONTINUITY_DEFAULTS = {
 
 
 class AudioContinuity:
+    @privacy_write
     async def _save_recovery(self, player):
         group = self.config.guild(player.guild)
         if player._recovery_cleared or not (await group.continuity())["recovery"]:
@@ -130,6 +132,7 @@ class AudioContinuity:
 
     @commands.hybrid_command(name="recoverqueue")
     @commands.guild_only()
+    @personal_request
     async def recover_queue(self, ctx):
         """Restore the saved song, position and queue after a restart."""
         await self._playlist_manager(ctx)
@@ -137,7 +140,9 @@ class AudioContinuity:
         if not (await group.continuity())["recovery"]:
             raise commands.BadArgument("Enable audioset recovery first.")
         async with self._player_locks[ctx.guild.id]:
-            record = await group.recovery()
+            async with self._privacy.lock:
+                record = await group.recovery()
+                self._privacy.related(record.get("requesters", []))
             if self._get_player(ctx.guild):
                 raise commands.BadArgument(
                     "Disconnect the current player before restoring a checkpoint."
@@ -225,6 +230,7 @@ class AudioContinuity:
 
     @server_playlist.command(name="suggest")
     @commands.cooldown(1, 10, commands.BucketType.member)
+    @personal_request
     async def server_playlist_suggest(self, ctx, name: str, *, query: str):
         """Suggest one public track for a shared playlist."""
         name = collection_name(name)

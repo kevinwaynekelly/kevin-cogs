@@ -125,14 +125,16 @@ Square brackets indicate optional arguments. `enable` and `disable` are separate
 | `[p]community seenlistcsv` | Export current members' last-seen and presence summary as CSV. |
 | `[p]community embeds [true\|false]` | Inspect or set compact embeds. |
 
-Welcome and goodbye templates support `{user}`, `{mention}`, `{server}`, `{count}`, `{created_at}`, and `{joined_at}`. An invalid template is sent unchanged.
+Welcome and goodbye templates support `{user}`, `{mention}`, `{server}`, `{count}`, `{created_at}`, and `{joined_at}`. New templates are limited to 2,000 characters and accept only those exact fields. Ordinary escaped braces, conversions, and formatting remain available, with width/precision at most 512 and format specifications at most 32 characters. Nested fields and attribute/index traversal are rejected before formatting. Rendered notices are bounded to 4,000 characters. An invalid or unsafe previously saved template is displayed literally within that output limit; it is never expanded using its unsafe specification.
 
 ### Bot owner commands
 
 | Command | Behavior |
 | --- | --- |
-| `[p]community restore` | Creates or reuses a role named `Restored Admin` and assigns it to the invoking bot owner. A newly created role has **Administrator** permission. Discord must allow the bot to create and assign that role. |
+| `[p]community restore` | Bot-owner recovery creates a fresh `Restored Admin <owner ID>` role, first with no permissions. It positions and verifies the role above every non-administrator role manager, assigns it to the invoking bot owner, completes a fresh server-member check for unexpected holders, rechecks bot ownership, then grants **Administrator**. The bot itself requires **Administrator**, the **Server Members intent**, and a high enough role. Verification must finish within 30 seconds and is limited to servers with a known member count of at most 100,000. Unsafe hierarchy, another staged-role holder, an incomplete member list, failed assignment, or changed authorization aborts recovery and deletes the incomplete role. |
 | `[p]community invites` | DMs the bot owner an invite report for every server the bot belongs to. Creates one-use invites that expire after 24 hours where the bot has **Create Invite** permission. |
+
+Recovery never adopts or edits an existing role merely because its name matches. The only non-administrator role-manager exemption is the bot's own managed integration role. Since a lower role manager could acquire the harmless role before it is moved, recovery verifies raw role IDs from a completed fresh Discord member enumeration after positioning and assignment. Cached role-holder lists are insufficient. The check retains IDs only temporarily and does not add persistent member records. Roles created by older releases are not automatically renamed, elevated, or removed because their name does not prove their origin. Review any old `Restored Admin` role in Discord, remove unintended holders, and delete or reposition it if ordinary role managers can assign it.
 
 ## Stored data and current limits
 
@@ -140,7 +142,7 @@ Red Config stores server settings and IDs for channels/roles, message templates,
 
 Named games and lifetime member records have no automatic count or age limit because activity, seen and sticky-role features use them across restarts and leave/rejoin. Database growth is expected as members and activity accumulate. `[p]community tracking false` stops new activity collection; it does not erase existing data. For a configuration repository, use the [settings-only exporter](../docs/CONFIG_STORAGE.md) instead of copying the raw database.
 
-`seenlistcsv` exports a summary for current members, not every stored record. `sticky purge` clears only saved roles. Red's user-data export hook returns all stored records for that user across servers. Its deletion hook clears those records and cancels pending timers and the current voice accounting interval for the user. Future observed activity can create new records. Use `community tracking` and `community vcsolo notify` to control collection and DMs. Statistics reflect events observed while the cog is running, without historical Discord backfill. Presence duration tracks actual status changes rather than every activity update. Seen lists paginate and exports read member records in one batch.
+`seenlistcsv` exports a summary for current members, not every stored record. Spreadsheet formula-like display names are prefixed with an apostrophe in this CSV export; stored names and normal Discord displays are unchanged. `sticky purge` clears only saved roles. Red's user-data export hook returns all stored records for that user across servers. Its deletion hook clears those records and cancels pending timers and the current voice accounting interval for the user. Future observed activity can create new records. Use `community tracking` and `community vcsolo notify` to control collection and DMs. Statistics reflect events observed while the cog is running, without historical Discord backfill. Presence duration tracks actual status changes rather than every activity update. Seen lists paginate and exports read member records in one batch.
 
 ## Polls, events, and reminders
 

@@ -24,3 +24,13 @@ __red_end_user_data_statement__ += (
     "can clear their server's cache; server removal also erases its copies. Complete copies "
     "survive reload/restart, while owned downloads and partial files are cancelled/removed."
 )
+
+__red_end_user_data_statement__ += (
+    " In-flight personal requests are cancelled and awaited during deletion, and new writes "
+    "are rejected until deletion finishes. Playback attribution is anonymized before cache "
+    "removal finishes; retained history, recovery and session writes are serialized with "
+    "deletion. Request admission is limited to 32 simultaneous operations globally and "
+    "16 per server. Active ownership records are discarded when operations finish; no "
+    "permanent deleted-user tombstones are retained. New deliberate requests after deletion "
+    "may create fresh data."
+)

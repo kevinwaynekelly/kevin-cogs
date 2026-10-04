@@ -27,6 +27,13 @@ from .interactive import close_views
 from .listening import ListeningCommands
 from .player import GuildPlayer
 from .presentation import Presentation
+from .requests import (
+    PrivacyBarrier,
+    RequestBudget,
+    media_request,
+    personal_context,
+    personal_request,
+)
 from .resolver import MediaError, MediaResolver, normalize_query
 from .sessions import MusicSessions
 from .watchdog import (
@@ -70,6 +77,8 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         self._player_locks = defaultdict(asyncio.Lock)
         self._lookups = set()
         self._connections = set()
+        self._requests = RequestBudget()
+        self._privacy = PrivacyBarrier()
         self._closing = False
         self._views = set()
         self._sessions = {}
@@ -98,6 +107,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             kwargs["thumbnail"] = video_thumbnail(track.uri)
         return await self._presentation.send(ctx, content, **kwargs)
 
+    @personal_request
     async def _invoke_control(self, ctx, command, **kwargs):
         interaction = getattr(ctx, "interaction", None)
         if interaction is not None and not interaction.response.is_done():
@@ -106,10 +116,25 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         return await command.callback(self, ctx, **kwargs)
 
     async def cog_before_invoke(self, ctx):
-        await prepare_hybrid(ctx)
+        scope = personal_context(self, getattr(ctx.guild, "id", 0), ctx.author.id)
+        await scope.__aenter__()
+        try:
+            await prepare_hybrid(ctx)
+        except BaseException:
+            await scope.__aexit__(None, None, None)
+            raise
+        scopes = getattr(ctx, "_audioplus_request_scopes", None)
+        if scopes is None:
+            scopes = ctx._audioplus_request_scopes = []
+        scopes.append(scope)
 
     async def cog_after_invoke(self, ctx):
-        finish_configuration_audit(ctx)
+        try:
+            finish_configuration_audit(ctx)
+        finally:
+            scopes = getattr(ctx, "_audioplus_request_scopes", ())
+            if scopes:
+                await scopes.pop().__aexit__(None, None, None)
 
     async def cog_load(self):
         # Setup/help remain available when the container needs dependencies.
@@ -143,7 +168,10 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         await close_views(self)
         for guild_id in tuple(self._panels):
             await self._close_panel(guild_id)
-        pending = tuple(self._lookups | self._connections)
+        pending = tuple(
+            (self._lookups | self._connections | self._requests.tasks.keys())
+            - {asyncio.current_task()}
+        )
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
@@ -324,6 +352,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         )
 
     @audiocheck.command(name="enable")
+    @personal_request
     async def audiocheck_enable(
         self, ctx: commands.Context, channel: Optional[discord.VoiceChannel] = None
     ):
@@ -536,6 +565,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
                     )
             raise
 
+    @media_request
     async def _connect_voice(self, channel):
         if self._closing:
             raise asyncio.CancelledError
@@ -610,6 +640,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             candidates, key=lambda channel: sum(not member.bot for member in channel.members)
         )
 
+    @personal_request
     async def _fetch_or_connect_player(self, ctx, *, queue_request=False):
         if ctx.guild is None:
             raise commands.NoPrivateMessage()
@@ -651,7 +682,10 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             ready = False
             try:
                 if player is None or not player.voice.is_connected():
-                    snapshot = self._snapshot(previous) if previous else None
+                    async with self._privacy.lock:
+                        snapshot = self._snapshot(previous) if previous else None
+                        if snapshot:
+                            self._privacy.related(snapshot[-1][0].values())
                     await self._dispose_player(ctx.guild.id)
                     try:
                         vc = await self._connect_voice(channel)
@@ -706,17 +740,19 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         except MediaError as exc:
             raise commands.BadArgument(str(exc)) from exc
 
-    async def _load_tracks(self, query):
+    async def _load_tracks(self, query, *, limit=None):
         if self._closing:
             raise commands.CommandError("AudioPlus is unloading.")
-        task = asyncio.create_task(self._resolver.search(query))
-        self._lookups.add(task)
-        try:
-            return await task
-        except MediaError as exc:
-            raise commands.CommandError(str(exc)) from exc
-        finally:
-            self._lookups.discard(task)
+        with self._requests.admit(0):
+            options = {"limit": limit} if limit is not None else {}
+            task = asyncio.create_task(self._resolver.search(query, **options))
+            self._lookups.add(task)
+            try:
+                return await task
+            except MediaError as exc:
+                raise commands.CommandError(str(exc)) from exc
+            finally:
+                self._lookups.discard(task)
 
     async def _enqueue(self, player, tracks, ctx):
         preferences = await self.config.guild(player.guild).music()
@@ -738,6 +774,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         except MediaError as exc:
             raise commands.CommandError(str(exc)) from exc
 
+    @personal_request
     async def _queue_query(self, ctx, query):
         player, _ = await self._fetch_or_connect_player(ctx, queue_request=True)
         try:
@@ -800,7 +837,9 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             old = self._get_player(guild)
             if not old or not old.voice.channel:
                 return False
-            channel, snapshot = old.voice.channel, self._snapshot(old)
+            async with self._privacy.lock:
+                channel, snapshot = old.voice.channel, self._snapshot(old)
+                self._privacy.related(snapshot[-1][0].values())
             await self._dispose_player(guild.id)
             try:
                 self._require_voice()
@@ -819,6 +858,12 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
                 await self._restore(player, snapshot)
                 await self._stage_unsuppress_if_needed(guild, channel)
                 return True
+            except asyncio.CancelledError:
+                await self._dispose_player(guild.id)
+                if not self._closing:
+                    self._retain(old, snapshot)
+                    self._players[guild.id] = old
+                raise
             except (
                 MediaError,
                 discord.HTTPException,
@@ -1076,6 +1121,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
 
     @audio.command(name="rejoin")
     @GUILD_ONLY
+    @personal_request
     async def audio_rejoin(self, ctx: commands.Context) -> None:
         """Reconnect to voice and restore the current track, pause, volume, and queue.
 
@@ -1528,17 +1574,27 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         )
 
     async def red_delete_data_for_user(self, *, requester, user_id):
-        await self._cache.remove(user_id=user_id)
-        self._session_user_data(user_id, delete=True)
-        await self._continuity_delete_user(user_id)
-        await self._delete_listening_user(user_id)
-        if (await self.config.watchdog())["recipient_id"] == user_id:
-            await self._watchdog.configure(**DEFAULT_WATCHDOG)
-        for guild_id in await self.config.all_guilds():
-            group = self.config.guild_from_id(guild_id)
-            for section in (group.playlists, group.favorites):
-                async with section() as records:
-                    records.pop(str(user_id), None)
+        async with self._privacy.deletion(user_id) as erase:
+            if not erase:
+                return
+            # Anonymize queued/background playback before cache suspension ends.
+            await self._continuity_delete_user(user_id)
+            await self._cache.remove(user_id=user_id)
+            self._session_user_data(user_id, delete=True)
+            for _, votes in self._skip_votes.values():
+                votes.discard(user_id)
+            for view in tuple(self._views):
+                if getattr(view, "owner_id", None) == user_id:
+                    view.stop()
+                    self._views.discard(view)
+            await self._delete_listening_user(user_id)
+            if (await self.config.watchdog())["recipient_id"] == user_id:
+                await self._watchdog.configure(**DEFAULT_WATCHDOG)
+            for guild_id in await self.config.all_guilds():
+                group = self.config.guild_from_id(guild_id)
+                for section in (group.playlists, group.favorites):
+                    async with section() as records:
+                        records.pop(str(user_id), None)
 
     async def red_get_data_for_user(self, *, user_id):
         state = await self.config.watchdog()

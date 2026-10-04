@@ -323,6 +323,9 @@ async def test_enable_does_not_claim_success_if_setup_dm_is_blocked(watchdog_com
 
 @pytest.fixture
 async def probe_runtime(bot, guild, monkeypatch):
+    from test_security_media import allow_test_loopback
+
+    allow_test_loopback(monkeypatch)
     require_voice()
     cog = AudioPlus(bot)
     channel = make_channel(guild, kind=discord.VoiceChannel)

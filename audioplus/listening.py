@@ -9,6 +9,7 @@ from redbot.core import commands
 from .command_support import check_command
 from .features import load_saved, saved_track
 from .presentation import clip
+from .requests import personal_request, privacy_write
 
 HISTORY_DAYS = 30
 HISTORY_COUNT = 100
@@ -24,6 +25,7 @@ def recent_records(records, now):
 
 
 class ListeningCommands:
+    @privacy_write
     async def _record_listening_history(self, player):
         if (
             self._closing
@@ -94,6 +96,7 @@ class ListeningCommands:
     @commands.hybrid_command(name="replay")
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.member)
+    @personal_request
     async def replay(self, ctx, identifier: str):
         """Queue a recent song using its ID from history."""
         await check_command(ctx, self.play)

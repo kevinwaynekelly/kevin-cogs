@@ -7,12 +7,16 @@ import json
 import math
 import os
 import re
+import signal
 import sys
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
+from .media_network import NetworkPolicyError, public_url, require_no_proxy, settle_owned
+
 MAX_TRACKS = 100
+MAX_PENDING = 16
 DIRECT_EXTENSIONS = {".mp3", ".m4a", ".wav", ".ogg", ".opus", ".flac", ".aac", ".webm"}
 
 
@@ -43,14 +47,9 @@ def http_url(value: object) -> str:
     if not isinstance(value, str):
         raise MediaError("The source did not provide a playable HTTP stream.")
     try:
-        parts = urlsplit(value)
-        if parts.scheme not in {"http", "https"} or not parts.hostname:
-            raise ValueError
-        if parts.username or parts.password or any(ord(c) < 32 for c in value):
-            raise ValueError
-    except ValueError as exc:
-        raise MediaError("Use an HTTP or HTTPS media URL without embedded credentials.") from exc
-    return value
+        return public_url(value)
+    except NetworkPolicyError as exc:
+        raise MediaError(str(exc)) from exc
 
 
 def normalize_query(query: str) -> str:
@@ -97,18 +96,20 @@ class MediaResolver:
         self._processes: set[asyncio.subprocess.Process] = set()
         self._slots = asyncio.Semaphore(2)
         self._closed = False
+        self._pending = 0
 
     def _command(self, query, *, flat):
         args = [
             sys.executable,
-            "-m",
-            "yt_dlp",
+            str(Path(__file__).with_name("media_worker.py")),
             "--ignore-config",
             "--no-warnings",
             "--no-progress",
             "--dump-single-json",
             "--skip-download",
             "--no-cache-dir",
+            "--proxy",
+            "",
             "--socket-timeout",
             "15",
             "--retries",
@@ -125,19 +126,49 @@ class MediaResolver:
         if flat:
             args += ["--flat-playlist", "--playlist-end", str(MAX_TRACKS)]
         else:
-            args += ["--no-playlist", "--format", "bestaudio/best"]
+            # Network manifests can direct a native decoder to new destinations.
+            # Resolve ordinary HTTP audio containers instead of HLS/DASH playlists.
+            args += [
+                "--no-playlist",
+                "--format",
+                "bestaudio[protocol=https]/bestaudio[protocol=http]/best[protocol=https]/best[protocol=http]",
+            ]
         return [*args, "--", query]
 
     @staticmethod
-    async def _kill(process):
+    def _terminate(process):
+        # yt-dlp's JavaScript solvers belong to the same new process group.
+        # Kill the group even when its Python leader already exited.
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         if process.returncode is None:
             try:
                 process.kill()
             except ProcessLookupError:
                 pass
+
+    @classmethod
+    async def _kill(cls, process):
+        cls._terminate(process)
         await process.communicate()
 
     async def _extract(self, query, *, flat):
+        if self._pending >= MAX_PENDING:
+            raise MediaError("Too many media lookups are pending. Try again shortly.")
+        self._pending += 1
+        try:
+            return await self._extract_owned(query, flat=flat)
+        finally:
+            self._pending -= 1
+
+    async def _extract_owned(self, query, *, flat):
+        try:
+            require_no_proxy()
+        except NetworkPolicyError as exc:
+            raise MediaError(str(exc)) from exc
         if self._closed:
             raise MediaError("AudioPlus is unloading. Try again after it reloads.")
         async with self._slots:
@@ -148,6 +179,7 @@ class MediaResolver:
                     *self._command(query, flat=flat),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    start_new_session=os.name == "posix",
                     # Downloader's private dependency path must reach child Python.
                     env={
                         **os.environ,
@@ -161,8 +193,8 @@ class MediaResolver:
                 process = await asyncio.shield(spawning)
             except asyncio.CancelledError:
                 # Cancellation between OS spawn and transport setup still owns the child.
-                process = await spawning
-                await self._kill(process)
+                process = await settle_owned(spawning)
+                await settle_owned(asyncio.create_task(self._kill(process)))
                 raise
             self._processes.add(process)
             try:
@@ -187,8 +219,7 @@ class MediaResolver:
                     "Media lookup timed out. Try again or use a smaller playlist."
                 ) from exc
             finally:
-                if process.returncode is None:
-                    await self._kill(process)
+                await settle_owned(asyncio.create_task(self._kill(process)))
                 self._processes.discard(process)
 
     async def search(self, query: str, *, limit: int = 1) -> list[Track]:
@@ -257,9 +288,5 @@ class MediaResolver:
         self._closed = True
         # The owning extraction coroutine drains its pipes and reaps the killed process.
         for process in tuple(self._processes):
-            if process.returncode is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
+            self._terminate(process)
         await asyncio.gather(*(process.wait() for process in tuple(self._processes)))

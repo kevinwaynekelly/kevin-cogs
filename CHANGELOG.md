@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-04: Audio network and privacy boundaries, isolated administrator recovery
+
+- Reject private, local, reserved and metadata media destinations in AudioPlus and IntroPlus at actual transport connections, including DNS answers and redirect hops. Pin public DNS answers for extraction and use an owned guarded relay for decoding/cache copies; constrain remote media to HTTP audio containers. HLS/DASH-only streams and proxy environment routing are unsupported and produce safe errors.
+- Bound admitted AudioPlus commands to 32 globally and 16 per server before voice locks, hybrid preparation and provider lookups. Bound resolver pending work separately, retain relay/process ownership under repeated cancellation and terminate POSIX solver descendants with their lookup worker.
+- Associate in-flight collections, recovery snapshots, controls and session deliveries with the users they affect. Cancel and await old work before erasure, serialize background history/checkpoint/session writes, anonymize active attribution before cache cleanup and retry overlapping deletion after an interrupted predecessor. Preserve other members' queues/data and allow new deliberate requests after completed deletion.
+- Validate CommunityPlus welcome/goodbye templates before formatting, including legacy saved templates, and neutralize formula-like seen-list CSV values without changing stored names. Preserve unrestricted lifetime activity records as requested.
+- Keep bot-owner administrator recovery while creating a fresh unprivileged role, checking protected hierarchy and verifying every staged-role holder through fresh Discord member records before elevation. Reject unsafe/incomplete verification and clean up failed recovery. Existing legacy roles require manual review because their origins were never recorded.
+- Replace AudioPlus's unversioned root shell installer with a pinned official Deno release and reviewed SHA-256 before extraction/execution. Keep persistent Node container guidance.
+- Record all sixteen finding assessments in `docs/SECURITY_FINDINGS.md`, including the two explicitly retained behaviors and compatibility/deployment limitations. Remote scanner findings remain unchanged until a new scan verifies the final revision.
+- Pass all 1,235 tests on Python 3.10 and 3.11, Ruff lint/format checks, frontend syntax/interaction checks, pinned-installer shell syntax and diff validation. External Discord/YouTube transport remains mocked; guarded local HTTP and FFmpeg paths are exercised directly.
+
 ## 2026-10-04: Security fixes for retained records and shared resources
 
 - Bound LevelPlus announcement formatting before allocation, reject unsafe saved templates, restrict level-up mentions to the intended member, make exported aliases spreadsheet literals, include daily-only earned XP in privacy exports and restrict name lookup/import resolution to the current server.

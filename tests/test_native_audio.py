@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 from aiohttp import web
+from test_security_media import allow_test_loopback, allow_test_worker_loopback
 
 from audioplus.backend import require_voice
 from audioplus.player import GuildPlayer, NativeSource
@@ -369,7 +370,8 @@ async def test_process_errors_hide_signed_urls_and_credentials(monkeypatch):
 
 
 @pytest.fixture
-async def media_server():
+async def media_server(monkeypatch):
+    allow_test_loopback(monkeypatch)
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wav:
         wav.setnchannels(1)
@@ -394,8 +396,9 @@ async def media_server():
 
 
 @pytest.mark.parametrize("normalize", [False, True])
-async def test_real_ytdlp_generic_extraction_and_ffmpeg_pcm(media_server, normalize):
+async def test_real_ytdlp_generic_extraction_and_ffmpeg_pcm(media_server, normalize, monkeypatch):
     resolver = MediaResolver(timeout=20)
+    allow_test_worker_loopback(monkeypatch, resolver)
     tracks = await resolver.search(media_server)
     assert len(tracks) == 1
     stream = await resolver.resolve(tracks[0])

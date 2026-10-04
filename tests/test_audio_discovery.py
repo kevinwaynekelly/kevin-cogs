@@ -147,6 +147,7 @@ async def test_search_waits_for_a_choice_and_cannot_queue_twice(audio_runtime, m
     monkeypatch.setattr("audioplus.features.component_context", checked)
     cog._queue_saved = AsyncMock()
     interaction = SimpleNamespace(
+        user=ctx.author,
         guild_id=ctx.guild.id,
         response=SimpleNamespace(is_done=lambda: True),
         followup=SimpleNamespace(send=AsyncMock()),
@@ -167,6 +168,7 @@ async def test_search_picker_rejects_another_guild(audio_runtime, monkeypatch):
     checked = AsyncMock()
     monkeypatch.setattr("audioplus.features.component_context", checked)
     interaction = SimpleNamespace(
+        user=ctx.author,
         guild_id=ctx.guild.id + 1,
         response=SimpleNamespace(is_done=lambda: True),
         followup=SimpleNamespace(send=AsyncMock()),

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 from aiohttp import web
+from test_security_media import allow_test_loopback
 
 from audioplus.backend import require_voice
 from audioplus.player import GuildPlayer
@@ -19,7 +20,8 @@ from audioplus.source import DecoderError, NativeSource
 
 
 @pytest.fixture
-async def decoder_server():
+async def decoder_server(monkeypatch):
+    allow_test_loopback(monkeypatch)
     audio = io.BytesIO()
     with wave.open(audio, "wb") as wav:
         wav.setnchannels(1)
@@ -150,28 +152,12 @@ async def test_successful_decode_preserves_headers_and_reaps_diagnostic_reader(d
         cleanup_decoder(source, process, stderr)
 
 
-async def test_https_proxy_transport_is_allowed_and_reports_connection_failure(monkeypatch):
-    import socket
+async def test_configured_proxy_transport_is_explicitly_refused(monkeypatch):
+    from audioplus.resolver import MediaError
 
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
-    monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{port}")
-    monkeypatch.setenv("no_proxy", "")
-    source = NativeSource(
-        Stream("https://example.invalid/private?token=proxy-test-secret"), volume=100
-    )
-    process, stderr = source._audio._process, source._stderr
-    try:
-        with pytest.raises(DecoderError) as caught:
-            await asyncio.to_thread(source.read)
-        assert caught.value.retryable
-        assert caught.value.http_status is None
-        assert "whitelist" not in str(caught.value).lower()
-        assert "proxy-test-secret" not in str(caught.value)
-        assert "example.invalid" not in str(caught.value)
-    finally:
-        cleanup_decoder(source, process, stderr)
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9999")
+    with pytest.raises(MediaError, match="proxy environment"):
+        NativeSource(Stream("https://example.invalid/private?token=proxy-test-secret"), volume=100)
 
 
 async def test_flooded_decoder_stderr_is_bounded_drained_and_never_exposed(monkeypatch):

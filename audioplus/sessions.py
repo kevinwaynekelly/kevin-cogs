@@ -15,6 +15,13 @@ from .command_support import check_command
 from .features import collection_name, load_saved, saved_track
 from .interactive import component_context, component_error
 from .presentation import clip
+from .requests import (
+    PrivacyInterrupted,
+    participant_request,
+    personal_context,
+    personal_request,
+    privacy_write,
+)
 
 log = logging.getLogger(__name__)
 SESSION_TTL = 180
@@ -32,14 +39,15 @@ class SessionPlaylistModal(discord.ui.Modal, title="Save music session"):
     async def on_submit(self, interaction):
         view = self.session_view
         try:
-            if view.is_finished() or time.time() - view.record["ended"] > SESSION_TTL:
-                raise commands.CheckFailure(
-                    "This session expired. Save a playlist during the next session."
+            async with personal_context(view.cog, interaction.guild_id, interaction.user.id):
+                if view.is_finished() or time.time() - view.record["ended"] > SESSION_TTL:
+                    raise commands.CheckFailure(
+                        "This session expired. Save a playlist during the next session."
+                    )
+                ctx = await component_context(
+                    view.cog, interaction, "playlist session", source_message=view.message
                 )
-            ctx = await component_context(
-                view.cog, interaction, "playlist session", source_message=view.message
-            )
-            await view.cog._save_session_playlist(ctx, str(self.name), view.record)
+                await view.cog._save_session_playlist(ctx, str(self.name), view.record)
         except commands.CommandError as error:
             await component_error(interaction, error)
 
@@ -111,6 +119,7 @@ class MusicSessions:
                 view.stop()
                 self._views.discard(view)
 
+    @privacy_write
     async def _session_started(self, player):
         player._session_entry = None
         if (
@@ -171,6 +180,11 @@ class MusicSessions:
     async def _finish_music_session(self, player):
         try:
             await asyncio.wait_for(self._post_music_session(player), 10)
+        except PrivacyInterrupted:
+            operation = self._privacy.operations.get(asyncio.current_task())
+            if operation and operation.invalidated:
+                raise asyncio.CancelledError
+            # Privacy may cancel the child posting a summary. Still clean up voice.
         except Exception as error:
             # A supplementary summary must never prevent disconnect/player cleanup.
             log.warning(
@@ -179,8 +193,11 @@ class MusicSessions:
                 type(error).__name__,
             )
 
+    @participant_request
     async def _post_music_session(self, player):
-        record = self._sessions.pop(player.guild.id, None)
+        record = self._sessions.get(player.guild.id)
+        if record:
+            self._privacy.related(row["requester"] for row in record["tracks"])
         if (
             not record
             or not record["tracks"]
@@ -189,8 +206,13 @@ class MusicSessions:
         ):
             return
         policy = await self.config.guild(player.guild).music()
-        if not policy["session_summary"]:
+        if (
+            not policy["session_summary"]
+            or not record["tracks"]
+            or self._sessions.get(player.guild.id) is not record
+        ):
             return
+        self._sessions.pop(player.guild.id, None)
         record["ended"] = int(time.time())
         self._last_sessions[player.guild.id] = record
         while len(self._last_sessions) > 20:
@@ -230,6 +252,7 @@ class MusicSessions:
             view.stop()
             raise
 
+    @personal_request
     async def _save_session_playlist(self, ctx, name, record):
         await check_command(ctx, self.playlist_save)
         if (

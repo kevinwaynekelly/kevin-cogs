@@ -13,6 +13,7 @@ from redbot.core import commands
 from .artwork import video_thumbnail
 from .interactive import SetupView, component_context, component_error
 from .presentation import clip, settings
+from .requests import personal_context, personal_request
 from .resolver import MAX_TRACKS, MediaError, Track, http_url
 
 DEFAULTS_GUILD = {
@@ -145,20 +146,21 @@ class SearchView(discord.ui.View):
 
         async def select(interaction):
             try:
-                if interaction.guild_id != self.guild_id or cog._closing:
-                    raise commands.CheckFailure("This search picker expired.")
-                context = await component_context(
-                    cog, interaction, "search", owner_id=self.owner_id
-                )
-                async with self.lock:
-                    if self.used or self.is_finished():
-                        raise commands.CommandError(
-                            "This search picker already finished. Search again."
-                        )
-                    await cog._queue_saved(context, [self.tracks[int(selector.values[0])]])
-                    self.used = True
-                    self.stop()
-                    await self.on_timeout()
+                async with personal_context(cog, interaction.guild_id, interaction.user.id):
+                    if interaction.guild_id != self.guild_id or cog._closing:
+                        raise commands.CheckFailure("This search picker expired.")
+                    context = await component_context(
+                        cog, interaction, "search", owner_id=self.owner_id
+                    )
+                    async with self.lock:
+                        if self.used or self.is_finished():
+                            raise commands.CommandError(
+                                "This search picker already finished. Search again."
+                            )
+                        await cog._queue_saved(context, [self.tracks[int(selector.values[0])]])
+                        self.used = True
+                        self.stop()
+                        await self.on_timeout()
             except commands.CommandError as error:
                 await component_error(interaction, error)
 
@@ -178,6 +180,14 @@ class SearchView(discord.ui.View):
 
 class AudioCommands:
     async def _autoplay_next(self, player, previous):
+        try:
+            with self._requests.admit(player.guild.id):
+                return await self._autoplay_lookup(player, previous)
+        except commands.CommandError:
+            # Optional discovery must not contend indefinitely or fail the player.
+            return
+
+    async def _autoplay_lookup(self, player, previous):
         if self._closing or player.closed or not player.autoplay or player.queue:
             return
         if await self.bot.cog_disabled_in_guild(self, player.guild):
@@ -188,7 +198,7 @@ class AudioCommands:
         player.begin_queue_request()
         try:
             terms = previous.author if previous.author != "Unknown" else previous.title
-            tracks = await asyncio.wait_for(self._resolver.search(terms + " audio", limit=10), 15)
+            tracks = await asyncio.wait_for(self._load_tracks(terms + " audio", limit=10), 15)
             policy = await self.config.guild(player.guild).music()
             maximum = policy["max_seconds"]
             selected = next(
@@ -210,7 +220,7 @@ class AudioCommands:
                 and not await self.bot.cog_disabled_in_guild(self, player.guild)
             ):
                 await player.enqueue([selected], max_seconds=maximum)
-        except (MediaError, asyncio.TimeoutError):
+        except (MediaError, commands.CommandError, asyncio.TimeoutError):
             # Exhausted or unavailable suggestions fall back to the normal idle departure.
             pass
         finally:
@@ -219,16 +229,10 @@ class AudioCommands:
     @commands.hybrid_command(name="search")
     @commands.guild_only()
     @commands.cooldown(1, 5, commands.BucketType.member)
+    @personal_request
     async def search(self, ctx, *, query: str):
         """Choose a song from search results before joining voice."""
-        task = asyncio.create_task(self._resolver.search(query, limit=10))
-        self._lookups.add(task)
-        try:
-            tracks = (await task)[:10]
-        except MediaError as error:
-            raise commands.CommandError(str(error)) from error
-        finally:
-            self._lookups.discard(task)
+        tracks = (await self._load_tracks(query, limit=10))[:10]
         if self._closing:
             raise commands.CommandError("AudioPlus is unloading.")
         if not tracks:
@@ -409,6 +413,7 @@ class AudioCommands:
         )
 
     @playlist.command(name="save")
+    @personal_request
     async def playlist_save(self, ctx, name: str):
         """Save the current song and upcoming queue."""
         name = collection_name(name)
@@ -438,6 +443,7 @@ class AudioCommands:
         await self._save_session_playlist(ctx, name, record)
 
     @playlist.command(name="play")
+    @personal_request
     async def playlist_play(self, ctx, name: str):
         """Queue one of your saved playlists."""
         records = await self.config.guild(ctx.guild).get_raw(
@@ -474,6 +480,7 @@ class AudioCommands:
         )
 
     @favorite.command(name="add")
+    @personal_request
     async def favorite_add(self, ctx, *, query: str = ""):
         """Favorite the current song or a search result."""
         if query:
@@ -508,6 +515,7 @@ class AudioCommands:
         await self._reply(ctx, "Favorite removed.", tone="success", tracks=removed)
 
     @favorite.command(name="play")
+    @personal_request
     async def favorite_play(self, ctx, position: int = 0):
         """Play all favorites or one numbered favorite."""
         records = await self.config.guild(ctx.guild).get_raw(
@@ -522,6 +530,7 @@ class AudioCommands:
             raise commands.CommandError("No favorites saved.")
         await self._queue_saved(ctx, tracks)
 
+    @personal_request
     async def _queue_saved(self, ctx, tracks):
         player, _ = await self._fetch_or_connect_player(ctx, queue_request=True)
         try:
