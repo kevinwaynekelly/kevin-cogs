@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -44,6 +45,28 @@ async def test_activity_start_is_counted_once(bot, guild):
     data = await cog.config.member(after).all()
     assert data["stats"]["game_launches"] == 1
     assert data["activity_names"] == {"Game": 1}
+
+
+async def test_large_saved_game_history_survives_reload_new_activity_and_privacy_export(bot, guild):
+    cog = CommunityPlus(bot)
+    member = make_member(guild)
+    names = {f"Game {index}": index + 1 for index in range(150)}
+    long_title = "A" * 300
+    names[long_title] = 10
+    await cog.config.member(member).activity_names.set(names)
+    await cog.config.member(member).stats.game_launches.set(12345)
+    await cog._restore_solo_timers()
+    assert await cog.config.member(member).activity_names() == names
+    before = SimpleNamespace(activities=[])
+    member.activities = [SimpleNamespace(type=discord.ActivityType.playing, name=long_title)]
+    await cog.on_presence_update(before, member)
+    expected = {**names, long_title: 11}
+    assert await cog.config.member(member).activity_names() == expected
+    assert await cog.config.member(member).stats.game_launches() == 12346
+    exported = json.load((await cog.red_get_data_for_user(user_id=member.id))["communityplus.json"])
+    assert exported[str(guild.id)]["activity_names"] == expected
+    await cog.red_delete_data_for_user(requester="user", user_id=member.id)
+    assert await cog.red_get_data_for_user(user_id=member.id) == {}
 
 
 async def test_same_user_has_separate_guild_timers_and_unload_cancels_them(bot, guild):

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-03: Preserve unrestricted named-game activity
+
+- Remove the newly introduced CommunityPlus 100-game/title-length limits and reload pruning. The storage audit concerns Red's misleading database filename and clean configuration exports; growing activity records remain valid persistent data.
+- Preserve full saved titles/counts across reload and further activity, along with user export/deletion hooks. Keep the settings-only exporter and AudioPlus's three-second progress refresh.
+
 ## 2026-10-03: Cog storage audit and settings-only exports
 
 - Review all eleven cogs' policy, persistent member/operational data, file caches and retention in `docs/CONFIG_STORAGE.md`. Explain that Red's JSON Config driver uses `settings.json` for all scopes, including guild XP/history/snapshot maps, and distinguish private full recovery backups from configuration repositories.
