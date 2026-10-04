@@ -264,7 +264,7 @@ Use `[p]audio` for the themed overview or `[p]help AudioPlus` for Red's full com
 
 ## Player panels, queue tools, and saved music
 
-New music controls have matching slash commands. Automatic now-playing panels are enabled by default and follow queue transitions, with Pause/Resume, Skip, Queue, and Stop buttons. Progress refreshes every 15 seconds while connected. Controls repeat current Red permission and disabled-command checks for the clicking member. Panels respect embed preferences, close on idle disconnect/reload, and never display resolved stream URLs.
+New music controls have matching slash commands. Automatic now-playing panels are enabled by default and follow queue transitions, with Pause/Resume, Skip, Queue, and Stop buttons. Progress refreshes every second while connected. Each refresh waits for the previous message edit to finish, including Discord's rate-limit handling. Controls repeat current Red permission and disabled-command checks for the clicking member. Panels respect embed preferences, close on idle disconnect/reload, and never display resolved stream URLs.
 
 | Command | Purpose |
 | --- | --- |

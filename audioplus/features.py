@@ -250,7 +250,7 @@ class AudioCommands:
             async def refresh():
                 try:
                     while not player.closed:
-                        await asyncio.sleep(15)
+                        await asyncio.sleep(1)
                         await self._update_panel(player)
                         if player.guild.id not in self._panels:
                             break

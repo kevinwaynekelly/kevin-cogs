@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-03: AudioPlus progress refresh
+
+- Refresh the automatic now-playing panel every second instead of every 15 seconds. Await each message edit before scheduling the next refresh and retain existing disconnect/unload cleanup.
+
 ## 2026-10-03: AudioPlus playback read-ahead
 
 - Decouple AudioPlus FFmpeg reads from Discord's audio delivery with up to 120 seconds of PCM read-ahead, bounded to about 22 MiB per player. Start playback after three seconds or shorter-source EOF, with a ten-second preparation deadline, while the decoder continues filling toward the maximum. Absorb source delays while buffered audio remains; refill to three seconds with bounded silence and invoke existing recovery after a 15-second refill stall. Keep progress, session totals and daily probes tied to delivered real audio frames.
