@@ -136,6 +136,28 @@ class ClipCache:
             return "download failed; intro test retries it"
         return "not prepared yet; the first preview or join downloads it"
 
+    def peek_status(self, guild_id, member_id, clip):
+        """Inspect readiness without updating recency, deleting files or starting work."""
+        key = clip_key(guild_id, member_id, clip)
+        size = self.entries.get(key)
+        path = self.root / f"{key}.pcm"
+        try:
+            ready = (
+                size is not None
+                and not path.is_symlink()
+                and path.is_file()
+                and path.stat().st_size == size
+            )
+        except OSError:
+            ready = False
+        if ready:
+            return "ready, plays from a local copy"
+        if key in self.jobs:
+            return "downloading the selected segment"
+        if key in self.failed:
+            return "download failed; intro test retries it"
+        return "not prepared yet; the first preview or join downloads it"
+
     def schedule(self, guild_id, member_id, clip, track):
         if self._closed:
             raise MediaError("IntroPlus is unloading. Try again after it reloads.")

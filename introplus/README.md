@@ -38,6 +38,8 @@ The cache holds at most **256 clips and 128 MiB**, evicting least recently used 
 
 Personal configuration is separate in each server. Members can set, view, change and clear their own clips. Members need no special permission to preview their own intro; they must be in a regular voice channel. Managers can assign/remove other members' intros and preview them in the manager's current channel. Automatic playback starts enabled, but only members with a saved clip have an intro. Clearing your clip opts out.
 
+Optional [DashboardPlus](../dashboardplus/README.md) lists saved intros by member, with video thumbnails, timing and local-copy readiness. Update and reload both cogs for readiness reporting. Dashboard inspection does not download or play clips, update cache recency or remove damaged files.
+
 ## Commands
 
 Every row has the matching `/intro` slash subcommand, except the additional prefix-only `intro progress` alias for status.

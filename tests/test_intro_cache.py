@@ -97,6 +97,28 @@ async def test_lru_eviction_bounds_audio_and_preserves_open_source(tmp_path, mon
         await cache.close()
 
 
+async def test_readiness_inspection_preserves_cache_order_and_damaged_files(tmp_path):
+    cache = make_cache(tmp_path)
+    cache._download = frames_download
+    clip, track = chosen(duration=0.04)
+    try:
+        first = await cache.get(123, 1, clip, track)
+        await cache.get(123, 2, clip, track)
+        previous = list(cache.entries.items())
+        assert "ready" in cache.peek_status(123, 1, clip)
+        assert list(cache.entries.items()) == previous
+        first.write_bytes(b"damaged")
+        assert "not prepared" in cache.peek_status(123, 1, clip)
+        assert first.read_bytes() == b"damaged"
+        assert list(cache.entries.items()) == previous
+        cache.resolver.resolve.reset_mock()
+        assert "not prepared" in cache.peek_status(123, 3, clip)
+        cache.resolver.resolve.assert_not_awaited()
+        assert not cache.jobs
+    finally:
+        await cache.close()
+
+
 async def test_reload_prunes_orphans_partial_files_and_invalid_audio(tmp_path):
     cache = make_cache(tmp_path)
     cache._download = frames_download
