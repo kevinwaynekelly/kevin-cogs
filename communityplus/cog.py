@@ -19,6 +19,7 @@ from redbot.core.bot import Red
 from redbot.core.config import Config
 from redbot.core.utils.chat_formatting import humanize_number
 
+from .activity import bounded_games, record_game
 from .command_support import (
     attach_prefix_groups,
     finish_configuration_audit,
@@ -98,6 +99,7 @@ class CommunityPlus(
 
     async def _restore_solo_timers(self):
         await self.bot.wait_until_red_ready()
+        await self._prune_game_catalogs()
         for guild in self.bot.guilds:
             await self._restore_role_menus(guild)
             await self._restore_social(guild)
@@ -309,6 +311,21 @@ class CommunityPlus(
         await self._record_activity(member, kind, where)
 
     # ------------------------ presence logic (OPTIMIZED) ------------------------
+    async def _prune_game_catalogs(self):
+        """Apply the catalog limit to saved members, including departed members."""
+        for guild_id, members in (await self.config.all_members()).items():
+            for user_id, record in members.items():
+                names = record.get("activity_names", {})
+                if bounded_games(names) == names:
+                    continue
+                group = self.config.member_from_ids(guild_id, user_id)
+                # Activity, sticky-role and privacy writers share this member lock.
+                async with group.get_lock():
+                    names = await group.activity_names()
+                    bounded = bounded_games(names)
+                    if bounded != names:
+                        await group.activity_names.set(bounded)
+
     async def _handle_presence_update_logic(self, before, after):
         now = self._now_ts()
         status = str(after.status)
@@ -338,7 +355,7 @@ class CommunityPlus(
                     stats["game_launches"] = stats.get("game_launches", 0) + 1
                     if name:
                         names = data.setdefault("activity_names", {})
-                        names[str(name)] = names.get(str(name), 0) + 1
+                        data["activity_names"] = record_game(names, name)
             if changed or additions:
                 seen["any"] = now
                 seen["kind"] = "presence"

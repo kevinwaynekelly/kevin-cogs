@@ -81,7 +81,7 @@ AudioPlus can load before its local system dependencies are installed. Follow th
 
 Use `[p]play <song or URL>`, `[p]skip`, `[p]pause`, `[p]np`, and `[p]queue` for music controls. Enable their slash counterparts as the bot owner with `[p]slash enablecog audioplus`, then `[p]slash sync`. The [AudioPlus guide](audioplus/README.md#enable-slash-commands) lists the direct and slash controls. Legacy `[p]audio ...` commands remain available.
 
-AudioPlus includes public YouTube thumbnails across track cards, controls, queues, searches, saved music, history and session summaries. Artwork follows the live track, works with existing saved/cached songs and adds no media lookup. The now-playing panel refreshes progress every second.
+AudioPlus includes public YouTube thumbnails across track cards, controls, queues, searches, saved music, history and session summaries. Artwork follows the live track, works with existing saved/cached songs and adds no media lookup. The now-playing panel refreshes progress every three seconds.
 
 The owner can enable [daily YouTube playback checks](audioplus/README.md#daily-youtube-playback-checks) with `[p]audiocheck enable`. A silent three-second native voice probe runs at 09:00 America/Chicago by default and DMs its configuring owner on failure. Successful checks stay quiet; busy voice connections postpone the probe.
 
@@ -94,6 +94,8 @@ These guides describe the current source. Compatibility metadata is not a record
 If music reports that PyNaCl or davey cannot import or has incompatible native APIs, update/reload AudioPlus and run `[p]audiorepair` as the bot owner. It repairs failing voice libraries in Red's running Python environment and verifies their required APIs in a fresh process. This includes a missing `davey.DAVE_PROTOCOL_VERSION` despite a successful import. Restart Red after the install attempt, then run `[p]audiostatus` and `[p]play <query>`. See the [voice setup guide](audioplus/README.md#one-time-native-voice-library-setup) for update commands, limits, and manual container setup.
 
 ## First setup
+
+For configuration repositories, use the [all-cog storage audit and settings-only exporter](docs/CONFIG_STORAGE.md). Red's raw `settings.json` files are databases containing member activity, XP, saved music and snapshots as well as policy. The exporter keeps reviewed settings across all cogs while excluding those records and credentials, without changing the live database.
 
 Read the cog's guide before loading it on an existing server. Some features start working immediately:
 

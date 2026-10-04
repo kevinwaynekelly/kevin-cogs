@@ -14,6 +14,12 @@ venv/
 .coverage
 htmlcov/
 
+# Live Red databases and generated audio/chat files. Commit settings-only exports instead.
+**/settings.json
+**/songs/
+**/clips/
+**/exports/
+
 # Local secrets and editor/OS files
 .env
 .env.*

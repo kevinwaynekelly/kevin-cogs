@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-03: Cog storage audit and settings-only exports
+
+- Review all eleven cogs' policy, persistent member/operational data, file caches and retention in `docs/CONFIG_STORAGE.md`. Explain that Red's JSON Config driver uses `settings.json` for all scopes, including guild XP/history/snapshot maps, and distinguish private full recovery backups from configuration repositories.
+- Add a standalone Python 3.10+ settings-only exporter with explicit nested allowlists for every Config-using cog, read-only size audits, stable output, exclusion of member data/records/credentials/recipient IDs, input/output limits and atomic writes outside live data. Keep SettingsHub's existing backup/restore format unchanged. Ignore raw Red databases and generated audio/chat folders in source control.
+- Bound CommunityPlus's previously unlimited named-game catalog to 100 recent entries of 128 characters per member. Trim old saved catalogs on load under the existing member lock, preserve unrelated records and lifetime counters, and retain disabled-tracking/privacy behavior.
+
+## 2026-10-03: AudioPlus three-second progress refresh
+
+- Refresh the automatic now-playing progress every three seconds. Track transitions and control updates remain immediate; periodic edits still await Discord before scheduling the next refresh and stop on disconnect/unload.
+
 ## 2026-10-03: AudioPlus video thumbnails
 
 - Include compact public YouTube thumbnails in play confirmations, live/now-playing cards, playback controls, queue/search cards, saved playlists/favorites, shared suggestions, history/replay, session summaries, playback failures and daily-check alerts. Follow track transitions and clear artwork for direct audio or idle playback; use representative artwork for collections.
