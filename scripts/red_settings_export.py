@@ -37,6 +37,7 @@ def fields(names):
 IDS = List(SCALAR)
 NAMESPACES = {
     "CorePlus": None,
+    "DownloaderPlus": None,
     "AudioPlus": str(0xA10DEFAB),
     "BackupPlus": "702035011",
     "CommunityPlus": str(0xC0DE505),

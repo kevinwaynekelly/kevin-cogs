@@ -1,6 +1,6 @@
 # Kevin Cogs
 
-Ten feature cogs, an optional shared settings hub and themed Core management for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
+Ten feature cogs, an optional shared settings hub and themed Core/Downloader management for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
 
 Music, personal voice entrance clips, saved bot status profiles, community tools, leveling, event logging, message transformations, automatic emoji capture, readable chat exports and server structure backups. Each cog can be installed separately.
 
@@ -19,6 +19,7 @@ Music, personal voice entrance clips, saved bot status profiles, community tools
 | ExportPlus | Privately export accessible server chats, forums and threads into readable ChatGPT files | `[p]export server`, `/export channel`, `[p]export text` | [Setup and commands](exportplus/README.md) |
 | BackupPlus | Named role/channel/permission snapshots, private restore previews and optional automatic backups | `[p]backup create`, `/backup preview`, `[p]backup restore` | [Setup and commands](backupplus/README.md) |
 | SettingsHub | Shared themes, command discovery, diagnostics, configuration history, readiness checks and snapshots | `[p]settings`, `/theme show`, `[p]snapshots` | [Setup and commands](settingshub/README.md) |
+| DownloaderPlus | Themed native Downloader replies and checked owner-only installation, updates and repository controls | `[p]download`, `/download update`, `[p]download repos` | [Setup and commands](downloaderplus/README.md) |
 | CorePlus | Category help, `/help`, themed native Core replies and checked bot-management controls | `[p]help`, `/core status`, `[p]core reload` | [Setup and commands](coreplus/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
@@ -37,7 +38,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | EmojiStealerPlus | `[p]emoji` or `/emoji status` | Automatic external emoji capture and checked manual `[p]yoink` controls. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The original five feature cogs expose 312 slash actions; EmojiStealerPlus adds six, ExportPlus adds nine, BackupPlus adds 13, IntroPlus adds 16, PresencePlus adds 24, optional SettingsHub adds 23 and CorePlus adds 14, for 417 total actions. The twelve cogs together register 88 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
+The original five feature cogs expose 312 slash actions; EmojiStealerPlus adds six, ExportPlus adds nine, BackupPlus adds 13, IntroPlus adds 16, PresencePlus adds 24, optional SettingsHub adds 23 and CorePlus adds 14 and DownloaderPlus adds 19, for 436 total actions. The thirteen cogs together register 89 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
@@ -52,9 +53,9 @@ Install optional [SettingsHub](settingshub/README.md) for `[p]settings` or `/set
 
 ## Discord presentation
 
-All twelve cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
+All thirteen cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
 
-Optional [CorePlus](coreplus/README.md) replaces `[p]help` with a themed category selector and adds `/help`. It also themes bundled Core/CogManagerUI replies and adds checked `/core` management controls. Red's native commands remain available. Without CorePlus, native `[p]help` lists descriptions for every cog command. Use `[p]help community`, `[p]help level`, or `[p]help log` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
+Optional [CorePlus](coreplus/README.md) replaces `[p]help` with a themed category selector and adds `/help`. It also themes bundled Core/CogManagerUI replies and adds checked `/core` management controls. Red's native commands remain available. Optional [DownloaderPlus](downloaderplus/README.md) themes native repository/cog replies and adds owner-only `/download` controls backed by bundled Downloader. Without CorePlus, native `[p]help` lists descriptions for every cog command. Use `[p]help community`, `[p]help level`, or `[p]help log` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
 
 ## Install
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-04: DownloaderPlus management
+
+- Add independently installable DownloaderPlus with 19 owner-only slash actions and matching text controls for repository management, installed packages, installation, updates, pinning and revision selection.
+- Theme native Downloader replies through a removable Context hook. Keep native command objects, disabled state, parent/cog ownership checks, converters, installation agreement, update pinning and dependency/reload reports. Store no new Config data.
+- Validate real Red prefix/slash parsing and installed-package/repository conversion with mocked network/package operations. The 13 cogs fit 89 slash roots and 436 actions.
+
 ## 2026-10-04: CorePlus help and bot management
 
 - Add independently installable CorePlus beside Red Core and CogManagerUI, with themed native replies, selected prefix/slash management controls and `/help`. Keep original commands, checks, disabled state, converters, hooks, cooldowns and local error handlers; do not copy Red's package/configuration engine.

@@ -15,6 +15,7 @@ from test_presentation import assert_limits
 
 from coreplus import CorePlus
 from coreplus.management import quoted, style_replies, words
+from downloaderplus import DownloaderPlus
 
 red_command_runtime = command_fixture
 
@@ -34,6 +35,162 @@ async def core_runtime(red_command_runtime, monkeypatch):
         yield bot, cog, member, invoke
     finally:
         await bot.remove_cog("CorePlus")
+
+
+@pytest.fixture
+async def download_runtime(core_runtime, monkeypatch, tmp_path):
+    from redbot.cogs.downloader.downloader import Downloader
+    from redbot.cogs.downloader.installable import InstalledModule
+    from redbot.cogs.downloader.repo_manager import Repo
+
+    bot, core, member, invoke = core_runtime
+    monkeypatch.setattr("redbot.cogs.downloader.downloader.cog_data_path", lambda cog: tmp_path)
+    repo = Repo(
+        "kevin", "https://github.com/kevinwaynekelly/kevin-cogs", "main", "abc", tmp_path / "kevin"
+    )
+    manager = SimpleNamespace(
+        repos=(repo,), get_repo=lambda name: repo if name == "kevin" else None
+    )
+    monkeypatch.setattr("redbot.cogs.downloader.downloader.RepoManager", lambda: manager)
+    source = Downloader(bot)
+    source._ready.set()
+    installed = tuple(
+        InstalledModule(repo.folder_path / name, repo=repo) for name in ("audioplus", "levelplus")
+    )
+    monkeypatch.setattr(source, "installed_cogs", AsyncMock(return_value=installed))
+    await bot.add_cog(source)
+    cog = DownloaderPlus(bot)
+    await bot.add_cog(cog)
+    try:
+        yield bot, cog, source, repo, installed, member, invoke
+    finally:
+        await bot.remove_cog("DownloaderPlus")
+        await bot.remove_cog("Downloader")
+        repo._executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("slash", [False, True])
+async def test_download_preserves_owner_and_real_installed_conversion(
+    download_runtime, monkeypatch, slash
+):
+    bot, cog, source, repo, installed, member, invoke = download_runtime
+    logic = AsyncMock()
+    monkeypatch.setattr(source, "_cog_update_logic", logic)
+    ctx = (
+        await invoke_slash(
+            bot, invoke, monkeypatch, "download update", reload=True, packages="audioplus levelplus"
+        )
+        if slash
+        else await invoke("!download update True audioplus levelplus")
+    )
+    assert ctx.command_failed
+    logic.assert_not_awaited()
+    bot.owner_ids.add(member.id)
+    ctx = (
+        await invoke_slash(
+            bot, invoke, monkeypatch, "download update", reload=True, packages="audioplus levelplus"
+        )
+        if slash
+        else await invoke("!download update True audioplus levelplus")
+    )
+    assert not ctx.command_failed, bot.on_command_error.call_args
+    logic.assert_awaited_once()
+    assert logic.call_args.kwargs["cogs"] == installed
+    assert logic.call_args.args[0].assume_yes
+    source._cog_update.disable_in(member.guild)
+    ctx = await invoke("!download update True audioplus")
+    assert ctx.command_failed
+    assert logic.await_count == 1
+
+
+async def test_download_repo_conversion_agreement_and_hooks(download_runtime, monkeypatch):
+    bot, cog, source, repo, installed, member, invoke = download_runtime
+    bot.owner_ids.add(member.id)
+    install = AsyncMock()
+    monkeypatch.setattr(source, "_cog_installrev", install)
+    before = AsyncMock()
+    bot.get_command("cog install").before_invoke(before)
+    ctx = await invoke("!download install kevin audioplus levelplus")
+    assert not ctx.command_failed, bot.on_command_error.call_args
+    assert install.call_args.args[1:] == (repo, None, ("audioplus", "levelplus"))
+    before.assert_awaited_once()
+    ctx = await invoke("!download install missing audioplus")
+    assert ctx.command_failed
+    assert install.await_count == 1
+    agreement = AsyncMock(return_value=False)
+    monkeypatch.setattr("redbot.cogs.downloader.downloader.do_install_agreement", agreement)
+    ctx = await invoke("!download repos add review https://github.com/example/review main")
+    assert not ctx.command_failed
+    agreement.assert_awaited_once()
+    assert not agreement.call_args.args[0].assume_yes
+
+
+async def test_download_version_preserves_revision_reload_and_source_checks(
+    download_runtime, monkeypatch
+):
+    bot, cog, source, repo, installed, member, invoke = download_runtime
+    bot.owner_ids.add(member.id)
+    logic = AsyncMock()
+    monkeypatch.setattr(source, "_cog_update_logic", logic)
+    ctx = await invoke_slash(
+        bot,
+        invoke,
+        monkeypatch,
+        "download version",
+        repo="kevin",
+        revision="origin/main",
+        reload=False,
+        packages="audioplus",
+    )
+    assert not ctx.command_failed, bot.on_command_error.call_args
+    assert logic.call_args.kwargs == {"repo": repo, "rev": "origin/main", "cogs": installed[:1]}
+    assert not logic.call_args.args[0].assume_yes
+    await bot._disabled_cog_cache.disable_cog_in_guild("Downloader", member.guild.id)
+    ctx = await invoke("!download version kevin origin/main True audioplus")
+    assert ctx.command_failed
+    assert logic.await_count == 1
+
+
+async def test_download_status_installed_styling_help_and_unload(download_runtime):
+    bot, cog, source, repo, installed, member, invoke = download_runtime
+    bot.owner_ids.add(member.id)
+    ctx = await invoke("!download")
+    assert not ctx.command_failed, bot.on_command_error.call_args
+    assert {field.name: field.value for field in sends(ctx).call_args.kwargs["embed"].fields}[
+        "Installed cogs"
+    ] == "2"
+    ctx = await invoke("!download installed")
+    assert {field.name for field in sends(ctx).call_args.kwargs["embed"].fields} == {
+        "audioplus",
+        "levelplus",
+    }
+    ctx = await invoke("!repo list")
+    assert "kevin" in sends(ctx).call_args.kwargs["embed"].description
+    assert sends(ctx).call_args.kwargs["embed"].title.startswith("DownloaderPlus")
+    groups = await bot.get_cog("CorePlus")._formatter.categories(ctx)
+    assert "Downloader" not in groups
+    assert "download" in {command.name for command in groups["DownloaderPlus"]}
+    original = bot.get_command("repo")
+    hook_count = len(bot._red_before_invoke_objs)
+    await bot.remove_cog("DownloaderPlus")
+    assert bot.get_command("repo") is original and bot.get_command("download") is None
+    assert len(bot._red_before_invoke_objs) == hook_count - 1
+    ctx = await invoke("!repo list")
+    assert not hasattr(ctx, "_kevin_management_sender")
+    assert "kevin" in ctx.send.call_args.args[0]
+
+
+async def test_download_without_native_engine_reports_action(core_runtime):
+    bot, core, member, invoke = core_runtime
+    bot.owner_ids.add(member.id)
+    cog = DownloaderPlus(bot)
+    await bot.add_cog(cog)
+    try:
+        ctx = await invoke("!download")
+        assert ctx.command_failed
+        assert "downloader" in sends(ctx).call_args.kwargs["embed"].description.lower()
+    finally:
+        await bot.remove_cog("DownloaderPlus")
 
 
 async def test_core_registration_keeps_native_commands_and_restores_help(core_runtime):
@@ -275,7 +432,12 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
 
     bot, core, member, invoke = core_runtime
     for helper in ("presentation.py", "command_support.py", "interactive.py"):
-        assert Path("coreplus", helper).read_bytes() == Path("audioplus", helper).read_bytes()
+        for package in ("coreplus", "downloaderplus"):
+            assert Path(package, helper).read_bytes() == Path("audioplus", helper).read_bytes()
+    assert (
+        Path("downloaderplus/management.py").read_bytes()
+        == Path("coreplus/management.py").read_bytes()
+    )
     loaded = []
     for package in ("introplus", "exportplus"):
         monkeypatch.setattr(
@@ -293,6 +455,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
             ("introplus", "IntroPlus"),
             ("presenceplus", "PresencePlus"),
             ("settingshub", "SettingsHub"),
+            ("downloaderplus", "DownloaderPlus"),
         ):
             cog = getattr(importlib.import_module(package), name)(bot)
             await bot.add_cog(cog)
@@ -318,7 +481,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
                     actions += 1
                     if leaf.binding is core:
                         core_actions += 1
-        assert (len(roots), actions, core_actions) == (88, 417, 14)
+        assert (len(roots), actions, core_actions) == (89, 436, 14)
         print(f"{len(roots)} roots / {actions} actions")
     finally:
         for cog in reversed(loaded):

@@ -1,0 +1,15 @@
+{
+  "author": ["Kevin Kelly"],
+  "short": "Themed owner-only cog and repository management with slash commands.",
+  "description": "Independently installable presentation layer beside bundled Red Downloader. Themes native replies and supplies checked /download controls for repositories, installation, updates, pinning and revision selection. Keeps the native installation agreement, converters, disabled-command state, dependency reports and reload behavior. Does not replace Downloader or create another package database.",
+  "install_msg": "Load bundled Downloader, then [p]load downloaderplus. Use [p]download help; enable slash commands with [p]slash enablecog downloaderplus and [p]slash sync. Existing repo/cog commands remain available. Guide: https://github.com/kevinwaynekelly/kevin-cogs/blob/main/downloaderplus/README.md",
+  "end_user_data_statement": "Stores no persistent settings or member records. Reads and delegates to Red Downloader, whose existing repository, installed-cog and data policies continue to apply. Results go to the invoking channel.",
+  "requirements": [],
+  "required_cogs": {},
+  "tags": ["downloader", "management", "slash", "theme"],
+  "min_bot_version": "3.5.24",
+  "min_python_version": [3, 10, 0],
+  "hidden": false,
+  "disabled": false,
+  "type": "COG"
+}
