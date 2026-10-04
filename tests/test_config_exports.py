@@ -71,7 +71,7 @@ def test_scope_reviews_every_registered_default_and_matches_hub(name, bot, monke
             f"{module_name}.cog.cog_data_path", lambda cog: tmp_path / type(cog).__name__
         )
     cog = getattr(importlib.import_module(package), name)(bot)
-    if name == "ExportPlus":
+    if exporter.NAMESPACES[name] is None:
         assert not hasattr(cog, "config")
         assert exporter.NAMESPACES[name] is None
         return

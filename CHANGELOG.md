@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-04: CorePlus help and bot management
+
+- Add independently installable CorePlus beside Red Core and CogManagerUI, with themed native replies, selected prefix/slash management controls and `/help`. Keep original commands, checks, disabled state, converters, hooks, cooldowns and local error handlers; do not copy Red's package/configuration engine.
+- Replace the default nine-page help dump with one category card, checked command descriptions and usage, a requester-bound selector and page buttons. Include all installed cogs, merge native Core/CogManagerUI into the CorePlus category, and show DownloaderPlus's category when present. Respect embed preference, server theme, hidden/alias settings and current parent/source permissions.
+- Restore native help/replies on unload or server disable, remove owned `/help` definitions and view controls, and refuse to displace another custom-help formatter. Store no Config data. Exercise real Red prefix/slash invocation, native cooldowns, permission/source disabling and reload with mocked Discord transport.
+
 ## 2026-10-03: Preserve unrestricted named-game activity
 
 - Remove the newly introduced CommunityPlus 100-game/title-length limits and reload pruning. The storage audit concerns Red's misleading database filename and clean configuration exports; growing activity records remain valid persistent data.
