@@ -10,6 +10,7 @@ from typing import Optional
 import discord
 from redbot.core import commands
 
+from .artwork import video_thumbnail
 from .interactive import SetupView, component_context, component_error
 from .presentation import clip, settings
 from .resolver import MAX_TRACKS, MediaError, Track, http_url
@@ -238,6 +239,7 @@ class AudioCommands:
             "Choose a song below. Only you can use this picker, and it expires in three minutes.",
             title="Search results",
             view=view,
+            tracks=tracks,
         )
 
     async def _track_started(self, player):
@@ -279,6 +281,8 @@ class AudioCommands:
         )
         embed = self._presentation.embed("Now playing", clip(description, 1700))
         if track:
+            if not track.direct:
+                embed.set_thumbnail(url=video_thumbnail(track.uri))
             embed.add_field(
                 name="Progress",
                 value=f"{self._duration(player.position)} / {self._duration(track.length)}",
@@ -348,10 +352,11 @@ class AudioCommands:
         for part in position.split(":"):
             seconds = seconds * 60 + int(part)
         try:
-            await self._active_player(ctx.guild).seek(seconds * 1000)
+            player = self._active_player(ctx.guild)
+            await player.seek(seconds * 1000)
         except MediaError as error:
             raise commands.CommandError(str(error)) from error
-        await self._reply(ctx, f"Seeking to {position}.", tone="success")
+        await self._reply(ctx, f"Seeking to {position}.", tone="success", track=player.current)
 
     @commands.hybrid_command(name="remove")
     @commands.guild_only()
@@ -363,7 +368,10 @@ class AudioCommands:
         except MediaError as error:
             raise commands.CommandError(str(error)) from error
         await self._reply(
-            ctx, f"Removed **{discord.utils.escape_markdown(track.title)}**.", tone="success"
+            ctx,
+            f"Removed **{discord.utils.escape_markdown(track.title)}**.",
+            tone="success",
+            track=track,
         )
 
     @commands.hybrid_command(name="move")
@@ -379,6 +387,7 @@ class AudioCommands:
             ctx,
             f"Moved **{discord.utils.escape_markdown(track.title)}** to {destination}.",
             tone="success",
+            track=track,
         )
 
     @commands.hybrid_group(name="playlist", invoke_without_command=True, fallback="list")
@@ -394,6 +403,9 @@ class AudioCommands:
                 f"**{name}** · {len(items)} tracks" for name, items in sorted(collections.items())
             )
             or "No saved playlists. Use playlist save <name> while music is queued.",
+            tracks=[
+                track for _, items in sorted(collections.items()) for track in load_saved(items)
+            ],
         )
 
     @playlist.command(name="save")
@@ -410,7 +422,9 @@ class AudioCommands:
             if name not in personal and len(personal) >= 10:
                 raise commands.CommandError("Delete a playlist first. You can save ten per server.")
             personal[name] = [saved_track(track) for track in tracks]
-        await self._reply(ctx, f"Saved **{name}** with {len(tracks)} tracks.", tone="success")
+        await self._reply(
+            ctx, f"Saved **{name}** with {len(tracks)} tracks.", tone="success", tracks=tracks
+        )
 
     @playlist.command(name="session")
     async def playlist_session(self, ctx, name: str):
@@ -448,13 +462,15 @@ class AudioCommands:
         records = await self.config.guild(ctx.guild).get_raw(
             "favorites", str(ctx.author.id), default=[]
         )
+        tracks = load_saved(records)
         await self._reply(
             ctx,
             "\n".join(
                 f"{index}. {discord.utils.escape_markdown(track.title)}"
-                for index, track in enumerate(load_saved(records), 1)
+                for index, track in enumerate(tracks, 1)
             )
             or "No favorites. Use favorite add while a song plays.",
+            tracks=tracks,
         )
 
     @favorite.command(name="add")
@@ -475,7 +491,10 @@ class AudioCommands:
                     raise commands.CommandError("You can save 100 favorites per server.")
                 records.append(saved_track(selected))
         await self._reply(
-            ctx, f"Saved **{discord.utils.escape_markdown(selected.title)}**.", tone="success"
+            ctx,
+            f"Saved **{discord.utils.escape_markdown(selected.title)}**.",
+            tone="success",
+            track=selected,
         )
 
     @favorite.command(name="remove")
@@ -485,8 +504,8 @@ class AudioCommands:
             records = favorites.get(str(ctx.author.id), [])
             if not 1 <= position <= len(records):
                 raise commands.BadArgument("Choose a position shown by favorite.")
-            records.pop(position - 1)
-        await self._reply(ctx, "Favorite removed.", tone="success")
+            removed = load_saved([records.pop(position - 1)])
+        await self._reply(ctx, "Favorite removed.", tone="success", tracks=removed)
 
     @favorite.command(name="play")
     async def favorite_play(self, ctx, position: int = 0):

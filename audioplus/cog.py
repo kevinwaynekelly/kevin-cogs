@@ -15,6 +15,7 @@ from redbot.core import Config, app_commands, checks, commands
 from redbot.core.bot import Red
 from redbot.core.data_manager import cog_data_path
 
+from .artwork import video_thumbnail
 from .backend import diagnostics, require_voice
 from .cache import MAX_CACHE_BYTES, SongCache
 from .command_support import check_command, finish_configuration_audit, prepare_hybrid
@@ -88,7 +89,13 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
     async def cog_command_error(self, ctx, error):
         await self._presentation.command_error(ctx, error)
 
-    async def _reply(self, ctx, content=None, **kwargs):
+    async def _reply(self, ctx, content=None, *, track=None, tracks=(), **kwargs):
+        if track is None:
+            track = next(
+                (item for item in tracks if not item.direct and video_thumbnail(item.uri)), None
+            )
+        if track and not track.direct:
+            kwargs["thumbnail"] = video_thumbnail(track.uri)
         return await self._presentation.send(ctx, content, **kwargs)
 
     async def _invoke_control(self, ctx, command, **kwargs):
@@ -273,7 +280,13 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             f"**Server** · {name}\n**Checked** · <t:{int(result['at'])}:f>\n\n{result['detail']}\n\n**Test video** · {settings['video_url']}\n\nRun `audiostatus` for dependencies or `audiocheck now` to retry. A failure can also mean the test video was removed or restricted.",
             tone="error",
         )
-        await self._presentation.send(user, embed=embed, theme_guild=guild, theme_bot=self.bot)
+        await self._presentation.send(
+            user,
+            embed=embed,
+            thumbnail=video_thumbnail(settings["video_url"]),
+            theme_guild=guild,
+            theme_bot=self.bot,
+        )
 
     @commands.group(name="audiocheck", invoke_without_command=True)
     @GUILD_ONLY
@@ -303,7 +316,12 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         lines.append(
             f"\n`{ctx.clean_prefix}audiocheck enable [voice channel]`\n`{ctx.clean_prefix}audiocheck now` · `{ctx.clean_prefix}audiocheck disable`\n`{ctx.clean_prefix}audiocheck time 09:00 America/Chicago`\n`{ctx.clean_prefix}audiocheck video <YouTube URL>`"
         )
-        await self._reply(ctx, "\n".join(lines), title="Daily playback checks")
+        await self._reply(
+            ctx,
+            "\n".join(lines),
+            title="Daily playback checks",
+            thumbnail=video_thumbnail(state["video_url"]),
+        )
 
     @audiocheck.command(name="enable")
     async def audiocheck_enable(
@@ -761,6 +779,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         await self._reply(
             ctx,
             embed=self._presentation.embed("Added to queue", description, tone="success"),
+            tracks=tracks[:5],
         )
 
     async def _report_playback_failure(self, player, track, cause):
@@ -773,6 +792,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             f"**{title}**\n{cause}\n\nRun `{ctx.clean_prefix}audiostatus` for local dependency checks or `{ctx.clean_prefix}tone` to test direct audio.",
             title="Playback failed",
             tone="error",
+            track=track,
         )
 
     async def _rebind_voice(self, guild):
@@ -897,6 +917,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             if state["ready"]
             and not (check["guild_id"] == ctx.guild.id and last.get("status") == "failed")
             else "warning",
+            track=player.current if player else None,
         )
 
     @commands.group(name="audio", invoke_without_command=True)
@@ -989,6 +1010,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             ctx,
             f"**Native player**\nConnected: `{player.voice.is_connected()}`  Playing: `{player.playing}`  Paused: `{player.paused}`\nPreparing stream: `{player.preparing}`\nTrack: {title}\nPosition: `{player.position} ms`\nVolume: `{player.volume}%`  Repeat: `{player.repeat}`\nQueued tracks: `{len(player.queue)}`"
             + self._buffer_diagnostics(player),
+            track=player.current,
         )
 
     @audio.command(name="speak")
@@ -1050,7 +1072,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
                 f"Preparing: `{player.preparing}`  Position: `{player.position} ms`  Volume: `{player.volume}%`",
             ]
             lines.append(self._buffer_diagnostics(player))
-        await self._reply(ctx, "\n".join(lines))
+        await self._reply(ctx, "\n".join(lines), track=player.current if player else None)
 
     @audio.command(name="rejoin")
     @GUILD_ONLY
@@ -1062,8 +1084,12 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         """
         await check_control(self, ctx)
         ok = await self._rebind_voice(ctx.guild)
+        player = self._get_player(ctx.guild)
         await self._reply(
-            ctx, "Rejoin: " + ("OK" if ok else "failed"), tone="success" if ok else "error"
+            ctx,
+            "Rejoin: " + ("OK" if ok else "failed"),
+            tone="success" if ok else "error",
+            track=player.current if player else None,
         )
 
     @audio.command(name="tone")
@@ -1079,8 +1105,8 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
     @GUILD_ONLY
     async def audio_join(self, ctx: commands.Context) -> None:
         """Join or move to your current voice channel."""
-        _, channel = await self._fetch_or_connect_player(ctx)
-        await self._reply(ctx, f"Connected to **{channel}**.", tone="success")
+        player, channel = await self._fetch_or_connect_player(ctx)
+        await self._reply(ctx, f"Connected to **{channel}**.", tone="success", track=player.current)
 
     @audio.command(name="leave", aliases=["dc", "disconnect"])
     @GUILD_ONLY
@@ -1088,10 +1114,12 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         """Disconnect AudioPlus from voice and clear its queue."""
         await check_control(self, ctx)
         async with self._player_locks[ctx.guild.id]:
-            if not self._get_player(ctx.guild):
+            player = self._get_player(ctx.guild)
+            if not player:
                 return await self._reply(ctx, "Not connected.", tone="warning")
+            track = player.current
             await self._dispose_player(ctx.guild.id)
-        await self._reply(ctx, "Disconnected.", tone="success")
+        await self._reply(ctx, "Disconnected.", tone="success", track=track)
 
     @audio.command(name="play", aliases=["p"])
     @GUILD_ONLY
@@ -1126,7 +1154,9 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             self._skip_votes[ctx.guild.id] = (player.current, votes)
             needed = vote_threshold(player.voice.channel)
             if len(votes) < needed:
-                return await self._reply(ctx, f"Skip vote recorded: {len(votes)}/{needed}.")
+                return await self._reply(
+                    ctx, f"Skip vote recorded: {len(votes)}/{needed}.", track=player.current
+                )
         self._skip_votes.pop(ctx.guild.id, None)
         track = await player.skip()
         await self._reply(
@@ -1135,6 +1165,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             if track
             else "No current track. Starting queued tracks if available.",
             tone="success",
+            track=track,
         )
 
     @audio.command(name="stop")
@@ -1145,11 +1176,12 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         if not player:
             return await self._reply(ctx, "Not connected.", tone="warning")
         await check_control(self, ctx)
+        track = player.current
         await player.stop()
         self._empty_paused.discard(ctx.guild.id)
         async with self.config.guild(ctx.guild).recovery.get_lock():
             await self.config.guild(ctx.guild).recovery.set({})
-        await self._reply(ctx, "Stopped and cleared the queue.", tone="success")
+        await self._reply(ctx, "Stopped and cleared the queue.", tone="success", track=track)
 
     @audio.command(name="pause")
     @GUILD_ONLY
@@ -1161,7 +1193,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         await check_control(self, ctx)
         self._empty_paused.discard(ctx.guild.id)
         player.pause()
-        await self._reply(ctx, "Paused.", tone="success")
+        await self._reply(ctx, "Paused.", tone="success", track=player.current)
 
     @audio.command(name="resume")
     @GUILD_ONLY
@@ -1173,7 +1205,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         await check_control(self, ctx)
         self._empty_paused.discard(ctx.guild.id)
         player.resume()
-        await self._reply(ctx, "Resumed.", tone="success")
+        await self._reply(ctx, "Resumed.", tone="success", track=player.current)
 
     @audio.command(name="volume", aliases=["vol"])
     @GUILD_ONLY
@@ -1186,10 +1218,12 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         if not player:
             return await self._reply(ctx, "Not connected.", tone="warning")
         if value is None:
-            return await self._reply(ctx, f"Volume: {player.volume}%")
+            return await self._reply(ctx, f"Volume: {player.volume}%", track=player.current)
         await check_control(self, ctx)
         await player.set_volume(value)
-        await self._reply(ctx, f"Volume set to {player.volume}%.", tone="success")
+        await self._reply(
+            ctx, f"Volume set to {player.volume}%.", tone="success", track=player.current
+        )
 
     @audio.command(name="np", aliases=["nowplaying"])
     @GUILD_ONLY
@@ -1218,7 +1252,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             else "Playing",
         )
         embed.add_field(name="Repeat", value=player.repeat)
-        await self._reply(ctx, embed=embed)
+        await self._reply(ctx, embed=embed, track=track)
 
     @audio.command(name="queue", aliases=["q"])
     @GUILD_ONLY
@@ -1236,7 +1270,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         ]
         if len(items) > 10:
             lines.append(f"… and {len(items) - 10} more.")
-        await self._reply(ctx, "\n".join(lines))
+        await self._reply(ctx, "\n".join(lines), tracks=items[:10])
 
     @audio.command(name="shuffle")
     @GUILD_ONLY
@@ -1247,7 +1281,12 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             return await self._reply(ctx, "Not connected.", tone="warning")
         await check_control(self, ctx)
         await player.shuffle()
-        await self._reply(ctx, "Queue shuffled.", tone="success")
+        await self._reply(
+            ctx,
+            "Queue shuffled.",
+            tone="success",
+            track=player.queue[0] if player.queue else player.current,
+        )
 
     @audio.command(name="repeat")
     @GUILD_ONLY
@@ -1262,7 +1301,7 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
             if mode not in {"off", "track", "queue"}:
                 raise commands.BadArgument("Choose off, track, or queue.")
             player.repeat = mode
-        await self._reply(ctx, f"Repeat: {player.repeat}.")
+        await self._reply(ctx, f"Repeat: {player.repeat}.", track=player.current)
 
     @commands.hybrid_command(name="play", aliases=["p"])
     @GUILD_ONLY

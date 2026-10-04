@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-03: AudioPlus video thumbnails
+
+- Include compact public YouTube thumbnails in play confirmations, live/now-playing cards, playback controls, queue/search cards, saved playlists/favorites, shared suggestions, history/replay, session summaries, playback failures and daily-check alerts. Follow track transitions and clear artwork for direct audio or idle playback; use representative artwork for collections.
+- Derive artwork from validated public video IDs in existing source pages, including watch/share/Shorts/live/embed formats. Reuse saved and cached track metadata without a migration, extractor request, image file or resolved stream URL. Retain theme overrides, pagination, text fallback and the one-second progress refresh.
+- Keep optional thumbnail delivery identical across the eleven vendored presentation helpers. Check prefix/slash artwork, old saved records, transitions, Discord limits and exclusion of unrelated/credentialed URLs with mocked Discord/provider transport.
+
 ## 2026-10-03: AudioPlus progress refresh
 
 - Refresh the automatic now-playing panel every second instead of every 15 seconds. Await each message edit before scheduling the next refresh and retain existing disconnect/unload cleanup.

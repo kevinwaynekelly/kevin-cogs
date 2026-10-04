@@ -22,7 +22,7 @@ This preview uses actual command and event payloads with sample data. It illustr
 | Footer | `Kevin's Cogs`, command guidance where applicable, and page numbers for long results. |
 | Events | Existing timestamps, attribution, IDs, thumbnails, and compact-header preferences are retained. |
 
-Settings confirmations are small success cards rather than checkmark reactions. AudioPlus has a sectioned command overview and a now-playing card. LevelPlus member cards show an avatar, total XP, level, and progress to the next level. OwoPlus previews separate transformation metadata from the output.
+Settings confirmations are small success cards rather than checkmark reactions. AudioPlus has a sectioned command overview and a now-playing card. YouTube music cards use compact video thumbnails across track/control replies, queues, search, saved music, history, sessions and errors. Live artwork follows the track and clears for direct audio or idle playback; lists use representative previewed artwork. Images come from public video IDs without another extraction or a saved-data change. LevelPlus member cards show an avatar, total XP, level, and progress to the next level. OwoPlus previews separate transformation metadata from the output.
 
 ## Interactive controls
 

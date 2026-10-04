@@ -73,11 +73,12 @@ class ListeningCommands:
         pages = max(1, (len(records) + 9) // 10)
         if not 1 <= page <= pages:
             raise commands.BadArgument(f"Choose a history page from 1 to {pages}.")
-        lines = []
+        lines, displayed = [], []
         for record in records[(page - 1) * 10 : page * 10]:
             tracks = load_saved([record["track"]])
             if not tracks:
                 continue
+            displayed.extend(tracks)
             requester = f"<@{record['requester']}>" if record["requester"] else "Autoplay"
             lines.append(
                 f"`{record['id']}` · {self._track_description(tracks[0])}\n"
@@ -87,6 +88,7 @@ class ListeningCommands:
             ctx,
             "\n\n".join(lines) or "No recent songs. History starts when a song begins playing.",
             title=f"Listening history · {page}/{pages}",
+            tracks=displayed,
         )
 
     @commands.hybrid_command(name="replay")

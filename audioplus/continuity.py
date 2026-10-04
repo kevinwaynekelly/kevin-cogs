@@ -186,6 +186,7 @@ class AudioContinuity:
                     ctx,
                     f"Recovered {len(tracks)} tracks and the saved playback position.",
                     tone="success",
+                    tracks=tracks,
                 )
             finally:
                 player.end_queue_request()
@@ -206,6 +207,7 @@ class AudioContinuity:
                 for name, row in rows.items()
             )
             or "No shared playlists. DJs can use serverplaylist create <name>.",
+            tracks=load_saved([item["track"] for row in rows.values() for item in row["tracks"]]),
         )
 
     @server_playlist.command(name="create")
@@ -239,7 +241,7 @@ class AudioContinuity:
                     "That playlist is missing or has 100 pending suggestions."
                 )
             row["suggestions"].append({"user": ctx.author.id, "track": saved_track(tracks[0])})
-        await self._reply(ctx, "Suggestion saved for DJ approval.")
+        await self._reply(ctx, "Suggestion saved for DJ approval.", track=tracks[0])
 
     @server_playlist.command(name="show")
     async def server_playlist_show(self, ctx, name: str):
@@ -253,6 +255,7 @@ class AudioContinuity:
             ctx,
             "\n".join(f"{i}. {item['track']['title']}" for i, item in enumerate(row["tracks"], 1))
             or "No approved tracks.",
+            tracks=load_saved([item["track"] for item in row["tracks"]]),
         )
 
     @server_playlist.command(name="review")
@@ -271,6 +274,7 @@ class AudioContinuity:
                 for i, item in enumerate(row["suggestions"], 1)
             )
             or "No pending suggestions.",
+            tracks=load_saved([item["track"] for item in row["suggestions"]]),
         )
 
     @server_playlist.command(name="approve")
@@ -288,7 +292,11 @@ class AudioContinuity:
             item = row["suggestions"].pop(position - 1)
             if approved:
                 row["tracks"].append(item)
-        await self._reply(ctx, "Suggestion approved." if approved else "Suggestion rejected.")
+        await self._reply(
+            ctx,
+            "Suggestion approved." if approved else "Suggestion rejected.",
+            tracks=load_saved([item["track"]]),
+        )
 
     @server_playlist.command(name="play")
     async def server_playlist_play(self, ctx, name: str):
@@ -309,8 +317,8 @@ class AudioContinuity:
             row = rows.get(collection_name(name))
             if row is None or not 1 <= position <= len(row["tracks"]):
                 raise commands.BadArgument("Choose an approved track position.")
-            row["tracks"].pop(position - 1)
-        await self._reply(ctx, "Track removed.")
+            item = row["tracks"].pop(position - 1)
+        await self._reply(ctx, "Track removed.", tracks=load_saved([item["track"]]))
 
     @server_playlist.command(name="delete")
     async def server_playlist_delete(self, ctx, name: str):

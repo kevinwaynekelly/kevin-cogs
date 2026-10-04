@@ -81,6 +81,8 @@ AudioPlus can load before its local system dependencies are installed. Follow th
 
 Use `[p]play <song or URL>`, `[p]skip`, `[p]pause`, `[p]np`, and `[p]queue` for music controls. Enable their slash counterparts as the bot owner with `[p]slash enablecog audioplus`, then `[p]slash sync`. The [AudioPlus guide](audioplus/README.md#enable-slash-commands) lists the direct and slash controls. Legacy `[p]audio ...` commands remain available.
 
+AudioPlus includes public YouTube thumbnails across track cards, controls, queues, searches, saved music, history and session summaries. Artwork follows the live track, works with existing saved/cached songs and adds no media lookup. The now-playing panel refreshes progress every second.
+
 The owner can enable [daily YouTube playback checks](audioplus/README.md#daily-youtube-playback-checks) with `[p]audiocheck enable`. A silent three-second native voice probe runs at 09:00 America/Chicago by default and DMs its configuring owner on failure. Successful checks stay quiet; busy voice connections postpone the probe.
 
 Daily failure alerts identify the stage and safe error details. `[p]audiostatus` retains the latest check result in the monitored server after the probe disconnects, so an unexpected failure can be investigated without losing its context.

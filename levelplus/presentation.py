@@ -212,6 +212,7 @@ class Presentation:
         embed=None,
         title=None,
         tone=None,
+        thumbnail=None,
         notification=None,
         theme_guild=None,
         theme_bot=None,
@@ -234,6 +235,8 @@ class Presentation:
             embed = deepcopy(embed)
             embed.description = str(content) + "\n" + (embed.description or "")
         embed = self.style(embed, prefix=prefix, tone=tone)
+        if thumbnail:
+            embed.set_thumbnail(url=thumbnail)
         if prefix is not None and embed.footer.text == "Kevin's Cogs":
             help_command = f"help {self.cog}" if self.command == "audio" else f"{self.command} help"
             if self.command == "settings":

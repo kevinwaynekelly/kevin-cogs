@@ -12,7 +12,7 @@ import discord
 from redbot.core import commands
 
 from .command_support import check_command
-from .features import collection_name, saved_track
+from .features import collection_name, load_saved, saved_track
 from .interactive import component_context, component_error
 from .presentation import clip
 
@@ -219,7 +219,11 @@ class MusicSessions:
             self._views.discard(oldest)
         try:
             view.message = await self._reply(
-                channel, "\n\n".join(lines), title="Music session summary", view=view
+                channel,
+                "\n\n".join(lines),
+                title="Music session summary",
+                view=view,
+                tracks=load_saved([row["track"] for row in reversed(record["tracks"][-10:])]),
             )
             self._views.add(view)
         except BaseException:
@@ -248,7 +252,12 @@ class MusicSessions:
                 )
             personal[name] = tracks
             await section.set(all_lists)
-        await self._reply(ctx, f"Saved **{name}** with {len(tracks)} tracks.", tone="success")
+        await self._reply(
+            ctx,
+            f"Saved **{name}** with {len(tracks)} tracks.",
+            tone="success",
+            tracks=load_saved(tracks),
+        )
 
     def _session_user_data(self, user_id, *, delete=False):
         self._prune_sessions()
