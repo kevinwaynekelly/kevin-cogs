@@ -69,6 +69,8 @@ class ExportJob:
     error: str = ""
     transfer_lock: object = field(default_factory=asyncio.Lock)
     transfers: set = field(default_factory=set)
+    privacy_lock: object = field(default_factory=asyncio.Lock)
+    excluded_users: set = field(default_factory=set)
 
     @property
     def guild_id(self):
@@ -325,10 +327,13 @@ class ExportPlus(commands.Cog):
                     if row["status"] == "pending":
                         row["status"] = "partial: export deadline reached"
             await self._authorize(job, files=True)
-            job.state = "packaging"
-            job.io_task = asyncio.create_task(asyncio.to_thread(job.writer.finish, job.manifest()))
-            # Cancellation waits for the compressor before removing its directory.
-            job.volumes = await asyncio.shield(job.io_task)
+            async with job.privacy_lock:
+                job.state = "packaging"
+                job.io_task = asyncio.create_task(
+                    asyncio.to_thread(job.writer.finish, job.manifest())
+                )
+                # Cancellation waits for the compressor before removing its directory.
+                job.volumes = await asyncio.shield(job.io_task)
             job.state, job.finished = "ready", time.time()
             await self._progress(job, force=True)
             await self._deliver(job)
@@ -550,4 +555,22 @@ class ExportPlus(commands.Cog):
     async def red_delete_data_for_user(self, *, requester: str, user_id: int):
         async with self._lock:
             for job in list(self._jobs.values()):
-                await self._erase(job)
+                # Pause append/packaging, then cancel all affected scans and transfers.
+                async with job.privacy_lock:
+                    active = bool(job.task and not job.task.done())
+                    if active:
+                        # In-flight scans must never append a deleted author's later rows.
+                        # Bound transient deletion barriers, cancelling only this job if full.
+                        if len(job.excluded_users) >= 1024:
+                            await self._erase(job)
+                            continue
+                        job.excluded_users.add(user_id)
+                    affected = job.owner_id == user_id
+                    if not affected and job.writer is not None:
+                        try:
+                            affected = await asyncio.to_thread(job.writer.contains_author, user_id)
+                        except (OSError, ValueError, KeyError, TypeError):
+                            # An unreadable archive cannot prove it contains no user data.
+                            affected = True
+                    if affected:
+                        await self._erase(job)

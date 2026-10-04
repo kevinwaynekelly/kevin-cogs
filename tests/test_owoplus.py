@@ -29,11 +29,14 @@ async def test_attachment_failure_keeps_original(bot, guild):
     cog._ensure_webhook.assert_not_awaited()
 
 
-async def test_all_attachments_sent_before_original_is_deleted(bot, guild):
+async def test_all_attachments_sent_before_original_is_deleted(bot, guild, monkeypatch):
     cog = OwoPlus(bot)
     channel = make_channel(guild)
     files = [discord.File(io.BytesIO(b"file"), filename=f"{i}.txt") for i in range(10)]
-    attachments = [SimpleNamespace(to_file=AsyncMock(return_value=f)) for f in files]
+    attachments = [SimpleNamespace(size=4) for f in files]
+    monkeypatch.setattr(
+        "owoplus.cog.download_attachment", AsyncMock(side_effect=[(file, 4) for file in files])
+    )
     message = make_message(make_member(guild), channel, attachments=attachments)
     hook = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(delete=AsyncMock())))
     cog._ensure_webhook = AsyncMock(return_value=hook)

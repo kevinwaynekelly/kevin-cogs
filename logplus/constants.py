@@ -12,7 +12,7 @@ __red_end_user_data_statement__ = (
     "Unsent event records temporarily hold event details and message text in a bounded memory retry queue. "
     "Optional summaries store at most eight recent daily aggregate category counts without member IDs. "
     "Incident cases retain titles, identified subjects/creators, up to ten staff notes, twenty bounded log "
-    "copies and resolution metadata, capped at 25 cases and 1 MiB per server for 90 days. User-data hooks "
+    "copies with source channel IDs and resolution metadata, capped at 25 cases and 1 MiB per server for 90 days. User-data hooks "
     "export/remove identified cases, queued/retained records and owner error-recipient settings. Repeated "
     "command error signatures and burst timestamps are bounded memory-only counters. Posted logs remain managed in Discord."
 )

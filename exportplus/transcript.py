@@ -247,6 +247,18 @@ class TranscriptWriter:
         self._channels.clear()
         self._active = None
 
+    def contains_author(self, user_id):
+        """Inspect bounded retained rows and unflushed records, never another job's files."""
+        wanted = str(user_id)
+        for path in sorted(self.root.glob("messages-*.jsonl")):
+            with path.open(encoding="utf-8") as source:
+                for line in source:
+                    if json.loads(line)["author"]["id"] == wanted:
+                        return True
+        return any(
+            json.loads(line)["author"]["id"] == wanted for line in self._records.splitlines()
+        )
+
     def finish(self, manifest, *, volume_bytes=VOLUME_BYTES):
         """Run only after scanning stops. Each volume carries its own index and readme."""
         self.flush()

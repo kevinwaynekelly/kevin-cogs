@@ -455,6 +455,47 @@ async def test_other_cog_records_include_saved_content_and_operational_inventori
     bot.change_presence.assert_not_awaited()
 
 
+async def test_log_data_requires_history_and_private_thread_membership(data_runtime):
+    bot, dashboard, audio, member, invoke, ctx, client = data_runtime
+    guild, now = member.guild, int(time.time())
+    log = bot.get_cog("LogPlus")
+    no_history = make_channel(guild, ctx.channel.id + 10)
+    no_history.permissions_for.return_value = discord.Permissions(view_channel=True)
+    thread = make_channel(guild, ctx.channel.id + 11, discord.Thread)
+    thread.is_private.return_value = True
+    thread.permissions_for.return_value = discord.Permissions(
+        view_channel=True, read_message_history=True
+    )
+    thread.fetch_member = AsyncMock(
+        side_effect=discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Gone")
+    )
+    entries = [
+        {"time": now, "source": source, "title": title, "description": "", "fields": []}
+        for source, title in (
+            (0, "Server event"),
+            (ctx.channel.id, "Visible history"),
+            (no_history.id, "Hidden history"),
+            (thread.id, "Private thread event"),
+            (-1, "Unknown provenance"),
+        )
+    ]
+    await log.config.guild(guild).history_records.set(entries)
+    data = await records(data_runtime, "log.history")
+    assert data["total"] == 2
+    assert "Visible history" in text_records(data)
+    assert "Hidden history" not in text_records(data)
+    assert "Private thread event" not in text_records(data)
+    assert "Unknown provenance" not in text_records(data)
+
+    thread.fetch_member.side_effect = None
+    thread.fetch_member.return_value = SimpleNamespace(id=member.id)
+    assert (await records(data_runtime, "log.history"))["total"] == 3
+    # Independently installed older LogPlus has no equivalent authorization protocol.
+    log._visible_history = None
+    data = await records(data_runtime, "log.history")
+    assert data["total"] == 1 and "Server event" in text_records(data)
+
+
 async def test_hidden_source_root_and_backup_admin_requirements_are_preserved(data_runtime):
     bot, dashboard, audio, member, invoke, ctx, client = data_runtime
     bot.get_command("log").disable_in(member.guild)

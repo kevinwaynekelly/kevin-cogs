@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-04: Security fixes for retained records and shared resources
+
+- Bound LevelPlus announcement formatting before allocation, reject unsafe saved templates, restrict level-up mentions to the intended member, make exported aliases spreadsheet literals, include daily-only earned XP in privacy exports and restrict name lookup/import resolution to the current server.
+- Require current source visibility, message-history permission and private-thread membership for LogPlus history/search/exports and incident events, including DashboardPlus data views. Recover old incident provenance where possible and hide unknown sources. Older LogPlus versions expose only explicit server events through DashboardPlus until updated.
+- Limit ExportPlus privacy erasure to jobs containing the user's messages or owned by that requester. Cancel affected scans/downloads and exclude later messages in continuing unrelated scans.
+- Admit OwoPlus reposts before asynchronous work, with four active jobs globally and two per server. Stream Discord CDN attachments under an 8 MiB/file, 16 MiB/message and 15-second download budget; preserve originals on overload, failure or cancellation.
+- Rotate EmojiStealerPlus's bounded capture queue between servers, with 100 queued items globally and ten pending per server. Keep the requested default automatic capture for ordinary members.
+- Validate these boundaries with focused tests on supported Python versions and mocked Discord/provider transport. Activity lifetime retention and automatic capture remain deliberate behavior; additional media and in-flight AudioPlus hardening follows in the next checkpoint.
+
 ## 2026-10-04: DashboardPlus all-cog data and setting explanations
 
 - Add 33 searchable, paginated read-only datasets across all fourteen suite cogs, including intro owners and clip timing, Community activity and games, Level XP and rewards, music history and collections, and reviewed operational records. Read source records on demand with current server/channel/source-command checks instead of copying databases or changing retention.

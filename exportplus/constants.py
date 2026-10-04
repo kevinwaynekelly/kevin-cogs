@@ -18,6 +18,6 @@ __red_end_user_data_statement__ = (
     "cached on the bot for at most 24 hours, or until cleared, replaced, reloaded or unloaded. "
     "Disk use is bounded. No chat data or bot credentials are stored in Red Config. "
     "User-data exports return only that author's retained message records; a user-data deletion "
-    "request cancels and clears all temporary exports. Copies already downloaded or delivered "
+    "request cancels and clears only exports requested by that user or containing their authored rows. In-flight unaffected exports omit that author after deletion; temporary exclusion IDs are bounded and erased with each job. Copies already downloaded or delivered "
     "to Discord remain with their recipients."
 )

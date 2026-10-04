@@ -11,6 +11,7 @@ __red_end_user_data_statement__ = (
     "This cog stores server capture settings and up to 1000 mappings of external emoji IDs "
     "to server emoji IDs, names, animation flags and image fingerprints. It does not store "
     "member IDs, message text or image files. Pending emoji/channel IDs are held only in "
-    "bounded memory until processed or unloaded. Copied images become ordinary Discord "
+    "bounded memory until processed or unloaded, with at most 100 queued captures and ten "
+    "pending captures per server, scheduled in round-robin server order. Copied images become ordinary Discord "
     "server emojis and remain until removed there. User-data hooks return no personal records."
 )

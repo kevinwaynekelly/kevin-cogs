@@ -29,7 +29,7 @@ Commands run in a server. Settings, XP migration/editing, aliases, and `testmsg`
 
 The bot needs **View Channel** and **Send Messages** for commands and announcements. Grant **Embed Links** for the themed cards; output falls back to text without it. Export needs **Attach Files**, and fetching reaction target messages needs **Read Message History**. **Add Reactions** is used by the diagnostic probe. Enable the **Message Content** intent for word-based XP, **Server Members** for reliable member resolution, and voice-state events for voice XP.
 
-Commands, confirmations, and level-up notices use the [shared visual theme](../docs/PRESENTATION.md). Member cards show level, XP, an avatar, and progress to the next level. Custom announcement templates retain their text and mention behavior. Long lists are paginated.
+Commands, confirmations, and level-up notices use the [shared visual theme](../docs/PRESENTATION.md). Member cards show level, XP, an avatar, and progress to the next level. Custom announcement templates retain their text; only the member leveling up can receive a mention. Long lists are paginated.
 
 ## Defaults
 
@@ -43,7 +43,7 @@ Commands, confirmations, and level-up notices use the [shared visual theme](../d
 | Restrictions | No excluded channels or roles. Thread, forum, text-in-voice, and slash-command flags are enabled. |
 | Level-up announcements | Enabled. Uses the configured text channel, then the server's system channel as fallback. |
 
-The default announcement is `{user.mention} has reached level **{user.level}**! GG!`. Templates support `{user.mention}`, `{user.name}`, `{user.level}`, and `{user.xp}` and are limited to 500 characters. The template remains the message text, paired with a themed level/XP card so mentions keep their original behavior.
+The default announcement is `{user.mention} has reached level **{user.level}**! GG!`. Templates support `{user.mention}`, `{user.name}`, `{user.level}`, and `{user.xp}` and are limited to 500 characters. Normal formatting such as `{user.xp:,d}` remains supported. Field width and precision are limited to 512, format specifications to 32 characters, and rendered notices to 2000 characters. Nested fields and attribute/index traversal are rejected before formatting. Invalid new templates are not saved; unsafe legacy templates use the default notice instead of attempting expansion. The template remains the message text, paired with a themed level/XP card. Both automatic notices and `testmsg` allow mentions only for the target member, with everyone, here, roles and other users suppressed; display-name mentions are escaped.
 
 Changing a curve recalculates displayed levels from existing XP. The multiplier changes the XP required per level, not the XP earned from an event.
 
@@ -81,7 +81,7 @@ Square brackets indicate optional arguments.
 | `[p]level diag` | Check settings, permissions, intents, and a reaction probe. |
 | `[p]level show [@Member]` | Show XP and level. Defaults to yourself. |
 | `[p]level leaderboard [top]` | Show the leaderboard. Default 10, range 1 to 50. |
-| `[p]level lookup <name fragment\|mention\|ID>` | Find user IDs from current/cached users. |
+| `[p]level lookup <name fragment\|mention\|ID>` | Find IDs from current server members; explicit IDs can show an alias retained in this server. |
 
 ## Admin commands
 
@@ -168,7 +168,9 @@ Red Config stores settings per server, XP totals keyed by user ID, and saved dis
 
 Added records include reward role IDs/thresholds, boost scopes/expiry, farming preferences, dated earned-XP totals, current/archived season rankings, and current-day cap counters keyed by member ID. User-data hooks include and delete these new per-user records across servers. Repeated-message hashes and reactor/message IDs are held only in bounded memory, without storing message text.
 
-`exportcsv` exports users with XP rows; aliases without XP rows are not included. Individual XP removal does not delete aliases. `clear yes` clears both maps for the server. Red's user-data export hook includes the user's XP and saved aliases across servers. Its deletion hook clears both and removes their in-memory cooldowns.
+`exportcsv` exports users with XP rows; aliases without XP rows are not included. Formula-like aliases starting with `=`, `+`, `-`, or `@`, including after leading whitespace/control characters, receive a leading apostrophe in the exported CSV so spreadsheets treat them as text. Stored aliases and ordinary CSV aliases are unchanged. Embedded NUL characters appear as the readable `\0` escape because Python 3.10's CSV parser rejects NULs. Reimporting a protected CSV preserves that exported apostrophe as part of the alias. `importlines` resolves names only among the current server's members; explicit user IDs remain available for migration. Public lookup never searches identities cached from another server.
+
+Individual XP removal does not delete aliases. `clear yes` clears both maps for the server. Red's user-data export hook includes the user's XP, saved aliases, calendar/season progress, achievements, and retained daily earned-XP cap record, including its local date. A daily record is exported even when it is zero or the user's other records were removed. Its deletion hook clears associated records and removes their in-memory cooldowns.
 
 Current behavior to account for:
 

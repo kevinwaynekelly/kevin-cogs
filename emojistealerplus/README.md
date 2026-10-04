@@ -30,7 +30,7 @@ All commands require Red administrator access or Manage Server and run in a serv
 
 ## Limits and behavior
 
-Capture ignores bot/webhook messages and bot reactions. One owned worker handles at most 100 queued distinct server/emoji pairs, with two seconds between jobs; excess arrivals are skipped and may be captured on subsequent use. The worker rechecks enablement and Red's per-server disable setting. Unload cancels the worker, clears pending jobs and closes its HTTP session.
+Capture ignores bot/webhook messages and bot reactions. One owned worker handles at most 100 queued distinct server/emoji pairs, with two seconds between jobs. Each server can hold at most ten pending captures, including its active job. The worker rotates between servers with waiting work, taking one emoji per server per turn, so one busy server cannot occupy the whole queue or place all its jobs before another server's captures. Excess arrivals are skipped immediately and may be captured on subsequent use. The worker rechecks enablement and Red's per-server disable setting. Unload cancels the worker, clears pending jobs and closes its HTTP session.
 
 Uploads fetch current server emojis and honor separate static/animated slot limits using Discord.py's server limit. Existing emojis are never deleted to make room. Original ID mappings and copied image SHA-256 fingerprints prevent duplicate captures, including concurrent manual/automatic copies. Names are restricted to valid characters and disambiguated when already used. Deleted destinations are pruned during subsequent capture. Identical images already present before this cog copied them cannot be detected without downloading every server emoji.
 

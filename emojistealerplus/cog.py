@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from types import SimpleNamespace
 from typing import Optional
 
@@ -15,6 +15,7 @@ from redbot.core import Config, commands
 from .command_support import finish_configuration_audit, prepare_hybrid
 from .constants import DEFAULTS_GUILD, MAX_COPIES, MAX_IMAGE
 from .presentation import Presentation
+from .queue import MAX_GUILD_PENDING, MAX_PENDING, CaptureQueue
 
 log = logging.getLogger(__name__)
 EMOJI_RX = re.compile(r"<a?:[A-Za-z0-9_]{2,32}:[0-9]{15,22}>")
@@ -44,8 +45,9 @@ class EmojiStealerPlus(commands.Cog):
         self.config = Config.get_conf(self, identifier=702035010, force_registration=True)
         self.config.register_guild(**DEFAULTS_GUILD)
         self._presentation = Presentation("EmojiStealerPlus", "emoji")
-        self._queue = asyncio.Queue(maxsize=100)
+        self._queue = CaptureQueue(maxsize=MAX_PENDING)
         self._pending = set()
+        self._guild_pending = Counter()
         self._locks = defaultdict(asyncio.Lock)
         self._worker = None
         self._session = None
@@ -62,6 +64,7 @@ class EmojiStealerPlus(commands.Cog):
         if self._session:
             await self._session.close()
         self._pending.clear()
+        self._guild_pending.clear()
         while not self._queue.empty():
             self._queue.get_nowait()
             self._queue.task_done()
@@ -114,9 +117,15 @@ class EmojiStealerPlus(commands.Cog):
         if known and any(item.id == known["emoji"] for item in guild.emojis):
             return
         token = (guild.id, emoji.id)
-        if token in self._pending or self._queue.full():
+        if (
+            self._closing
+            or token in self._pending
+            or self._queue.full()
+            or self._guild_pending[guild.id] >= MAX_GUILD_PENDING
+        ):
             return
         self._pending.add(token)
+        self._guild_pending[guild.id] += 1
         self._queue.put_nowait((guild.id, channel.id, emoji, reaction))
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._run(), name="EmojiStealerPlusCapture")
@@ -154,6 +163,9 @@ class EmojiStealerPlus(commands.Cog):
                 )
             finally:
                 self._pending.discard((guild_id, emoji.id))
+                self._guild_pending[guild_id] -= 1
+                if not self._guild_pending[guild_id]:
+                    del self._guild_pending[guild_id]
                 self._queue.task_done()
             await asyncio.sleep(2)
 

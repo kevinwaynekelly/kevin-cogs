@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 import discord
 from redbot.core import checks, commands
 
+from .access import visible_records
 from .history import history_text
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,29 @@ def case_users(record):
 
 
 class IncidentCommands:
+    async def _migrate_case_sources(self):
+        """Recover old linked-record provenance, otherwise hide it in staff views."""
+        for guild_id, values in (await self.config.all_guilds()).items():
+            if not values.get("incident_cases"):
+                continue
+            history = values.get("history_records", [])
+            async with self.config.guild_from_id(guild_id).incident_cases() as cases:
+                for case in cases.values():
+                    for event in case.get("events", []):
+                        if "source" in event:
+                            continue
+                        matches = [
+                            row
+                            for row in history
+                            if row.get("time") == event.get("time")
+                            and row.get("users") == event.get("users")
+                            and row.get("title", "")[:200] == event.get("title")
+                            and history_text(row)[:800] == event.get("description")
+                            and "source" in row
+                        ]
+                        sources = {row["source"] for row in matches}
+                        event["source"] = sources.pop() if len(sources) == 1 else -1
+
     def _window_hit(self, key, *, now, window, threshold):
         rows = self._alert_windows.pop(key, deque(maxlen=1000))
         while rows and now - rows[0] > window:
@@ -373,7 +397,7 @@ class IncidentCommands:
         lines.extend(f"Note · <@{note['user']}> · {note['text']}" for note in row["notes"])
         lines.extend(
             f"Log · <t:{int(event['time'])}:f> · {event['title']}\n{event['description']}"
-            for event in row["events"]
+            for event in await visible_records(ctx, row["events"], missing_source=True)
         )
         if row["resolution"]:
             lines.append("Resolution · " + row["resolution"]["text"])
@@ -433,7 +457,9 @@ class IncidentCommands:
     @incident.command(name="attach")
     async def incident_attach(self, ctx, identifier: str, member: discord.Member, days: int = 1):
         """Attach up to ten retained log records for a member."""
-        records = await self._history_query(ctx.guild, member_id=member.id, days=days, limit=10)
+        records = await self._history_query(
+            ctx.guild, member_id=member.id, days=days, limit=10, ctx=ctx
+        )
         async with self._case_edit(ctx.guild.id) as cases:
             row = cases.get(identifier)
             if not row or row["resolution"]:
@@ -447,6 +473,7 @@ class IncidentCommands:
                         {
                             "time": event["time"],
                             "users": event["users"],
+                            "source": event["source"],
                             "title": event["title"][:200],
                             "description": history_text(event)[:800],
                         }

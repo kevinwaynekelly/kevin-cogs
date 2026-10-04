@@ -748,7 +748,9 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
     async def timeline(self, ctx, member: discord.Member, days: int = 7):
         """Show recent retained events identifying a member."""
         await check_command(ctx, self.logplus)
-        records = await self._history_query(ctx.guild, member_id=member.id, days=days, limit=25)
+        records = await self._history_query(
+            ctx.guild, member_id=member.id, days=days, limit=25, ctx=ctx
+        )
         await self._history_report(ctx, records)
 
     @redcommands.hybrid_command(name="logsearch")
@@ -760,7 +762,7 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
         await self._history_report(
             ctx,
             await self._history_query(
-                ctx.guild, query=query, category=category, days=days, limit=25
+                ctx.guild, query=query, category=category, days=days, limit=25, ctx=ctx
             ),
         )
 
@@ -786,6 +788,7 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
             days=days,
             member_id=member.id if member else None,
             limit=1000,
+            ctx=ctx,
         )
         await self._reply(
             ctx,
@@ -2157,6 +2160,7 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
 
     async def cog_load(self):
         self._closing = False
+        await self._migrate_case_sources()
         self._history_task = asyncio.create_task(
             self._history_maintenance(), name="logplus-history-retention"
         )

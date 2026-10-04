@@ -9,6 +9,7 @@ import time
 
 from redbot.core import commands
 
+from .access import visible_records
 from .delivery import CATEGORIES
 
 log = logging.getLogger(__name__)
@@ -67,6 +68,9 @@ def export_history(records, format):
 
 
 class LogHistory:
+    async def _visible_history(self, ctx, records):
+        return await visible_records(ctx, records, missing_source=True)
+
     async def _save_history(self, guild, embed, pending):
         group = self.config.guild(guild)
         async with group.history_records() as records:
@@ -102,7 +106,7 @@ class LogHistory:
             prune_history(records, policy["days"], now)
 
     async def _history_query(
-        self, guild, *, query="", member_id=None, category="all", days=7, limit=100
+        self, guild, *, query="", member_id=None, category="all", days=7, limit=100, ctx=None
     ):
         if category not in {"all", *CATEGORIES}:
             raise commands.BadArgument(
@@ -125,6 +129,8 @@ class LogHistory:
                 and (category == "all" or record["category"] == category)
                 and query.casefold() in history_text(record).casefold()
             ]
+        if ctx is not None:
+            result = await self._visible_history(ctx, result)
         return result[:limit]
 
     async def _history_report(self, ctx, records):

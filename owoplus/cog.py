@@ -13,6 +13,7 @@ from functools import lru_cache
 from typing import Callable, List, Optional, Tuple, Union
 from weakref import WeakValueDictionary
 
+import aiohttp
 import discord
 from discord.ext import commands
 from redbot.core import commands as redcommands
@@ -51,6 +52,13 @@ from .haiku import (
 )
 from .interactive import SetupView, close_views
 from .presentation import Presentation, settings
+from .repost import (
+    MAX_MESSAGE_BYTES,
+    RepostBudget,
+    attachment_size,
+    bounded_repost,
+    download_attachment,
+)
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +101,8 @@ class OwoPlus(FunCommands, redcommands.Cog):
         self._closing = False
         self._undos = OrderedDict()
         self._fun_task = None
+        self._attachment_session = None
+        self._repost_budget = RepostBudget()
 
     # ---------- transforms ----------
     @staticmethod
@@ -978,6 +988,7 @@ class OwoPlus(FunCommands, redcommands.Cog):
 
     # ---------- listener ----------
     @commands.Cog.listener()
+    @bounded_repost
     @guild_enabled
     async def on_message(self, message):
         if not message.guild or message.author.bot or message.webhook_id:
@@ -1015,10 +1026,15 @@ class OwoPlus(FunCommands, redcommands.Cog):
     async def cog_load(self):
         self._closing = False
         await asyncio.to_thread(HaikuMeter.initialize)
+        self._attachment_session = aiohttp.ClientSession()
         self._fun_task = asyncio.create_task(self._fun_loop(), name="owoplus-haiku-activities")
 
     async def cog_unload(self):
         self._closing = True
+        await self._repost_budget.close()
+        if self._attachment_session:
+            await self._attachment_session.close()
+            self._attachment_session = None
         if self._fun_task:
             self._fun_task.cancel()
             await asyncio.gather(self._fun_task, return_exceptions=True)
@@ -1071,6 +1087,12 @@ class OwoPlus(FunCommands, redcommands.Cog):
             )
 
     async def _repost(self, message, content):
+        with self._repost_budget.slot(message.guild.id) as admitted:
+            if not admitted:
+                return False
+            return await self._repost_bounded(message, content)
+
+    async def _repost_bounded(self, message, content):
         # Preserve rich content that cannot be faithfully copied by this transformer.
         if self._closing or not content or message.embeds or len(message.attachments) > 10:
             return False
@@ -1082,8 +1104,15 @@ class OwoPlus(FunCommands, redcommands.Cog):
         if not permissions.manage_messages:
             return False
         try:
+            if sum(attachment_size(item) for item in message.attachments) > MAX_MESSAGE_BYTES:
+                return False
+            remaining = MAX_MESSAGE_BYTES
             for attachment in message.attachments:
-                files.append(await attachment.to_file())
+                file, size = await download_attachment(
+                    self._attachment_session, attachment, remaining
+                )
+                files.append(file)
+                remaining -= size
             hook = await self._ensure_webhook(channel)
             if hook is None:
                 return False
@@ -1116,6 +1145,8 @@ class OwoPlus(FunCommands, redcommands.Cog):
             return True
         except (
             discord.HTTPException,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
             OSError,
             ValueError,
             asyncio.CancelledError,

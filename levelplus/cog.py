@@ -50,6 +50,7 @@ from .milestones import MILESTONE_DEFAULTS, MilestoneCommands
 from .presentation import Presentation, settings
 from .progression import CALENDAR_DEFAULTS, PROGRESS_SETTINGS, ProgressionCommands
 from .reward_preview import build_preview, preview_policy, reward_changes
+from .templates import render_template, spreadsheet_cell
 
 log = logging.getLogger(__name__)
 
@@ -266,18 +267,25 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
         u = SimpleNamespace(
             **{
                 "mention": member.mention,
-                "name": member.display_name,
+                "name": discord.utils.escape_mentions(member.display_name),
                 "level": new,
                 "xp": await self._get_xp(guild, member.id),
             }
         )
         try:
-            msg = template.format(user=u)
+            msg = render_template(template, **vars(u))
         except Exception:
             msg = f"{member.mention} has reached level **{new}**!"
         embed = self._levelup_card(member, new, u.xp)
         try:
-            await self._presentation.send(ch, embed=embed, notification=msg, allowed_mentions=None)
+            await self._presentation.send(
+                ch,
+                embed=embed,
+                notification=msg,
+                allowed_mentions=discord.AllowedMentions(
+                    everyone=False, roles=False, users=[member], replied_user=False
+                ),
+            )
         except discord.HTTPException:
             log.debug("Level-up announcement could not be sent", exc_info=True)
 
@@ -672,14 +680,15 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
         u = SimpleNamespace(
             **{
                 "mention": m.mention,
-                "name": m.display_name,
+                "name": discord.utils.escape_mentions(m.display_name),
                 "level": next_level,
                 "xp": await self._get_xp(ctx.guild, m.id),
             }
         )
         try:
-            msg = conf.get("template", "{user.mention} has reached level **{user.level}**!").format(
-                user=u
+            msg = render_template(
+                conf.get("template", "{user.mention} has reached level **{user.level}**!"),
+                **vars(u),
             )
         except Exception:
             msg = f"{m.mention} has reached level **{next_level}**!"
@@ -687,7 +696,9 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
             ch,
             embed=self._levelup_card(m, next_level, u.xp, preview=True),
             notification=f"[TEST] {msg}",
-            allowed_mentions=None,
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False, roles=False, users=[m], replied_user=False
+            ),
         )
         await self._presentation.confirm(ctx)
 
@@ -1218,9 +1229,14 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
         """Set the level-up message template.
 
         Available placeholders: {user.mention}, {user.name}, {user.level}, and {user.xp}. The
-        template is limited to 500 characters.
+        template is limited to 500 characters, with widths and precision up to 512. Nested
+        fields are not supported. Announcements can mention only the member leveling up.
         """
-        await self.config.guild(ctx.guild).levelup.template.set(text[:500])
+        try:
+            render_template(text, mention="@Member", name="Member", level=1, xp=1)
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise redcommands.BadArgument(str(exc)) from exc
+        await self.config.guild(ctx.guild).levelup.template.set(text)
         await self._presentation.confirm(ctx)
 
     # ---- XP admin & migration
@@ -1310,7 +1326,7 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
         w.writerow(["user_id", "xp", "alias"])
         for uid, xp in g["xp"].items():
             alias = g.get("names", {}).get(uid, "")
-            w.writerow([uid, xp, alias])
+            w.writerow([uid, xp, spreadsheet_cell(alias)])
         buff.seek(0)
         await self._reply(
             ctx,
@@ -1373,7 +1389,7 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
         Use identifier,xp rows with a user ID, mention, or resolvable name. Matching users are
         overwritten; ambiguous names are skipped. XP values must be integers.
         """
-        guild_names, global_names = {}, {}
+        guild_names = {}
 
         def index_user(index, user, names):
             if user.bot:
@@ -1393,12 +1409,6 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
                     f"{member.name}#{member.discriminator}",
                 ),
             )
-        for user in self.bot.users:
-            index_user(
-                global_names,
-                user,
-                (user.name, user.global_name, f"{user.name}#{user.discriminator}"),
-            )
         parsed, skipped = [], 0
         try:
             for row in csv.reader(io.StringIO(lines), strict=True):
@@ -1412,10 +1422,7 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
                 candidates = (
                     {int(match.group(1))}
                     if match
-                    else guild_names.get(
-                        identifier.casefold(),
-                        global_names.get(identifier.casefold(), set()),
-                    )
+                    else guild_names.get(identifier.casefold(), set())
                 )
                 try:
                     xp = max(0, int(row[1].strip()))
@@ -1450,7 +1457,7 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
     async def level_lookup(self, ctx: redcommands.Context, *, query: str):
         """Find user IDs by mention, ID, or name fragment.
 
-        Searches current server members and cached users. Accepts a mention, raw numeric ID, or
+        Searches current server members. Accepts a mention, raw numeric ID, or
         case-insensitive name fragment.
         """
         q = query.strip()
@@ -1471,13 +1478,6 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
             names = [mbr.display_name, mbr.name, getattr(mbr, "global_name", None)]
             if any(n and ql in n.lower() for n in names):
                 results.append((mbr.id, mbr.display_name))
-        if not results:
-            for u in self.bot.users:
-                if getattr(u, "bot", False):
-                    continue
-                names = [u.name, getattr(u, "global_name", None)]
-                if any(n and ql in n.lower() for n in names):
-                    results.append((u.id, getattr(u, "global_name", None) or u.name))
         if not results:
             return await self._reply(ctx, "No matches.", tone="warning")
         lines = [f"{i:>2}. {name} - `{uid}`" for i, (uid, name) in enumerate(results[:20], start=1)]
@@ -2002,12 +2002,16 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
                 or periods["archives"]
                 or uid in config["milestones"]
                 or uid in config["progress"]
+                or uid in config["earned_today"]["xp"]
             ):
                 data[str(guild_id)] = {
                     "xp": config.get("xp", {}).get(uid, 0),
                     "name": config.get("names", {}).get(uid),
                     "periods": periods,
                     "daily_earned": config["earned_today"]["xp"].get(uid, 0),
+                    "daily_earned_day": config["earned_today"]["day"]
+                    if uid in config["earned_today"]["xp"]
+                    else None,
                     "milestones": config["milestones"].get(uid, {}),
                     "progress": config["progress"].get(uid, {}),
                 }

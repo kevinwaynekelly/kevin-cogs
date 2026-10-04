@@ -146,12 +146,18 @@ async def scan_channel(job, channel, guild, member):
                 await asyncio.sleep(0)
             if not job.include_bots and (message.author.bot or message.webhook_id):
                 continue
-            job.writer.add(message_record(message), row)
-            row["messages"] += 1
-            job.messages += 1
-            row["first"] = row["first"] or stamp(message.created_at)
-            row["last"] = stamp(message.created_at)
-        row["status"] = "complete"
+            async with job.privacy_lock:
+                if message.author.id in job.excluded_users:
+                    row["status"] = "partial: author data erased during scan"
+                    job.complete = False
+                    continue
+                job.writer.add(message_record(message), row)
+                row["messages"] += 1
+                job.messages += 1
+                row["first"] = row["first"] or stamp(message.created_at)
+                row["last"] = stamp(message.created_at)
+        if row["status"] == "pending":
+            row["status"] = "complete"
     except ExportLimit:
         row["status"] = "partial: output limit reached"
         raise

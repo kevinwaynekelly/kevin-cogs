@@ -991,11 +991,7 @@ async def _log(identifier, cog, ctx):
             record = _dict(record)
             if _number(record.get("created")) < time.time() - 90 * 86400:
                 continue
-            events = [
-                event
-                for event in _list(record.get("events"))
-                if _visible(ctx, _dict(event).get("source", 0))
-            ]
+            events = await _authorized_log_records(cog, ctx, _list(record.get("events")))
             rows.append(
                 _row(
                     key,
@@ -1014,9 +1010,9 @@ async def _log(identifier, cog, ctx):
     records, policy = await asyncio.gather(group.history_records(), group.history_settings())
     cutoff = time.time() - min(90, max(1, _number(_dict(policy).get("days"), 30))) * 86400
     rows = []
-    for index, record in enumerate(_list(records)):
+    for index, record in enumerate(await _authorized_log_records(cog, ctx, _list(records))):
         record = _dict(record)
-        if _number(record.get("time")) < cutoff or not _visible(ctx, record.get("source", 0)):
+        if _number(record.get("time")) < cutoff:
             continue
         details = [_text(record.get("description"), 2000)]
         details.extend(
@@ -1035,6 +1031,22 @@ async def _log(identifier, cog, ctx):
             )
         )
     return rows
+
+
+async def _authorized_log_records(cog, ctx, records):
+    records = [_dict(record) for record in records]
+    authorize = getattr(cog, "_visible_history", None)
+    if callable(authorize):
+        return await authorize(ctx, records)
+    # Older LogPlus versions lack current history/private-thread checks. Expose only
+    # records explicitly marked as server events until LogPlus is updated.
+    return [
+        record
+        for record in records
+        if "source" in record
+        and not isinstance(record["source"], bool)
+        and record["source"] in (None, 0)
+    ]
 
 
 async def _owo(identifier, cog, ctx):

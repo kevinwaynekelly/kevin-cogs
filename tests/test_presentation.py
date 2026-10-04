@@ -164,7 +164,10 @@ async def test_custom_levelup_template_keeps_text_and_mentions(bot, guild):
     output = channel.send.await_args.kwargs
     assert channel.send.await_args.args[0] == f"{member.mention} reached **2**!"
     assert output["embed"].fields[0].value == "2"
-    assert output["allowed_mentions"] is None
+    assert output["allowed_mentions"].users == [member]
+    assert output["allowed_mentions"].everyone is False
+    assert output["allowed_mentions"].roles is False
+    assert output["allowed_mentions"].replied_user is False
 
 
 async def test_long_owo_preview_paginates_instead_of_rejecting(bot, guild):
