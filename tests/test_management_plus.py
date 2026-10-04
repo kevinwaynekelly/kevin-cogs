@@ -432,7 +432,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
 
     bot, core, member, invoke = core_runtime
     for helper in ("presentation.py", "command_support.py", "interactive.py"):
-        for package in ("coreplus", "downloaderplus"):
+        for package in ("coreplus", "downloaderplus", "dashboardplus"):
             assert Path(package, helper).read_bytes() == Path("audioplus", helper).read_bytes()
     assert (
         Path("downloaderplus/management.py").read_bytes()
@@ -456,6 +456,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
             ("presenceplus", "PresencePlus"),
             ("settingshub", "SettingsHub"),
             ("downloaderplus", "DownloaderPlus"),
+            ("dashboardplus", "DashboardPlus"),
         ):
             cog = getattr(importlib.import_module(package), name)(bot)
             await bot.add_cog(cog)
@@ -481,7 +482,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
                     actions += 1
                     if leaf.binding is core:
                         core_actions += 1
-        assert (len(roots), actions, core_actions) == (89, 436, 14)
+        assert (len(roots), actions, core_actions) == (90, 445, 14)
         print(f"{len(roots)} roots / {actions} actions")
     finally:
         for cog in reversed(loaded):

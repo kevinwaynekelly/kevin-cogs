@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-04: DashboardPlus local web controls
+
+- Add a self-contained responsive DashboardPlus web interface hosted in Red: owner login, server/channel selection, live public song artwork/progress/queue, checked playback controls, 32 reviewed settings across eight cogs and enabled/loaded status.
+- Use private single-use Discord codes and bounded expiring sessions, with current ownership/member/channel/source checks, same-origin JSON/CSRF/host boundaries and no stored bot token/password or raw Config interface. Invoke existing Red parsing, converters, hooks, cooldowns, validation and optional SettingsHub auditing.
+- Persist only the default-off listener's bind/port/start policy and explicit private hostnames. Restore enabled listeners after reboot and clean up startup/server/request tasks plus sessions on stop/unload. Document Docker port mapping and private DNS/proxy setup.
+- Exercise real local HTTP and Red command boundaries with mocked Discord/media transport. All 14 cogs fit 90 slash roots and 445 actions.
+
 ## 2026-10-04: DownloaderPlus management
 
 - Add independently installable DownloaderPlus with 19 owner-only slash actions and matching text controls for repository management, installed packages, installation, updates, pinning and revision selection.

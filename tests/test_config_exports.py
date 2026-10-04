@@ -15,6 +15,7 @@ from scripts import red_settings_export as exporter
 from settingshub.schema import FIELDS, select_fields
 
 NON_POLICY_GUILD = {
+    "DashboardPlus": set(),
     "AudioPlus": {"playlists", "favorites", "listening_history", "recovery", "server_playlists"},
     "BackupPlus": set(),
     "CommunityPlus": {"social", "voice_rooms"},

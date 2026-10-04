@@ -36,6 +36,7 @@ def fields(names):
 
 IDS = List(SCALAR)
 NAMESPACES = {
+    "DashboardPlus": "702035014",
     "CorePlus": None,
     "DownloaderPlus": None,
     "AudioPlus": str(0xA10DEFAB),
@@ -54,6 +55,7 @@ NAMESPACES = {
 # Explicit nested allowlists. Never copy an arbitrary Config dictionary as a
 # policy: several sections mix settings with IDs, histories and scheduler state.
 GUILD = {
+    "DashboardPlus": {},
     "AudioPlus": {
         "music": fields(
             "panel dj_role vote_skip fair_queue autoplay history max_seconds per_member "
@@ -168,6 +170,7 @@ GUILD = {
     },
 }
 GLOBAL = {
+    "DashboardPlus": {"settings": {**fields("enabled bind port"), "hosts": List(SCALAR)}},
     "AudioPlus": {"watchdog": fields("enabled guild_id channel_id video_url hour minute timezone")},
     "PresencePlus": {
         "settings": {

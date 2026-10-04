@@ -35,8 +35,10 @@ jobs:
           python -m ruff format --check .
       - name: Regression tests
         run: python -m pytest -q
+      - name: Dashboard script syntax
+        run: node --check dashboardplus/web/app.js
       - name: Syntax, metadata, and whitespace
         run: |
-          python -m compileall -q audioplus communityplus levelplus logplus owoplus settingshub emojistealerplus exportplus backupplus introplus presenceplus coreplus downloaderplus
+          python -m compileall -q audioplus communityplus levelplus logplus owoplus settingshub emojistealerplus exportplus backupplus introplus presenceplus coreplus downloaderplus dashboardplus
           python -c "import json, pathlib; [json.loads(p.read_text()) for p in [pathlib.Path('info.json'), *pathlib.Path('.').glob('*/info.json')]]"
           git diff --check
