@@ -92,11 +92,51 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         self._continuity_task = None
         self._next_recovery_prune = 0
         self._watchdog = PlaybackWatchdog(
-            self.config, self._check_ready, self._probe_playback, self._notify_check_failure
+            self.config,
+            self._check_ready,
+            self._probe_playback,
+            self._notify_check_failure,
+            report_failure=self._report_check_failure,
         )
 
     async def cog_command_error(self, ctx, error):
+        original = getattr(error, "original", error)
+        if isinstance(original, MediaError) and any(
+            marker in str(original).lower()
+            for marker in (
+                "pynacl",
+                "davey",
+                "ffmpeg",
+                "libopus",
+                "extraction failed",
+                "could not be loaded",
+                "provider denied",
+                "requires authentication",
+                "unavailable in red",
+                "timed out",
+                "**stage**",
+            )
+        ):
+            await self._report_suite_failure(
+                "Playback command", ctx.guild.id if ctx.guild else None, error=original
+            )
         await self._presentation.command_error(ctx, error)
+
+    async def _report_suite_failure(self, stage, guild_id=None, *, error=None, kind="command"):
+        getter = getattr(self.bot, "get_cog", None)
+        monitor = getter("NotificationPlus") if callable(getter) else None
+        if type(monitor).__name__ != "NotificationPlus":
+            return
+        try:
+            await monitor.report("AudioPlus", stage, guild_id=guild_id, error=error, kind=kind)
+        except Exception as failure:
+            log.warning(
+                "Could not record the playback failure notification",
+                extra={"notification_error": type(failure).__name__},
+            )
+
+    async def _report_check_failure(self, settings, result):
+        await self._report_suite_failure("Daily playback check", settings["guild_id"], kind="daily")
 
     async def _reply(self, ctx, content=None, *, track=None, tracks=(), **kwargs):
         if track is None:
@@ -820,7 +860,10 @@ class AudioPlus(MusicSessions, ListeningCommands, AudioContinuity, AudioCommands
         )
 
     async def _report_playback_failure(self, player, track, cause):
-        if self._closing or self._players.get(player.guild.id) is not player or not player.context:
+        if self._closing or self._players.get(player.guild.id) is not player:
+            return
+        await self._report_suite_failure("Native playback", player.guild.id, kind="playback")
+        if not player.context:
             return
         ctx = player.context
         title = discord.utils.escape_markdown(track.title)

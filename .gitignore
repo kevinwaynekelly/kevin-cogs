@@ -28,3 +28,6 @@ htmlcov/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Private operational failure handoff, not source code.
+**/alerts/unraid.json

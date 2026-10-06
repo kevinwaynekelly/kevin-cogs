@@ -188,9 +188,12 @@ class MusicSessions:
         except Exception as error:
             # A supplementary summary must never prevent disconnect/player cleanup.
             log.warning(
-                "Could not finish music summary in guild %s (%s)",
-                player.guild.id,
-                type(error).__name__,
+                "Music session summary delivery failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "session_summary",
+                    "notification_guild_id": player.guild.id,
+                },
             )
 
     @participant_request

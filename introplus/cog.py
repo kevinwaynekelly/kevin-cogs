@@ -444,13 +444,26 @@ class IntroPlus(commands.Cog):
                         raise
                 except MediaError as error:
                     self._result(guild_id, str(error))
+                    log.warning(
+                        "Voice intro playback failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "intro_playback",
+                            "notification_guild_id": guild_id,
+                        },
+                    )
                 except Exception as error:
                     self._result(
                         guild_id,
                         f"Playback failed ({type(error).__name__}). Run intro diagnostics.",
                     )
                     log.warning(
-                        "IntroPlus playback failed in guild %s (%s)", guild_id, type(error).__name__
+                        "Voice intro playback failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "intro_playback",
+                            "notification_guild_id": guild_id,
+                        },
                     )
                 finally:
                     if self._active.get(guild_id, (None,))[0] is task:

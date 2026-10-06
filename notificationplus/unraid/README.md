@@ -1,0 +1,92 @@
+# Unraid notification delivery
+
+Run the included [script](script) on the **Unraid host**, once per minute. It reads
+NotificationPlus's persistent outbox and uses Unraid's existing Alert recipients.
+Redbot needs no SMTP credentials or Docker socket.
+
+## Set up Redbot
+
+Use your existing repository name in place of `kevin` if different:
+
+```text
+!cog install kevin notificationplus
+!load notificationplus
+!notifications enable
+!notifications
+```
+
+Copy the exact **Container outbox** path from the status message. Keep Red's data
+directory on persistent Docker storage. Update/reload the other suite cogs to
+include their notification failure reporting hooks.
+
+## Install the host bridge
+
+In **Settings → User Scripts**, add a script called `1_cog_failure_alerts`.
+In the Unraid terminal, copy the bridge from the installed cog:
+
+```sh
+docker cp redbot:/data/cogs/CogManager/cogs/notificationplus/unraid/script \
+  /boot/config/plugins/user.scripts/scripts/1_cog_failure_alerts/bridge
+```
+
+Replace `redbot` with your actual container name. The source above is the usual
+installed-source location; adjust it if your Red instance installs cogs elsewhere.
+This is the cog's source file, separate from the status message's data outbox path.
+
+Edit the User Script to contain:
+
+```bash
+#!/bin/bash
+export COG_ALERTS_CONTAINER=redbot
+export COG_ALERTS_CONTAINER_PATH='/paste/the/exact/Container-outbox/path/here'
+exec bash /boot/config/plugins/user.scripts/scripts/1_cog_failure_alerts/bridge
+```
+
+Select a custom schedule of `* * * * *`. Run it manually once to check setup.
+The bridge translates the exact data path through Docker's persistent mounts;
+it does not read the container's environment, tokens or Config database.
+Alternatively, set `COG_ALERTS_PATH` to the exact host file path and omit the
+container variables. That option can read alerts while the container is stopped.
+
+Host requirements are Bash, `jq`, `flock`, `timeout`, `stat`, `dd`, `mktemp` and
+`sync`. Docker is only needed for mount translation. Notification state defaults
+to `/mnt/user/appdata/user-scripts-state/notificationplus`; set
+`COG_ALERTS_STATE_DIR` to another private persistent directory if needed.
+
+## Enable and test email
+
+In [Unraid Notification Settings](https://docs.unraid.net/unraid-os/getting-started/set-up-unraid/customize-unraid-settings/),
+enable **Email** for **Alerts**. Use the SMTP **TEST** button to verify your saved
+sender and recipients. Then run:
+
+```text
+!notifications test
+```
+
+Run the User Script again or wait for its next minute. Check Unraid's notification
+history and your inbox. A successful bridge run means the Unraid notification
+program ran successfully; it cannot verify SMTP delivery or receipt. Unraid's
+notification program does not reliably expose email-send failures through its
+exit status, so verify SMTP separately.
+
+## Delivery behavior
+
+New failures are grouped into one Alert per run, with up to eight details and a
+count of additional failures. Unraid's configured browser/email/agent choices
+apply. Matching failures are suppressed by the cog for ten minutes. This bridge
+never edits or deletes the producer's file; its own private cursor remembers
+which events Unraid has processed.
+
+Failures older than seven days are skipped even if the bot has stopped. Future
+timestamps and subsequent events wait until the host clock catches up, so keep
+the Red container and Unraid host clocks synchronized.
+
+Rejected or timed-out notification submissions retain the cursor and retry on
+the next run. A crash after submission but before saving the cursor can repeat
+an alert. A stopped bot/host, filesystem failure, malformed outbox or missing
+program needs separate host monitoring; this bridge cannot notify without a
+working host notification subsystem. Errors are visible in its User Scripts log.
+
+Disabling with `!notifications disable` clears retained events. It cannot retract
+notifications already processed by Unraid. To remove the host integration, disable
+the User Script's schedule before deleting its files or delivery state.

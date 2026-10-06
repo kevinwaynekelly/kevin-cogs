@@ -213,8 +213,17 @@ class CommunityFeatures:
                 await message.edit(view=view)
                 if view:
                     self._role_views[entry["message"]] = view
-            except discord.HTTPException:
-                log.debug("Self-role menu could not be refreshed", exc_info=True)
+            except discord.NotFound:
+                pass
+            except discord.HTTPException as error:
+                log.warning(
+                    "Self-role menu refresh failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "role_menu_refresh",
+                        "notification_guild_id": guild.id,
+                    },
+                )
 
     async def _track_voice(self, member, channel):
         key = (member.guild.id, member.id)
@@ -294,8 +303,15 @@ class CommunityFeatures:
             await self._presentation.send(
                 channel, embed=await self._summary_embed(guild, completed_days=True)
             )
-        except discord.HTTPException:
-            log.debug("Weekly summary delivery failed", exc_info=True)
+        except discord.HTTPException as error:
+            log.warning(
+                "Weekly summary delivery failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "weekly_summary",
+                    "notification_guild_id": guild.id,
+                },
+            )
             return
         async with self.config.guild(guild).features() as features:
             if features["summary"] == conf:

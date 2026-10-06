@@ -358,9 +358,16 @@ class FunCommands:
                 ),
                 10,
             )
-        except (discord.HTTPException, OSError, asyncio.TimeoutError):
+        except (discord.HTTPException, OSError, asyncio.TimeoutError) as error:
             await view.on_timeout()
-            log.debug("Could not send an Undo control; successful repost retained", exc_info=True)
+            log.warning(
+                "Undo notification delivery failed; repost retained",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "undo_notice",
+                    "notification_guild_id": original.guild.id,
+                },
+            )
         except asyncio.CancelledError:
             await view.on_timeout()
             raise
@@ -652,7 +659,15 @@ class FunCommands:
                         ),
                         10,
                     )
-                except (discord.HTTPException, OSError, asyncio.TimeoutError):
+                except (discord.HTTPException, OSError, asyncio.TimeoutError) as error:
+                    log.warning(
+                        "Poetry winner notification delivery failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "poetry_winner",
+                            "notification_guild_id": guild.id,
+                        },
+                    )
                     continue
                 contest["announced"] = True
 

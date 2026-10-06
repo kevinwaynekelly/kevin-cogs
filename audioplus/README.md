@@ -363,6 +363,10 @@ For a breakage already fixed in yt-dlp's nightly channel, the owner can use `[p]
 
 For bug reports, include Red/Discord.py versions, `[p]audiostatus`, `[p]playerstate`, the public query/URL, and the matching Red error. Remove tokens, cookies, passwords, and signed stream URLs before sharing logs.
 
+## Unraid failure emails
+
+Optional [NotificationPlus](../notificationplus/README.md) sends final playback failures, dependency/extraction command failures and daily check failures through Unraid's existing Alert notification/email settings. It also detects other suite errors and failed Discord notification sends. Install/load it, run `[p]notifications enable` and configure its included once-per-minute [host bridge](../notificationplus/unraid/README.md). Existing daily failure DMs continue independently; their retry attempts do not repeat the playback-check event. Host messages exclude requester identities, song titles, queries and media URLs.
+
 ## Stored data and lifecycle
 
 Legacy global node settings remain in Red Config, including their old password. Native playback ignores them. The daily monitor adds an optional `watchdog` section, disabled by default, without changing those legacy values. Red initializes the added defaults on existing installations. It stores the recipient's Discord ID, test server/channel IDs, public test video URL, schedule/timezone, daily cursor, latest safe result, and pending failure alert/delivery state. User-data hooks export that recipient's monitor record or remove it and disable checking. Deletion does not remove already delivered Discord DMs.

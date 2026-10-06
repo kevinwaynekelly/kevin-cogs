@@ -394,7 +394,15 @@ class CommunityTools:
                     try:
                         await self._remove_birthday_role(member, current)
                         current.update(role=None, role_until=0)
-                    except (discord.HTTPException, asyncio.TimeoutError):
+                    except (discord.HTTPException, asyncio.TimeoutError) as error:
+                        log.warning(
+                            "Birthday role cleanup failed",
+                            extra={
+                                "notification_error": type(error).__name__,
+                                "notification_stage": "birthday_role_cleanup",
+                                "notification_guild_id": guild.id,
+                            },
+                        )
                         continue
                 birthday = current["birthday"]
                 if (
@@ -434,8 +442,18 @@ class CommunityTools:
                         current.update(
                             role=role.id, role_until=int((now + timedelta(days=1)).timestamp())
                         )
-                except (discord.HTTPException, asyncio.TimeoutError, commands.BadArgument):
-                    log.warning("Birthday delivery/role unavailable in guild %s", guild.id)
+                except commands.BadArgument:
+                    # An unavailable or unsafe configured reward is a readiness issue.
+                    continue
+                except (discord.HTTPException, asyncio.TimeoutError) as error:
+                    log.warning(
+                        "Birthday notification or role update failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "birthday_notification",
+                            "notification_guild_id": guild.id,
+                        },
+                    )
 
     async def _tools_user_data(self, user_id, *, delete=False):
         result = {}

@@ -1,6 +1,7 @@
 """Music panels, vote policies, and bounded saved public track collections."""
 
 import asyncio
+import logging
 import math
 import re
 from contextlib import suppress
@@ -16,6 +17,7 @@ from .presentation import clip, settings
 from .requests import personal_context, personal_request
 from .resolver import MAX_TRACKS, MediaError, Track, http_url
 
+log = logging.getLogger(__name__)
 DEFAULTS_GUILD = {
     "music": {
         "panel": True,
@@ -325,7 +327,17 @@ class AudioCommands:
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
                 self._panels[player.guild.id] = (channel, message, view)
-        except discord.HTTPException:
+        except discord.NotFound:
+            await self._close_panel(player.guild.id)
+        except discord.HTTPException as error:
+            log.warning(
+                "Audio now-playing panel delivery failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "music_panel",
+                    "notification_guild_id": player.guild.id,
+                },
+            )
             await self._close_panel(player.guild.id)
 
     async def _close_panel(self, guild_id, *, cancel_task=True):

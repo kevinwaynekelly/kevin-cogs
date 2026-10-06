@@ -85,8 +85,9 @@ def check_due(settings, now):
 
 
 class PlaybackWatchdog:
-    def __init__(self, config, ready, probe, notify, *, clock=None):
+    def __init__(self, config, ready, probe, notify, *, clock=None, report_failure=None):
         self.config, self.ready, self.probe, self.notify = config, ready, probe, notify
+        self.report_failure = report_failure
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = asyncio.Lock()
         self._task = None
@@ -176,6 +177,14 @@ class PlaybackWatchdog:
                     )
                     state["alert_retry_at"] = 0
                     state["last_alert_error"] = None
+            if result.status == "failed" and self.report_failure is not None:
+                try:
+                    await self.report_failure(settings, record)
+                except Exception as failure:
+                    log.warning(
+                        "Could not record the playback-check failure",
+                        extra={"notification_error": type(failure).__name__},
+                    )
             await self._deliver_pending()
             return result
 

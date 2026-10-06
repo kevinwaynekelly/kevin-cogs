@@ -303,8 +303,15 @@ class CommunityPlus(
         if isinstance(ch, (discord.TextChannel, discord.Thread)):
             try:
                 await self._presentation.send(ch, embed=embed)
-            except discord.HTTPException:
-                pass
+            except discord.HTTPException as error:
+                log.warning(
+                    "Community channel notification delivery failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "channel_notification",
+                        "notification_guild_id": guild.id,
+                    },
+                )
 
     # ------------------------ stats helpers (OPTIMIZED) ------------------------
     async def _bump_stat(self, member: discord.Member, key: str, delta: int = 1) -> None:
@@ -1461,8 +1468,15 @@ class CommunityPlus(
             if roles_to_add:
                 try:
                     await member.add_roles(*roles_to_add, reason="CommunityPlus sticky")
-                except discord.HTTPException:
-                    pass
+                except discord.HTTPException as error:
+                    log.warning(
+                        "Community sticky-role restoration failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "sticky_roles",
+                            "notification_guild_id": member.guild.id,
+                        },
+                    )
 
         # Autorole
         if not await self.config.member(member).ever_seen():
@@ -1471,8 +1485,15 @@ class CommunityPlus(
                 if r and r in self._eligible_roles(member, [r.id]):
                     try:
                         await member.add_roles(r, reason="CommunityPlus autorole")
-                    except discord.HTTPException:
-                        pass
+                    except discord.HTTPException as error:
+                        log.warning(
+                            "Community automatic-role assignment failed",
+                            extra={
+                                "notification_error": type(error).__name__,
+                                "notification_stage": "automatic_roles",
+                                "notification_guild_id": member.guild.id,
+                            },
+                        )
 
         if g["welcome"]["enabled"] and g["welcome"]["channel_id"]:
             text = self._format_template(g["welcome"]["message"], member)
@@ -1573,8 +1594,15 @@ class CommunityPlus(
                                 title="Voice timeout warning",
                                 tone="warning",
                             )
-                        except discord.HTTPException:
-                            pass
+                        except discord.HTTPException as error:
+                            log.warning(
+                                "Solo voice warning delivery failed",
+                                extra={
+                                    "notification_error": type(error).__name__,
+                                    "notification_stage": "solo_voice_warning",
+                                    "notification_guild_id": member.guild.id,
+                                },
+                            )
                     await asyncio.sleep(max(0, deadline - time.monotonic()))
                 if not await eligible():
                     return
@@ -1588,10 +1616,24 @@ class CommunityPlus(
                             title="Voice timeout",
                             tone="warning",
                         )
-                    except discord.HTTPException:
-                        log.debug("Solo timeout DM could not be sent", exc_info=True)
-            except discord.HTTPException:
-                log.debug("Solo timeout could not disconnect member", exc_info=True)
+                    except discord.HTTPException as error:
+                        log.warning(
+                            "Solo voice disconnect notice delivery failed",
+                            extra={
+                                "notification_error": type(error).__name__,
+                                "notification_stage": "solo_voice_notice",
+                                "notification_guild_id": member.guild.id,
+                            },
+                        )
+            except discord.HTTPException as error:
+                log.warning(
+                    "Solo voice disconnect failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "solo_voice_disconnect",
+                        "notification_guild_id": member.guild.id,
+                    },
+                )
             finally:
                 if self._solo_tasks.get(key) is asyncio.current_task():
                     self._solo_tasks.pop(key, None)

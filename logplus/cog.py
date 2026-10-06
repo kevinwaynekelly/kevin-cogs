@@ -206,6 +206,14 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
         except (discord.HTTPException, asyncio.TimeoutError) as error:
             if self._closing:
                 return
+            log.warning(
+                "Server log notification delivery failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "log_delivery",
+                    "notification_guild_id": guild.id,
+                },
+            )
             self._delivery_failed(guild.id, error)
             if (await self._settings(guild))["features"]["retry"]:
                 self._enqueue_log(guild, record)

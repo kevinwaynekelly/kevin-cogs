@@ -1,0 +1,26 @@
+{
+  "author": [
+    "Kevin Kelly"
+  ],
+  "short": "Sanitized suite failure alerts through Unraid notifications and email.",
+  "description": "Owner-only suite failure detection with a bounded persistent Unraid outbox, cross-cog warning/error log capture, unexpected command error detection, daily/playback AudioPlus reports, ten-minute deduplication, safe exception metadata and owned logging worker cleanup. Requires a separately scheduled Unraid host bridge for notification delivery; independently installable with no additional Python dependencies.",
+  "install_msg": "Read https://github.com/kevinwaynekelly/kevin-cogs/blob/main/notificationplus/README.md. Load notificationplus, use [p]notifications enable and [p]notifications to find the container outbox path, then configure/schedule the included Unraid host bridge every minute. Enable Alert email delivery in Unraid notification settings and test with [p]notifications test. Collection defaults off; all controls require bot ownership. Slash controls: [p]slash enablecog notificationplus and [p]slash sync.",
+  "requirements": [],
+  "tags": [
+    "notifications",
+    "unraid",
+    "email",
+    "errors",
+    "monitoring"
+  ],
+  "min_bot_version": "3.5.24",
+  "min_python_version": [
+    3,
+    10,
+    0
+  ],
+  "type": "COG",
+  "hidden": false,
+  "disabled": false,
+  "end_user_data_statement": "Stores a global enabled flag in Red Config and a bounded operational failure outbox in the cog's persistent alerts/unraid.json file. Outbox records contain a random producer identifier, monotonically increasing sequence, UTC timestamp, suite cog name, fixed failure category/stage, sanitized exception type and numeric HTTP/OS error code, and optional server ID. Member IDs, display names, messages, song titles, media URLs, credentials and tracebacks are never included. At most 64 events are kept, older than seven days are pruned on writes/status reads, and equivalent failures are suppressed for ten minutes. A separate Unraid host script reads the outbox and uses Unraid's configured notification recipients, which may receive these operational records by email. Disabling notifications clears queued events. No per-user data is collected; user data export and deletion hooks therefore return no user records."
+}

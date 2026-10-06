@@ -148,18 +148,32 @@ class EmojiStealerPlus(commands.Cog):
                             title="Yoinked",
                             tone="success",
                         )
+            except commands.CommandError as error:
+                if guild:
+                    await self.config.guild(guild).last_error.set(type(error).__name__)
             except (
-                commands.CommandError,
                 discord.HTTPException,
                 aiohttp.ClientError,
                 asyncio.TimeoutError,
             ) as error:
                 if guild:
                     await self.config.guild(guild).last_error.set(type(error).__name__)
-                log.warning("Emoji capture failed in guild %s (%s)", guild_id, type(error).__name__)
+                log.warning(
+                    "Automatic emoji capture failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "emoji_capture",
+                        "notification_guild_id": guild_id,
+                    },
+                )
             except Exception as error:
                 log.warning(
-                    "Emoji capture interrupted in guild %s (%s)", guild_id, type(error).__name__
+                    "Automatic emoji capture failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "emoji_capture",
+                        "notification_guild_id": guild_id,
+                    },
                 )
             finally:
                 self._pending.discard((guild_id, emoji.id))

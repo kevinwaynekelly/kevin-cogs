@@ -1161,9 +1161,17 @@ class OwoPlus(FunCommands, redcommands.Cog):
                     await posted.delete()
                 except discord.HTTPException:
                     log.warning("Could not roll back a partial webhook repost", exc_info=True)
-            log.debug("Repost failed; original message retained", exc_info=True)
             if isinstance(error, asyncio.CancelledError):
                 raise
+            if not isinstance(error, ValueError):
+                log.warning(
+                    "Webhook repost failed; original message retained",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "webhook_repost",
+                        "notification_guild_id": message.guild.id,
+                    },
+                )
             return False
         finally:
             for file in files:

@@ -1,9 +1,9 @@
 """Persistent bounded polls and opt-in event attendance/reminders."""
 
 import asyncio
+import logging
 import uuid
 from collections import Counter
-from contextlib import suppress
 from datetime import datetime
 from typing import Optional
 
@@ -15,6 +15,7 @@ from .native_events import native_policy
 from .presentation import clip
 
 SOCIAL_DEFAULTS = {"polls": {}, "events": {}}
+log = logging.getLogger(__name__)
 
 
 def attendance_choice(record, uid, value):
@@ -208,9 +209,18 @@ class CommunitySocial:
                 ),
                 10,
             )
-        except (discord.HTTPException, asyncio.TimeoutError):
-            # Choices are saved even if the old announcement cannot be refreshed.
+        except discord.NotFound:
             pass
+        except (discord.HTTPException, asyncio.TimeoutError) as error:
+            # Choices are saved even if the old announcement cannot be refreshed.
+            log.warning(
+                "Community event or poll panel refresh failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "social_panel_refresh",
+                    "notification_guild_id": guild.id,
+                },
+            )
 
     async def _restore_social(self, guild):
         for kind, rows in (await self.config.guild(guild).social()).items():
@@ -599,7 +609,7 @@ class CommunitySocial:
         record = await self._social_record(guild, "events", key)
         channel = guild.get_channel_or_thread(record["channel"])
         if not record["announced"] and channel:
-            with suppress(discord.HTTPException, asyncio.TimeoutError):
+            try:
                 await asyncio.wait_for(
                     self._presentation.send(
                         channel, embed=social_embed(self, "events", key, record)
@@ -609,6 +619,15 @@ class CommunitySocial:
                 async with group() as data:
                     if key in data["events"]:
                         data["events"][key]["announced"] = True
+            except (discord.HTTPException, asyncio.TimeoutError) as error:
+                log.warning(
+                    "Community event announcement failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "event_announcement",
+                        "notification_guild_id": guild.id,
+                    },
+                )
         slots = asyncio.Semaphore(5)
 
         async def notify(uid):
@@ -629,7 +648,7 @@ class CommunitySocial:
                 return
             member = guild.get_member(int(uid))
             if member:
-                with suppress(discord.HTTPException, asyncio.TimeoutError):
+                try:
                     await asyncio.wait_for(
                         member.send(
                             embed=social_embed(self, "events", key, current),
@@ -640,6 +659,15 @@ class CommunitySocial:
                     async with group() as data:
                         if key in data["events"] and uid in data["events"][key]["remind"]:
                             data["events"][key]["notified"].append(uid)
+                except (discord.HTTPException, asyncio.TimeoutError) as error:
+                    log.warning(
+                        "Community event reminder delivery failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "event_reminder",
+                            "notification_guild_id": guild.id,
+                        },
+                    )
 
         await asyncio.gather(
             *(notify(uid) for uid in record["remind"] if uid not in record["notified"])

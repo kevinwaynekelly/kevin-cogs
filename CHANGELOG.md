@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-06: Suite failure notifications through Unraid
+
+- Add independently installable NotificationPlus with owner-only prefix/slash status, enable, disable and test controls. Detect suite warning/error logs, unexpected command/listener exceptions, failed Discord notifications and final AudioPlus playback/daily-check failures while preserving existing replies and failure DMs.
+- Hand off only sanitized operational metadata through a persistent atomic outbox: 64 events/seven days, ten-minute repeat suppression, bounded thread/log/direct admission and owned worker/configuration/write cleanup. Exclude member identities, message text, song queries, media URLs, credentials and raw exception messages.
+- Add a self-contained once-per-minute Unraid User Script that validates snapshots, groups failures into an Alert, preserves exact server IDs, translates persistent Docker mounts, rejects masked/nonpersistent paths and maintains private delivery cursors. Retry rejected submissions, discard expired failures and document that Unraid submission does not confirm email receipt.
+- Make previously swallowed notification/background errors visible without changing XP awards, queued reminders, log retries, exports, intro queue cleanup or deleted-control behavior. Require separate host scheduling and Unraid Alert email configuration; no live host/email test was performed.
+
 ## 2026-10-04: Audio network and privacy boundaries, isolated administrator recovery
 
 - Reject private, local, reserved and metadata media destinations in AudioPlus and IntroPlus at actual transport connections, including DNS answers and redirect hops. Pin public DNS answers for extraction and use an owned guarded relay for decoding/cache copies; constrain remote media to HTTP audio containers. HLS/DASH-only streams and proxy environment routing are unsupported and produce safe errors.

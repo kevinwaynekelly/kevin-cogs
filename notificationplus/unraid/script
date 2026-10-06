@@ -1,0 +1,208 @@
+#!/bin/bash
+# Schedule this self-contained User Script once per minute on the Unraid host.
+# NotificationPlus writes a bounded snapshot; this script never changes that file.
+# Email delivery uses Unraid's configured Alert recipients. A successful notify
+# exit means Unraid accepted the event, not that an email arrived in an inbox.
+set -euo pipefail
+umask 077
+
+fail() { printf 'Kevin\047s Cogs notifications: %s\n' "$1" >&2; exit 1; }
+
+if [[ "${1:-}" == --help ]]; then
+    cat <<'HELP'
+Kevin's Cogs Unraid notification bridge
+
+Set COG_ALERTS_PATH to the host path shown by the NotificationPlus setup guide.
+Alternatively set COG_ALERTS_CONTAINER_PATH to the exact container path from
+!notifications status; COG_ALERTS_CONTAINER defaults to redbot. Docker bind or
+volume mounts translate that path to the host. No Docker socket is needed in Red.
+COG_ALERTS_STATE_DIR defaults to /mnt/user/appdata/user-scripts-state/notificationplus.
+NOTIFY_BIN defaults to /usr/local/emhttp/webGui/scripts/notify.
+Run once per minute. Only new enabled events notify; failed delivery retries.
+Enable email for Alerts in Unraid. Accepted notifications do not prove email receipt.
+HELP
+    exit 0
+fi
+[[ $# == 0 ]] || fail 'Use --help or run without arguments.'
+
+for binary in jq flock timeout stat dd mktemp sync date; do
+    command -v "$binary" >/dev/null || fail "Missing required host program: $binary."
+done
+
+# Reject symlinks in every existing component, not only the final filename.
+# These are trusted host paths configured by the Unraid administrator.
+safe_path() {
+    local path="$1" part checked='' remainder
+    [[ "$path" == /* && "$path" != / && ! "$path" =~ [[:cntrl:]] ]] || return 1
+    remainder="${path#/}"
+    while [[ -n "$remainder" ]]; do
+        part="${remainder%%/*}"
+        [[ -n "$part" && "$part" != . && "$part" != .. ]] || return 1
+        checked+="/$part"
+        [[ ! -L "$checked" ]] || return 1
+        if [[ "$remainder" == */* ]]; then
+            remainder="${remainder#*/}"
+        else
+            remainder=''
+        fi
+    done
+}
+
+outbox="${COG_ALERTS_PATH:-}"
+if [[ -z "$outbox" ]]; then
+    container_path="${COG_ALERTS_CONTAINER_PATH:-}"
+    [[ -n "$container_path" ]] || fail 'Set COG_ALERTS_PATH or COG_ALERTS_CONTAINER_PATH from !notifications status.'
+    safe_path "$container_path" || fail 'The configured container path is invalid.'
+    container="${COG_ALERTS_CONTAINER:-redbot}"
+    [[ "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fail 'The configured container name is invalid.'
+    command -v docker >/dev/null || fail 'Docker is required to translate the container path.'
+    mounts="$(timeout --signal=TERM --kill-after=2 10 docker inspect --format '{{json .Mounts}}' "$container")" || fail 'Could not read the configured container mounts.'
+    outbox="$(jq -er --arg path "$container_path" '
+        if type != "array" then error("mounts") else . end
+        | map(select(.Destination | type == "string")
+          | .Destination |= (if . == "/" then . else rtrimstr("/") end)
+          | . as $mount | select(.Destination == "/" or $path == .Destination
+            or ($path | startswith($mount.Destination + "/"))))
+        | sort_by(.Destination | length) | last
+        | if . == null then error("unmounted")
+          elif (.Type != "bind" and .Type != "volume") or (.Source | type != "string")
+            then error("nonpersistent") else
+            (.Source | rtrimstr("/")) +
+            (if .Destination == "/" then $path else $path[(.Destination | length):] end)
+          end
+    ' <<<"$mounts" 2>/dev/null)" || fail 'The configured outbox is not inside a persistent Docker bind or volume mount.'
+fi
+safe_path "$outbox" || fail 'The outbox path must be absolute and must not contain symlinks.'
+[[ -e "$outbox" ]] || exit 0
+[[ -f "$outbox" ]] || fail 'The outbox is not a regular file.'
+
+state_dir="${COG_ALERTS_STATE_DIR:-/mnt/user/appdata/user-scripts-state/notificationplus}"
+safe_path "$state_dir" || fail 'The notification state directory must be absolute and must not contain symlinks.'
+[[ ! -e "$state_dir" || -d "$state_dir" ]] || fail 'The notification state path is not a directory.'
+mkdir -p -- "$state_dir" || fail 'Could not create the notification state directory.'
+[[ "$(stat -c %u -- "$state_dir")" == "$EUID" ]] || fail 'The notification state directory belongs to another user.'
+chmod 700 -- "$state_dir" || fail 'Could not protect notification state.'
+lock="$state_dir/.lock"
+[[ ! -L "$lock" && ( ! -e "$lock" || -f "$lock" ) ]] || fail 'The notification lock path is unsafe.'
+if [[ -e "$lock" ]]; then
+    [[ "$(stat -c %u -- "$lock")" == "$EUID" && "$(stat -c %a -- "$lock")" == 600 ]] || fail 'The notification lock is not privately owned.'
+fi
+exec {lock_fd}>"$lock" || fail 'Could not open the notification lock.'
+flock -n "$lock_fd" || exit 0
+
+snapshot=''
+temporary=''
+cleanup() {
+    [[ -z "$snapshot" ]] || rm -f -- "$snapshot"
+    [[ -z "$temporary" ]] || rm -f -- "$temporary"
+}
+trap cleanup EXIT
+snapshot="$(mktemp "$state_dir/.snapshot.XXXXXX")" || fail 'Could not capture the notification outbox.'
+# Limit actual bytes read, even if the producer changes its file during the read.
+timeout --signal=TERM --kill-after=2 5 dd if="$outbox" of="$snapshot" iflag=nofollow,count_bytes count=131073 status=none || fail 'Could not read the notification outbox.'
+(( $(stat -c %s -- "$snapshot") <= 131072 )) || fail 'The notification outbox exceeds its 128 KiB budget.'
+
+validation='
+    def whole: type == "number" and . >= 0 and . <= 9007199254740991 and . == floor;
+    def stage: type == "string" and test("^[A-Za-z0-9_. -]{1,80}$");
+    def cause: type == "string" and (IN(
+        "Daily YouTube playback check failed. Run audiostatus or audiocheck now.",
+        "Playback failed after automatic recovery. Run audiostatus.",
+        "Notification delivery failed.", "Unexpected command failure.",
+        "Background task failed.", "Test notification requested.")
+        or test("^[A-Za-z0-9_]{1,80}( \\(HTTP [1-5][0-9]{2}\\))?( \\(errno [0-9]{1,4}\\))?$"));
+    def snowflake: type == "string" and test("^[1-9][0-9]{0,19}$")
+        and (length < 20 or . <= "18446744073709551615");
+    def utc: type == "string" and length <= 32
+        and test("^[12][0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?(Z|\\+00:00)$")
+        and (. as $stamp
+          | sub("\\.[0-9]+(Z|\\+00:00)$"; "Z") | sub("\\+00:00$"; "Z")
+          | . as $plain | try ((fromdateiso8601 | strftime("%Y-%m-%dT%H:%M:%SZ")) == $plain) catch false);
+    type == "object" and keys == ["enabled", "events", "producer", "schema", "sequence"]
+    and .schema == 1 and (.schema | type == "number")
+    and (.producer | type == "string" and test("^[a-f0-9]{32}$"))
+    and (.enabled | type == "boolean")
+    and (.sequence | whole)
+    and (.events | type == "array" and length <= 64)
+    and all(.events[];
+      type == "object" and keys == ["at", "cause", "cog", "guild_id", "kind", "seq", "stage"]
+      and (.seq | whole and . > 0) and (.at | utc)
+      and (.cog | IN("AudioPlus", "BackupPlus", "CommunityPlus", "CorePlus", "DashboardPlus",
+        "DownloaderPlus", "EmojiStealerPlus", "ExportPlus", "IntroPlus", "LevelPlus", "LogPlus",
+        "NotificationPlus", "OwoPlus", "PresencePlus", "SettingsHub"))
+      and (.kind | IN("daily", "playback", "command", "test", "notification"))
+      and (.stage | stage) and (.cause | cause)
+      and (.guild_id == null or (.guild_id | snowflake)))
+    and (.events | [.[].seq] == ([.[].seq] | unique | sort))
+    and (.sequence >= ([.events[].seq] | max // 0))
+'
+jq -e "$validation" "$snapshot" >/dev/null 2>&1 || fail 'The notification outbox has an invalid schema or unsafe fields.'
+[[ "$(jq -r .enabled "$snapshot")" == true ]] || exit 0
+
+producer="$(jq -r .producer "$snapshot")"
+cursor="$state_dir/cursor.json"
+previous=0
+if [[ -e "$cursor" || -L "$cursor" ]]; then
+    [[ -f "$cursor" && ! -L "$cursor" ]] || fail 'The notification cursor path is unsafe.'
+    [[ "$(stat -c %u -- "$cursor")" == "$EUID" && "$(stat -c %a -- "$cursor")" == 600 ]] || fail 'The notification cursor is not privately owned.'
+    (( $(stat -c %s -- "$cursor") <= 4096 )) || fail 'The notification cursor exceeds its size budget.'
+    jq -e 'type == "object" and keys == ["producer", "schema", "seq"] and .schema == 1
+      and (.schema | type == "number") and (.producer | type == "string" and test("^[a-f0-9]{32}$"))
+      and (.seq | type == "number" and . >= 0 and . <= 9007199254740991 and . == floor)' "$cursor" >/dev/null 2>&1 || fail 'The notification cursor is invalid; review it before resetting delivery state.'
+    if [[ "$(jq -r .producer "$cursor")" == "$producer" ]]; then
+        previous="$(jq -r .seq "$cursor")"
+    fi
+fi
+
+host_now="$(date -u +%s)" || fail 'Could not read the host UTC clock.'
+[[ "$host_now" =~ ^[0-9]{1,12}$ ]] || fail 'The host UTC clock returned an invalid timestamp.'
+# The bot can stop while an enabled outbox remains on disk. Never mail records
+# beyond the seven-day retention window. Future records remain unacknowledged;
+# retain later sequences too, so a clock skew cannot cause their silent loss.
+batch="$(jq -c --argjson previous "$previous" --argjson now "$host_now" '
+    def epoch: sub("\\.[0-9]+(Z|\\+00:00)$"; "Z") | sub("\\+00:00$"; "Z") | fromdateiso8601;
+    [.events[] | select(.seq > $previous)] as $pending
+    | ([$pending[] | select((.at | epoch) > $now) | .seq] | min) as $future
+    | [$pending[] | select($future == null or .seq < $future)] as $ready
+    | {seq: ($ready[-1].seq // $previous), future: ($future != null),
+        events: [$ready[] | select((.at | epoch) >= ($now - 604800))]}
+  ' "$snapshot")" || fail 'Could not evaluate notification retention.'
+count="$(jq '.events | length' <<<"$batch")"
+latest="$(jq -r .seq <<<"$batch")"
+if (( latest == previous )); then
+    if [[ "$(jq -r .future <<<"$batch")" == true ]]; then
+        printf 'Kevin\047s Cogs notifications: future records retained until the bot and host UTC clocks agree.\n' >&2
+    fi
+    exit 0
+fi
+if (( count > 0 )); then
+details="$(jq -r '
+    .events as $new
+    | ($new[:8] | map(.cog + " | " + .at + " | " + .stage + ": " + .cause
+        + (if .guild_id == null then "" else " | Server " + (.guild_id | tostring) end)))
+      + (if ($new | length) > 8 then ["Plus " + (($new | length) - 8 | tostring)
+          + " additional failures. Run notifications status and check Red logs."] else [] end)
+    | join("\\n")
+  ' <<<"$batch")"
+notify="${NOTIFY_BIN:-/usr/local/emhttp/webGui/scripts/notify}"
+[[ "$notify" == /* && -x "$notify" && -f "$notify" ]] || fail 'The configured Unraid notification program is unavailable.'
+# Pass text as literal arguments, never as shell code. Unraid renders literal \n.
+if ! timeout --signal=TERM --kill-after=2 15 "$notify" -e "Kevin's Cogs" -s "Kevin's Cogs failure" \
+    -d "$count new cog failure(s)." -i alert -m "$details"; then
+    fail 'Unraid did not accept the failure notification; it will retry on the next run.'
+fi
+fi
+
+# This is at-least-once delivery. A crash between notify and cursor persistence
+# may repeat an accepted notification; saving a cursor before notify would lose it.
+temporary="$(mktemp "$state_dir/.cursor.XXXXXX")" || fail 'Could not prepare the notification cursor; delivery may repeat.'
+jq -n --arg producer "$producer" --argjson seq "$latest" '{schema:1,producer:$producer,seq:$seq}' >"$temporary" || fail 'Could not serialize the notification cursor; delivery may repeat.'
+sync -f "$temporary" || fail 'Could not persist the notification cursor; delivery may repeat.'
+mv -f -T -- "$temporary" "$cursor" || fail 'Could not replace the notification cursor; delivery may repeat.'
+temporary=''
+sync -f "$state_dir" || fail 'Could not persist the cursor directory; delivery may repeat.'
+if (( count > 0 )); then
+    printf 'Kevin\047s Cogs notifications: Unraid accepted %s new event(s).\n' "$count"
+else
+    printf 'Kevin\047s Cogs notifications: expired records skipped without sending an alert.\n'
+fi

@@ -204,9 +204,15 @@ class NativeEventBridge:
             ) as error:
                 native["error"] = type(error).__name__
                 await self._native_save(guild, key, native)
-                log.warning(
-                    "Native event sync failed in guild %s (%s)", guild.id, type(error).__name__
-                )
+                if not isinstance(error, commands.CommandError):
+                    log.warning(
+                        "Native event synchronization failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "native_event_sync",
+                            "notification_guild_id": guild.id,
+                        },
+                    )
 
     async def _native_tick(self, guild):
         if self._closing or await self.bot.cog_disabled_in_guild(self, guild):
@@ -227,6 +233,14 @@ class NativeEventBridge:
         try:
             events = await asyncio.wait_for(guild.fetch_scheduled_events(with_counts=False), 10)
         except (discord.HTTPException, asyncio.TimeoutError) as error:
+            log.warning(
+                "Native community event fetch failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "native_event_fetch",
+                    "notification_guild_id": guild.id,
+                },
+            )
             for key in keys:
                 async with self._social_locks[(guild.id, "events", key)]:
                     async with self.config.guild(guild).social() as data:

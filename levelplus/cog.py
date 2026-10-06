@@ -238,8 +238,15 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
                     await member.add_roles(*add, reason="Level milestone rewards")
                 if remove:
                     await member.remove_roles(*remove, reason="Level milestone rewards")
-            except discord.HTTPException:
-                log.debug("Could not synchronize milestone roles", exc_info=True)
+            except discord.HTTPException as error:
+                log.warning(
+                    "Milestone reward role synchronization failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "reward_roles",
+                        "notification_guild_id": member.guild.id,
+                    },
+                )
 
     async def current_level(self, guild, user_id):
         return self._level(await self._get_xp(guild, user_id), await self._settings(guild))
@@ -286,8 +293,15 @@ class LevelPlus(ProgressionCommands, MilestoneCommands, redcommands.Cog):
                     everyone=False, roles=False, users=[member], replied_user=False
                 ),
             )
-        except discord.HTTPException:
-            log.debug("Level-up announcement could not be sent", exc_info=True)
+        except discord.HTTPException as error:
+            log.warning(
+                "Level-up announcement delivery failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "level_up_announcement",
+                    "notification_guild_id": guild.id,
+                },
+            )
 
     def _levelup_card(self, member, level, xp, *, preview=False):
         embed = self._presentation.embed(

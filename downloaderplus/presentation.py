@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from copy import deepcopy
 
 import discord
 from redbot.core import commands
+
+log = logging.getLogger(__name__)
 
 COLORS = {"info": 0x818CF8, "success": 0x34D399, "warning": 0xFBBF24, "error": 0xFB7185}
 LABELS = {
@@ -204,7 +207,21 @@ class Presentation:
             embed.set_footer(text=clip(brand + (" · " + footer if footer else ""), 1900))
         return embed
 
-    async def send(
+    async def send(self, target, content=None, **kwargs):
+        """Keep delivery failures visible to the optional suite notification monitor."""
+        try:
+            return await self._send(target, content, **kwargs)
+        except Exception as error:
+            log.warning(
+                "Notification delivery failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "Notification delivery",
+                },
+            )
+            raise
+
+    async def _send(
         self,
         target,
         content=None,

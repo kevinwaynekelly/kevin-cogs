@@ -81,7 +81,13 @@ class DashboardPlus(commands.Cog):
                     await self._start_server()
                 except (OSError, ValueError) as error:
                     self._error = type(error).__name__
-                    log.warning("Dashboard listener could not start (%s)", self._error)
+                    log.warning(
+                        "Dashboard listener startup failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "dashboard_startup",
+                        },
+                    )
 
     async def cog_unload(self):
         self._closing = True
@@ -209,13 +215,26 @@ class DashboardPlus(commands.Cog):
                 {"error": "This command is disabled or unavailable to you in that channel."},
                 status=403,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as error:
+            log.warning(
+                "Dashboard action timed out",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "dashboard_action",
+                },
+            )
             response = web.json_response(
                 {"error": "The action timed out. Check the player before retrying."}, status=504
             )
         except Exception as error:
             self._error = type(getattr(error, "original", error)).__name__
-            log.warning("Dashboard request failed (%s)", self._error)
+            log.warning(
+                "Dashboard request failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "dashboard_request",
+                },
+            )
             response = web.json_response(
                 {"error": f"Request failed ({self._error}). Check Red's logs."},
                 status=500,

@@ -511,9 +511,12 @@ class BackupPlus(commands.Cog):
             except Exception as error:
                 result["state"], result["error"] = "partial", type(error).__name__
                 log.warning(
-                    "BackupPlus restore stopped in guild %s (%s)",
-                    ctx.guild.id,
-                    type(error).__name__,
+                    "Server backup restore failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "backup_restore",
+                        "notification_guild_id": ctx.guild.id,
+                    },
                 )
             finally:
                 await self._save(ctx.guild, state)
@@ -627,7 +630,13 @@ class BackupPlus(commands.Cog):
             try:
                 await self._automatic_once()
             except Exception as error:
-                log.warning("BackupPlus maintenance interrupted (%s)", type(error).__name__)
+                log.warning(
+                    "Server backup maintenance failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "backup_maintenance",
+                    },
+                )
             self._prune_previews()
             await asyncio.sleep(60)
 
@@ -678,11 +687,15 @@ class BackupPlus(commands.Cog):
                 except Exception as error:
                     state["last_error"] = type(error).__name__
                     await self._save(guild, state)
-                    log.warning(
-                        "BackupPlus automatic snapshot failed in guild %s (%s)",
-                        guild.id,
-                        type(error).__name__,
-                    )
+                    if not isinstance(error, commands.CommandError):
+                        log.warning(
+                            "Automatic server backup failed",
+                            extra={
+                                "notification_error": type(error).__name__,
+                                "notification_stage": "automatic_backup",
+                                "notification_guild_id": guild.id,
+                            },
+                        )
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):

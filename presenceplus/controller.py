@@ -231,7 +231,14 @@ class PresenceController:
             except Exception as error:
                 # Raw errors can include gateway URLs, status text or player metadata.
                 self.last_error = type(error).__name__
-                log.warning("Presence update failed (%s)", self.last_error)
+                log.warning(
+                    "Presence update failed (%s)",
+                    type(error).__name__,
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "presence_update",
+                    },
+                )
             try:
                 await asyncio.wait_for(self.wake.wait(), POLL_SECONDS)
             except asyncio.TimeoutError:
@@ -247,5 +254,12 @@ class PresenceController:
             try:
                 await self.restore(wait=True)
             except Exception as error:
-                log.warning("Presence restore failed (%s)", type(error).__name__)
+                log.warning(
+                    "Presence restore failed (%s)",
+                    type(error).__name__,
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "presence_restore",
+                    },
+                )
         self.baseline = self.last_signature = self.last_display = None

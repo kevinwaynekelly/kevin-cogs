@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import logging
 import re
 import time
 from collections import deque
@@ -12,6 +13,7 @@ import discord
 
 from .presentation import chunks
 
+log = logging.getLogger(__name__)
 FEATURE_DEFAULTS = {"routes": {}, "retry": True}
 CATEGORIES = ("message", "reactions", "server", "invites", "member", "voice", "sched", "commands")
 EVENT_SWITCH = {
@@ -228,11 +230,27 @@ class LogDelivery:
                     else:
                         success = await self._deliver_log(guild, record)
                 except (discord.HTTPException, asyncio.TimeoutError) as error:
+                    log.warning(
+                        "Server log notification retry failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "log_retry",
+                            "notification_guild_id": guild_id,
+                        },
+                    )
                     self._delivery_failed(guild_id, error)
                     if record.retries < 3:
                         continue
                     success = False
-                except Exception:
+                except Exception as error:
+                    log.warning(
+                        "Server log notification retry failed",
+                        extra={
+                            "notification_error": type(error).__name__,
+                            "notification_stage": "log_retry",
+                            "notification_guild_id": guild_id,
+                        },
+                    )
                     self._delivery_status[guild_id]["last_error"] = "Unexpected delivery error"
                     success = False
                 if not success:

@@ -231,8 +231,17 @@ class ExportPlus(commands.Cog):
         embed = self._presentation.apply_theme(embed, bot=self.bot, guild=job.ctx.guild)
         try:
             await asyncio.wait_for(job.progress.edit(embed=embed), 15)
-        except (discord.HTTPException, asyncio.TimeoutError):
+        except discord.NotFound:
             pass
+        except (discord.HTTPException, asyncio.TimeoutError) as error:
+            log.warning(
+                "Chat export progress notification failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "export_progress",
+                    "notification_guild_id": job.guild_id,
+                },
+            )
 
     async def _start(self, ctx, *, scope=None, after=None, before=None, bots=True, threads=True):
         if not self.bot.intents.message_content:
@@ -344,6 +353,15 @@ class ExportPlus(commands.Cog):
             job.state, job.finished = "cancelled", time.time()
             raise
         except (commands.CommandError, discord.HTTPException, asyncio.TimeoutError) as error:
+            if not isinstance(error, commands.CommandError):
+                log.warning(
+                    "Chat export or private delivery failed",
+                    extra={
+                        "notification_error": type(error).__name__,
+                        "notification_stage": "export_delivery",
+                        "notification_guild_id": job.guild_id,
+                    },
+                )
             if job.state == "ready":
                 job.error = f"Private delivery failed ({type(error).__name__}). Use !export download to retry."
             else:
@@ -359,14 +377,28 @@ class ExportPlus(commands.Cog):
             job.error = (
                 f"Export failed ({type(error).__name__}). Check bot disk space and try again."
             )
-            log.warning("ExportPlus failed in guild %s (%s)", job.guild_id, type(error).__name__)
+            log.warning(
+                "Chat export job failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "export_job",
+                    "notification_guild_id": job.guild_id,
+                },
+            )
             await self._notify_failure(job)
 
     async def _notify_failure(self, job):
         try:
             await self._private(job, job.error, tone="warning")
-        except (discord.HTTPException, asyncio.TimeoutError):
-            pass
+        except (discord.HTTPException, asyncio.TimeoutError) as error:
+            log.warning(
+                "Chat export failure notification delivery failed",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "export_failure_notice",
+                    "notification_guild_id": job.guild_id,
+                },
+            )
 
     async def _deliver(self, job, *, part=0, text=False):
         task = asyncio.current_task()
