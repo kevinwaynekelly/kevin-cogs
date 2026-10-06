@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-06: Signed DownloaderPlus webhook updates
+
+- Add owner-only `download webhook` setup/status/enable/disable prefix and slash controls with a persistent, default-off local listener. Validate GitHub HMAC-SHA256 before parsing bounded payloads; accept only pushes to an installed GitHub repository's tracked branch.
+- Refresh all native Downloader repositories and update unpinned installed cogs using Red's parser, global checks, permissions, dependency installer and reload behavior. Coalesce bursts, suppress duplicate deliveries across restart and serialize updates/reloads across DownloaderPlus replacement. Report native dependency/reload failures through NotificationPlus.
+- Keep the generated secret private, export only the configuring owner's relevant settings and cancel/wait old configuration operations before privacy deletion. Exclude secrets, owner/channel IDs, replay cursors, pending flags and update results from settings-only exports.
+- Document TCP 8766 mapping, public HTTPS `/github` forwarding and GitHub push-hook setup. Validate the fifteen-cog slash surface at 91 roots/454 actions. Git/package installation and Discord transport are mocked; no live host endpoint was configured.
+
 ## 2026-10-06: Suite failure notifications through Unraid
 
 - Add independently installable NotificationPlus with owner-only prefix/slash status, enable, disable and test controls. Detect suite warning/error logs, unexpected command/listener exceptions, failed Discord notifications and final AudioPlus playback/daily-check failures while preserving existing replies and failure DMs.

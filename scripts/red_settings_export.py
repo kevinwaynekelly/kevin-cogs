@@ -38,7 +38,8 @@ IDS = List(SCALAR)
 NAMESPACES = {
     "DashboardPlus": "702035014",
     "CorePlus": None,
-    "DownloaderPlus": None,
+    "DownloaderPlus": "702035017",
+    "NotificationPlus": "702035015",
     "AudioPlus": str(0xA10DEFAB),
     "BackupPlus": "702035011",
     "CommunityPlus": str(0xC0DE505),
@@ -56,6 +57,8 @@ NAMESPACES = {
 # policy: several sections mix settings with IDs, histories and scheduler state.
 GUILD = {
     "DashboardPlus": {},
+    "DownloaderPlus": {},
+    "NotificationPlus": {},
     "AudioPlus": {
         "music": fields(
             "panel dj_role vote_skip fair_queue autoplay history max_seconds per_member "
@@ -171,6 +174,8 @@ GUILD = {
 }
 GLOBAL = {
     "DashboardPlus": {"settings": {**fields("enabled bind port url"), "hosts": List(SCALAR)}},
+    "DownloaderPlus": {"webhook": fields("enabled bind port")},
+    "NotificationPlus": fields("enabled"),
     "AudioPlus": {"watchdog": fields("enabled guild_id channel_id video_url hour minute timezone")},
     "PresencePlus": {
         "settings": {

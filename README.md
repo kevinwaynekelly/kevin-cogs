@@ -1,6 +1,6 @@
 # Kevin Cogs
 
-Ten feature cogs, an optional shared settings hub and themed Core/Downloader management and a local web dashboard for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
+Fifteen independently installable cogs for server features, shared settings, Core/Downloader management, a local dashboard and Unraid failure notifications for [Red Discord Bot](https://docs.discord.red/en/stable/), maintained by [Kevin Kelly](https://github.com/kevinwaynekelly).
 
 Music, personal voice entrance clips, saved bot status profiles, community tools, leveling, event logging, message transformations, automatic emoji capture, readable chat exports and server structure backups. Each cog can be installed separately.
 
@@ -19,9 +19,10 @@ Music, personal voice entrance clips, saved bot status profiles, community tools
 | ExportPlus | Privately export accessible server chats, forums and threads into readable ChatGPT files | `[p]export server`, `/export channel`, `[p]export text` | [Setup and commands](exportplus/README.md) |
 | BackupPlus | Named role/channel/permission snapshots, private restore previews and optional automatic backups | `[p]backup create`, `/backup preview`, `[p]backup restore` | [Setup and commands](backupplus/README.md) |
 | SettingsHub | Shared themes, command discovery, diagnostics, configuration history, readiness checks and snapshots | `[p]settings`, `/theme show`, `[p]snapshots` | [Setup and commands](settingshub/README.md) |
-| DownloaderPlus | Themed native Downloader replies and checked owner-only installation, updates and repository controls | `[p]download`, `/download update`, `[p]download repos` | [Setup and commands](downloaderplus/README.md) |
+| DownloaderPlus | Themed installation/repository controls and signed GitHub webhooks that update repos and cogs | `[p]download`, `/download update`, `[p]download repos` | [Setup and commands](downloaderplus/README.md) |
 | DashboardPlus | Private local dashboard for music, explained settings and searchable data from every suite cog | `[p]dashboard start`, `/dashboard login` | [Setup and commands](dashboardplus/README.md) |
 | CorePlus | Category help, `/help`, themed native Core replies and checked bot-management controls | `[p]help`, `/core status`, `[p]core reload` | [Setup and commands](coreplus/README.md) |
+| NotificationPlus | Suite error detection and bounded Unraid alerts using existing email settings | `[p]notifications enable`, `/notifications test` | [Setup and commands](notificationplus/README.md) |
 
 `[p]` means your bot's command prefix. For example, `[p]level show` becomes `!level show` when your prefix is `!`. Angle brackets mark required arguments; do not type the brackets.
 
@@ -39,7 +40,7 @@ Each setup panel offers current-server channel/role pickers or toggles, expires 
 | EmojiStealerPlus | `[p]emoji` or `/emoji status` | Automatic external emoji capture and checked manual `[p]yoink` controls. |
 | OwoPlus | `[p]owo setup` or `/owo setup` | `[p]owooptout`, `[p]owoify <text>`, `[p]stylize <style> <text>`, and `[p]haiku <text>`. Manual transformations leave source messages alone. |
 
-The original five feature cogs expose 312 slash actions; EmojiStealerPlus adds six, ExportPlus adds nine, BackupPlus adds 13, IntroPlus adds 16, PresencePlus adds 24, optional SettingsHub adds 23, CorePlus adds 14, DownloaderPlus adds 19 and DashboardPlus adds ten, for 446 total actions. The fourteen cogs together register 90 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
+The original five feature cogs expose 312 slash actions; EmojiStealerPlus adds six, ExportPlus adds nine, BackupPlus adds 13, IntroPlus adds 16, PresencePlus adds 24, optional SettingsHub adds 23, CorePlus adds 14, DownloaderPlus adds 23, DashboardPlus adds ten and NotificationPlus adds four, for 454 total actions. The fifteen cogs together register 91 roots, within Discord's 100-root limit. These counts are checked against Red's command tree. Enable the desired cogs, reload after updating, and run `slash sync` to publish their definitions to Discord.
 
 ## Shared settings dashboard
 
@@ -58,9 +59,15 @@ Install optional [DashboardPlus](dashboardplus/README.md) for a private browser 
 
 Use `[p]dashboard start` and `[p]dashboard login`; the initial URL is `http://127.0.0.1:8765`. For the Red host at `10.10.1.200`, bind to `0.0.0.0`, publish TCP port `8765`, and save `[p]dashboard url http://10.10.1.200:8765/` so login/status show the correct link. Open [http://10.10.1.200:8765/](http://10.10.1.200:8765/). Listener/start/link settings survive restarts; login codes and sessions stay in bounded memory. No separate frontend service or bot-token input is needed. Changes use existing Red command checks, converters, hooks and validation.
 
+## Failure emails and automatic updates
+
+Install [NotificationPlus](notificationplus/README.md), load it and run `[p]notifications enable`. It records unexpected suite command errors, background failures, failed notifications and AudioPlus playback/check failures. The included [Unraid User Script](notificationplus/unraid/README.md) checks the persistent outbox every minute and submits grouped alerts through Unraid's existing notification/email settings. Matching failures are suppressed for ten minutes; records exclude chat content, member names, media URLs and credentials. Run `[p]notifications test` after host setup to verify delivery. A queued event or successful Unraid submission does not prove email arrival.
+
+[DownloaderPlus webhook setup](downloaderplus/README.md#github-webhook-updates) creates a private signing secret and an optional local listener. A valid push to an installed repository's tracked branch queues updates for all native Downloader repositories and cogs, preserving pins and dependency checks. Expose only the webhook route through a public HTTPS proxy for GitHub delivery. Update failures also reach NotificationPlus; the listener is disabled until configured.
+
 ## Discord presentation
 
-All fourteen cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
+All fifteen cogs share an indigo theme, consistent headings and footers, readable settings, and matching success, warning, and error colors. SettingsHub optionally customizes the server's colors and footer, including live music/poll edits and log delivery retries. Long results are paginated, and replies fall back to text when embeds are unavailable. See the [design and visual preview](docs/PRESENTATION.md).
 
 Optional [CorePlus](coreplus/README.md) replaces `[p]help` with a themed category selector and adds `/help`. It also themes bundled Core/CogManagerUI replies and adds checked `/core` management controls. Red's native commands remain available. Optional [DownloaderPlus](downloaderplus/README.md) themes native repository/cog replies and adds owner-only `/download` controls backed by bundled Downloader. Without CorePlus, native `[p]help` lists descriptions for every cog command. Use `[p]help community`, `[p]help level`, or `[p]help log` to see their subcommands, and append a subcommand for its arguments and details. Cog names such as `[p]help CommunityPlus` also show a category overview.
 

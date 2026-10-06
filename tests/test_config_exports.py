@@ -16,6 +16,8 @@ from settingshub.schema import FIELDS, select_fields
 
 NON_POLICY_GUILD = {
     "DashboardPlus": set(),
+    "DownloaderPlus": set(),
+    "NotificationPlus": set(),
     "AudioPlus": {"playlists", "favorites", "listening_history", "recovery", "server_playlists"},
     "BackupPlus": set(),
     "CommunityPlus": {"social", "voice_rooms"},
@@ -41,6 +43,10 @@ NON_POLICY_GLOBAL = {
     "PresencePlus": {"command_hint_version"},
 }
 NON_POLICY_NESTED = {
+    "DownloaderPlus": tuple(
+        "GLOBAL.webhook." + key
+        for key in ("secret", "owner_id", "channel_id", "pending", "deliveries", "last_result")
+    ),
     "AudioPlus": tuple(
         "GLOBAL.watchdog." + key
         for key in (
@@ -67,7 +73,7 @@ NON_POLICY_NESTED = {
 @pytest.mark.parametrize("name", exporter.NAMESPACES)
 def test_scope_reviews_every_registered_default_and_matches_hub(name, bot, monkeypatch, tmp_path):
     package = name.lower()
-    for module_name in ("introplus", "exportplus"):
+    for module_name in ("introplus", "exportplus", "notificationplus"):
         monkeypatch.setattr(
             f"{module_name}.cog.cog_data_path", lambda cog: tmp_path / type(cog).__name__
         )

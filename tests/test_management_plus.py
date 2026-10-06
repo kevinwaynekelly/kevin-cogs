@@ -439,7 +439,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
         == Path("coreplus/management.py").read_bytes()
     )
     loaded = []
-    for package in ("introplus", "exportplus"):
+    for package in ("introplus", "exportplus", "notificationplus"):
         monkeypatch.setattr(
             f"{package}.cog.cog_data_path", lambda cog: tmp_path / type(cog).__name__
         )
@@ -457,6 +457,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
             ("settingshub", "SettingsHub"),
             ("downloaderplus", "DownloaderPlus"),
             ("dashboardplus", "DashboardPlus"),
+            ("notificationplus", "NotificationPlus"),
         ):
             cog = getattr(importlib.import_module(package), name)(bot)
             await bot.add_cog(cog)
@@ -482,7 +483,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
                     actions += 1
                     if leaf.binding is core:
                         core_actions += 1
-        assert (len(roots), actions, core_actions) == (90, 446, 14)
+        assert (len(roots), actions, core_actions) == (91, 454, 14)
         print(f"{len(roots)} roots / {actions} actions")
     finally:
         for cog in reversed(loaded):

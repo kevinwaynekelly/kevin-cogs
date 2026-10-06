@@ -1,6 +1,6 @@
 # Discord presentation
 
-All eleven cogs use one visual theme for their own command replies, nested command help, input errors, event notices, and direct messages.
+All fifteen cogs use one visual theme for their own command replies, nested command help, input errors, event notices, and direct messages.
 
 Every command and group also has a description for Red's native help formatter. The main help menu lists readable summaries, while help for a group or individual command includes its purpose, syntax, and relevant details.
 
@@ -40,7 +40,7 @@ Custom welcome and goodbye templates keep their text and formatting inside the t
 
 ## Maintaining the theme
 
-Each cog includes identical `presentation.py`, `interactive.py`, and `command_support.py` helpers so Red Downloader can install it independently. Edit the canonical copy in `audioplus`, then copy it to the other ten packages; the consistency test rejects drift. The helper owns colors, heading/footer styling, pagination, fallback text, confirmations, nested help, and input-error formatting. Individual cogs own their screen content and event semantics.
+Each cog includes identical `presentation.py`, `interactive.py`, and `command_support.py` helpers so Red Downloader can install it independently. Edit the canonical copy in `audioplus`, then copy it to the other fourteen packages; the consistency test rejects drift. The helper owns colors, heading/footer styling, pagination, fallback text, confirmations, nested help, and input-error formatting. Individual cogs own their screen content and event semantics.
 
 Regenerate the preview with the development dependencies installed:
 
