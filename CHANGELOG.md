@@ -1,5 +1,9 @@
 # Changelog
 
+## Aria private repository authentication
+
+- Reuse saved host GitHub CLI authentication for standalone migration, self-updates and daily CI checks without exposing tokens to command arguments or the bridge container.
+
 ## Aria bridge 2.0.0
 
 - Expand the bridge with typed host/container commands, version-checked script and file

@@ -43,10 +43,10 @@ final class AriaBridgeUpdater {
     private function save(): void { ariaAtomic($this->path, ariaJson($this->job)); }
     private function phase(string $phase): void { $this->job['phase'] = $phase; $this->save(); }
     private function fail(string $error): void { throw new DomainException($error); }
-    private function command(array $argv, int $limit, string $error, bool $required = true): array {
+    private function command(array $argv, int $limit, string $error, bool $required = true, ?array $environment = null): array {
         $remaining = (int)floor($this->deadline - microtime(true));
         if ($remaining < 1) $this->fail('bridge update deadline exceeded');
-        $result = ariaRun($argv, min($limit, $remaining), $this->source ?: null);
+        $result = ariaRun($argv, min($limit, $remaining), $this->source ?: null, $environment);
         if ($result['exit_code'] !== 0) {
             // Provider output can contain credentials without recognizable
             // labels. Persist fixed command diagnostics, never that raw output.
@@ -57,11 +57,12 @@ final class AriaBridgeUpdater {
         return $result;
     }
     private function git(array $args, string $error = 'git operation failed', int $limit = 30, bool $required = true): array {
+        $auth = ariaGithubAuthentication();
         return $this->command(array_merge([
             ariaPath('ARIA_BRIDGE_UPDATE_GIT', '/usr/bin/git'),
             '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
             '-c', 'submodule.recurse=false', '-C', $this->source,
-        ], $args), $limit, $error, $required);
+        ], ariaGithubGitOptions($auth), $args), $limit, $error, $required, $auth['environment']);
     }
     private function text(array $args, string $error = 'git operation failed'): string {
         $result = $this->git($args, $error);

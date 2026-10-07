@@ -64,7 +64,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 aria_stage="$(mktemp -d "$aria_data/.repository-stage-XXXXXXXX")"
 # The clone uses only the fixed dedicated origin and keeps the old tree intact.
-timeout 180 git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.recurse=false clone --no-recurse-submodules --single-branch --branch main --origin origin "$aria_origin" "$aria_stage/checkout" 6>&-
+timeout 190 php "$aria_source/github-auth.php" git clone --no-recurse-submodules --single-branch --branch main --origin origin "$aria_origin" "$aria_stage/checkout" 6>&-
 aria_new_source="$aria_stage/checkout"
 [[ "$(aria_git -C "$aria_new_source" remote get-url --all origin)" == "$aria_origin" ]] || { aria_error 'Unexpected dedicated repository origin.'; exit 1; }
 [[ "$(aria_git -C "$aria_new_source" symbolic-ref --quiet --short HEAD)" == main ]] || { aria_error 'The dedicated repository must use main.'; exit 1; }

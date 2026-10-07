@@ -48,6 +48,7 @@ aria_preflight() {
     }
     php -l "$aria_source/host-agent.php" >/dev/null || return 1
     php -l "$aria_source/bridge-update.php" >/dev/null || return 1
+    [[ -f "$aria_source/github-auth.php" ]] && php -l "$aria_source/github-auth.php" >/dev/null || { aria_error 'The GitHub authentication helper is missing or invalid.'; return 1; }
     local aria_module
     for aria_module in extensions operations diagnostics applications deployment automation; do
         [[ -f "$aria_source/host-$aria_module.php" ]] || { aria_error "Missing host module: $aria_module"; return 1; }

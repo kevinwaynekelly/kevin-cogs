@@ -115,8 +115,9 @@ def migration(tmp_path):
             shutil.copyfile(BRIDGE / name, bridge / name)
         with (bridge / "unraid-common.sh").open("a") as stream:
             stream.write("\naria_preflight() { :; }\n")
-        for name in ("host-agent.php", "bridge-update.php"):
-            (bridge / name).write_text("<?php // Isolated host boundary.\n")
+        for name in ("host-agent.php", "host-extensions.php", "github-auth.php"):
+            shutil.copyfile(BRIDGE / name, bridge / name)
+        (bridge / "bridge-update.php").write_text("<?php // Isolated host boundary.\n")
         (bridge / "host-service.sh").write_text(
             "#!/bin/bash\nset -euo pipefail\n"
             f'printf "{version} %s\\n" "$1" >> "$ARIA_TEST_SERVICES"\n'
@@ -177,6 +178,9 @@ def migration(tmp_path):
         **os.environ,
         "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
         "ARIA_APPDATA_ROOT": str(data),
+        "ARIA_AGENT_TEST_MODE": "1",
+        "ARIA_GITHUB_GIT": str(binaries / "git"),
+        "ARIA_GITHUB_CLI": "",
         "ARIA_TEST_REMOTE": str(remote),
         "ARIA_TEST_REAL_GIT": git,
         "ARIA_TEST_DOCKER": str(docker_path),

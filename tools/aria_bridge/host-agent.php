@@ -13,6 +13,7 @@
  */
 declare(strict_types=1);
 require_once __DIR__.'/host-extensions.php';
+require_once __DIR__.'/github-auth.php';
 
 const ARIA_MAX_INPUT = 1048576;
 const ARIA_MAX_XML = 131072;
@@ -196,11 +197,11 @@ function ariaScrub(string $text, array $secrets = [], int $limit = ARIA_MAX_OUTP
     $text = preg_replace('/((?:password|passwd|token|secret|api[_-]?key|authorization)\s*[=:]\s*)[^\s,;]+/i', '$1[REDACTED]', $text);
     return substr((string)$text, -$limit);
 }
-function ariaRun(array $argv, int $seconds = 30, ?string $cwd = null): array {
+function ariaRun(array $argv, int $seconds = 30, ?string $cwd = null, ?array $environment = null): array {
     $timeout = ariaPath('ARIA_AGENT_TIMEOUT', '/usr/bin/timeout');
     $command = array_merge([$timeout, '--signal=TERM', '--kill-after=5', (string)$seconds], $argv);
     $pipes = [];
-    $process = proc_open($command, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $cwd, null, ['bypass_shell' => true]);
+    $process = proc_open($command, [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $cwd, $environment, ['bypass_shell' => true]);
     if (!is_resource($process)) ariaFail('command failed');
     $initial = proc_get_status($process);
     $processId = $initial['pid'];

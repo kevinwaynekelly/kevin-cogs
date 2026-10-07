@@ -8,7 +8,18 @@ and its tests, rather than the Discord cogs.
 
 ## Migrate an existing installation
 
-Publish the dedicated repository before running the migration. From the clean
+The dedicated repository is private. The bridge reuses the installed GitHub CLI
+at `/mnt/user/appdata/github-cli/bin/gh` (or `/usr/bin/gh`) and its saved login.
+It reads literal `GH_CONFIG_DIR` and `GITHUB_TOKEN` assignments from the existing
+root-private `/boot/config/plugins/user.scripts/credentials.conf`, when present.
+It never sources that file as shell code. Tokens stay in child-process environment
+variables, outside Git URLs, command arguments, the bridge container and job results.
+The saved login needs read access to this repository's contents and Checks API.
+Daily checks use authenticated `gh api`; failed authentication defers updates.
+An existing Git helper or SSH login can still authenticate Git when the CLI is
+unavailable, but private CI verification requires the CLI's saved login.
+
+From the clean
 original `kevin-cogs` checkout on Aria, run:
 
 ```bash
@@ -36,7 +47,7 @@ use:
 
 ```bash
 cd /mnt/user/appdata/aria-gpt-bridge/source-standalone
-git pull --ff-only
+php tools/aria_bridge/github-auth.php git pull --ff-only
 bash tools/aria_bridge/upgrade-unraid.sh
 ```
 

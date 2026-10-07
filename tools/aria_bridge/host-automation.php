@@ -224,7 +224,8 @@ function ariaAutomationIdle(string $state): bool {
     return true;
 }
 function ariaAutomationGit(string $source, array $args): array {
-    return ariaRun(array_merge([ariaPath('ARIA_AUTOMATION_GIT', '/usr/bin/git'), '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', '-C', $source], $args), 120);
+    $auth = ariaGithubAuthentication();
+    return ariaRun(array_merge([ariaPath('ARIA_AUTOMATION_GIT', '/usr/bin/git'), '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false'], ariaGithubGitOptions($auth), ['-C', $source], $args), 120, null, $auth['environment']);
 }
 function ariaAutomationGuard(string $state, string $id, string $revision, callable $effect): ?array {
     // Schedule edits and queue submissions share this lock. Network checks run
@@ -263,8 +264,8 @@ function ariaAutomationBridgeCheck(string $state, bool $install, ?array $schedul
             $result['bridge_changed'] = $changed !== '';
             if ($changed === '') $result['status'] = 'no_bridge_changes';
             else {
-                // No token is exposed to the bridge. Private-repository API failures defer installation.
-                $response = ariaRun([ariaPath('ARIA_AUTOMATION_CURL', '/usr/bin/curl'), '--fail', '--silent', '--show-error', '--max-time', '30', '--max-filesize', '524288', '--proto', '=https', '--header', 'Accept: application/vnd.github+json', '--header', 'User-Agent: aria-bridge-updater', "https://api.github.com/repos/$repository/commits/$target/check-runs?per_page=100"], 40);
+                // Saved authentication stays on the host and outside command arguments.
+                $response = ariaGithubChecks($repository, $target);
                 if ($response['exit_code'] !== 0 || $response['truncated']) ariaFail('command failed');
                 $checks = json_decode($response['output'], true);
                 if (!is_array($checks) || !isset($checks['check_runs']) || !is_array($checks['check_runs']) || ($checks['total_count'] ?? 101) > 100) ariaFail('command failed');
