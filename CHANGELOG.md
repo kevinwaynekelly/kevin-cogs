@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-07: Fix the Aria management image build
+
+- Include `management.py` in the bridge's Docker build-context allowlist so the management upgrade can build. Add a regression check that every literal Dockerfile `COPY` source exists and survives the context's ignore rules. A failed image build leaves the existing bridge and host services unchanged.
+
 ## 2026-10-07: Aria container, template and User Scripts management
 
 - Extend the bridge with typed tools for container inspection, logs, lifecycle actions and image updates; native Unraid template listing, editing and deployment; and installed User Scripts inspection and execution. Keep the original metrics and Red tools compatible and use live container summaries when the host agent is configured.

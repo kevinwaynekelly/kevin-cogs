@@ -1,7 +1,9 @@
 """Exercise host upgrades with a stateful fake Docker, never a live daemon."""
 
+import fnmatch
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -234,6 +236,29 @@ def test_container_image_includes_management_module():
     assert "COPY server.py management.py entrypoint.sh ./" in dockerfile
     assert "management.request" in dockerfile
     assert "docker.sock" not in dockerfile
+
+
+def test_all_docker_copy_sources_are_in_build_context():
+    # This context uses a flat deny-all allowlist. Test the actual COPY inputs,
+    # so adding a runtime file cannot silently leave it out of Docker's context.
+    rules = [
+        line.strip()
+        for line in (BRIDGE / ".dockerignore").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert rules[0] == "*"
+    sources = []
+    for line in (BRIDGE / "Dockerfile").read_text().splitlines():
+        if line.startswith("COPY "):
+            sources.extend(shlex.split(line)[1:-1])
+    assert sources
+    for source in sources:
+        assert (BRIDGE / source).is_file(), f"Missing COPY source: {source}"
+        included = True
+        for rule in rules:
+            if fnmatch.fnmatchcase(source, rule.removeprefix("!")):
+                included = rule.startswith("!")
+        assert included, f"Docker COPY source excluded by .dockerignore: {source}"
 
 
 def test_service_shutdown_terminates_timeout_group_and_prevents_duplicates(tmp_path):

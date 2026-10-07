@@ -2,4 +2,5 @@
 !Dockerfile
 !install_tunnel.py
 !server.py
+!management.py
 !entrypoint.sh
