@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-07: Fix live Aria container listings with large metadata
+
+- Request only the six container summary fields from Docker before capturing output, preventing unused labels and other metadata from exceeding the host agent's 64 KiB command-output limit. Preserve JSON escaping and reject truncated summaries. Add regression coverage for 66 containers with oversized metadata and escaped summary values.
+
 ## 2026-10-07: Fix the Aria management image build
 
 - Include `management.py` in the bridge's Docker build-context allowlist so the management upgrade can build. Add a regression check that every literal Dockerfile `COPY` source exists and survives the context's ignore rules. A failed image build leaves the existing bridge and host services unchanged.

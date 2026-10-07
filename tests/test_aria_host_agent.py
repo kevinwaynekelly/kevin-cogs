@@ -42,7 +42,7 @@ try {
 """
 
 FAKE_DOCKER = r"""#!/usr/bin/env python3
-import hashlib, json, os, sys
+import hashlib, json, os, re, sys
 from pathlib import Path
 path = Path(os.environ['ARIA_FAKE_DOCKER_STATE'])
 state = json.loads(path.read_text())
@@ -70,9 +70,13 @@ if action == 'inspect':
     if name not in containers: missing()
     print(json.dumps([containers[name]]))
 elif action == 'ps':
+    template = args[args.index('--format') + 1]
     for name, item in containers.items():
-        print(json.dumps({'ID': item['Id'][:12], 'Names': name, 'Image': item['Config']['Image'],
-                          'State': item['State']['Status'], 'Status': item['State']['Status']}))
+        row = {'ID': item['Id'][:12], 'Names': name, 'Image': item['Config']['Image'],
+               'State': item['State']['Status'], 'Status': item['State']['Status'], 'Ports': '',
+               **item.get('PsFields', {})}
+        if template == '{{json .}}': print(json.dumps(row))
+        else: print(re.sub(r'{{json \.(\w+)}}', lambda m: json.dumps(row[m[1]]), template))
 elif action == 'pull':
     if state.get('fail_pull'): fail()
     if state.get('replace_during_pull'):
@@ -225,6 +229,49 @@ def agent(tmp_path):
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("status", ["Up 2 hours (healthy)", 'Up "quoted"\\value\nnext line'])
+def test_container_listing_omits_large_unused_fields_before_capture(agent, status):
+    original = json.loads(agent.docker_state.read_text())["containers"]["app"]
+    containers = {
+        f"app-{number}": {
+            **original,
+            "Id": hashlib.sha256(str(number).encode()).hexdigest(),
+            "PsFields": {"Labels": "private-label=" + "x" * 1200, "Status": status},
+        }
+        for number in range(66)
+    }
+    agent.change_state(containers=containers)
+    full = subprocess.run(
+        [agent.env["ARIA_AGENT_DOCKER"], "ps", "-a", "--format", "{{json .}}"],
+        env=agent.env,
+        capture_output=True,
+        check=True,
+    )
+    assert len(full.stdout) > 65536
+    response = agent.request("containers")
+    assert response["ok"], response
+    rows = response["result"]["containers"]
+    assert {row["Names"] for row in rows} == set(containers)
+    assert len(rows) == 66
+    for row in rows:
+        item = containers[row["Names"]]
+        assert row == {
+            "ID": item["Id"][:12],
+            "Names": row["Names"],
+            "Image": original["Config"]["Image"],
+            "State": "running",
+            "Status": status,
+            "Ports": "",
+        }
+
+
+def test_container_listing_rejects_truncated_projected_output(agent):
+    containers = json.loads(agent.docker_state.read_text())["containers"]
+    containers["app"]["PsFields"] = {"Status": "x" * 70000}
+    agent.change_state(containers=containers)
+    assert agent.request("containers") == {"ok": False, "error": "command failed"}
 
 
 def test_template_redaction_roundtrip_preserves_ampersands_and_backup(agent):

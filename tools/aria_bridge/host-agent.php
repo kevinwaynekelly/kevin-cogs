@@ -244,7 +244,9 @@ function ariaInspect(string $name, bool $required = true): ?array {
     return $value[0];
 }
 function ariaContainers(): array {
-    $r = ariaDocker(['ps', '-a', '--format', '{{json .}}']);
+    // Project before capture so unused labels and metadata do not exhaust the output limit.
+    $format = '{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},"State":{{json .State}},"Status":{{json .Status}},"Ports":{{json .Ports}}}';
+    $r = ariaDocker(['ps', '-a', '--format', $format]);
     if ($r['truncated']) ariaFail('command failed');
     $rows = [];
     foreach (explode("\n", trim($r['output'])) as $line) {
