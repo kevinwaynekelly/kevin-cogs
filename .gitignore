@@ -31,3 +31,6 @@ Thumbs.db
 
 # Private operational failure handoff, not source code.
 **/alerts/unraid.json
+
+# Unraid FUSE retains unlinked files while old bridge processes have them open.
+/tools/aria_bridge/.fuse_hidden*
