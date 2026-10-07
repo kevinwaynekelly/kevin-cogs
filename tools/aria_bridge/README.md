@@ -2,14 +2,30 @@
 
 Connect ChatGPT to the Unraid host at `10.10.1.200` through an outbound OpenAI Secure MCP Tunnel. This is a separate Docker service, not a Red cog. It opens no public port and does not require Pushover, a Discord webhook or a public reverse proxy.
 
+## Enable container, template and User Scripts management
+
+For an existing Aria installation, run this in the **Unraid host terminal**:
+
+```bash
+cd /mnt/user/appdata/aria-gpt-bridge/source
+git pull --ff-only
+bash tools/aria_bridge/upgrade-unraid.sh
+```
+
+The upgrade reuses the existing tunnel ID and credential files. It installs a local host service, builds the bridge, and replaces the bridge container. It does not update your other containers or execute your installed User Scripts. After it succeeds, refresh the Aria plugin's available tools in ChatGPT, or reconnect the plugin if its tool list is cached. Ask **“Check Aria's management capabilities.”** to verify the host service is reachable before requesting changes.
+
+Management runs through a private Unix socket. The tunnel container stays unprivileged and has no Docker socket or public listener. The local service runs as root because Unraid container deployment, flash templates and User Scripts require host access. Enabling it gives the connected tunnel/workspace administrator-level management authority. Access follows the existing tunnel permissions.
+
+See [MANAGEMENT.md](MANAGEMENT.md) for tool arguments, job tracking, template editing, update behavior, deployment and recovery limits.
+
 | GPT tool | Behavior |
 | --- | --- |
 | `aria_status` | Read host uptime, load, available memory and Unraid version. |
-| `aria_containers` | Read container names, images and states from a small host-generated snapshot; report its age and whether it is stale. |
+| `aria_containers` | Read live container summaries when host management is configured; otherwise read the host-generated snapshot and report its age. |
 | `aria_update_red` | Ask DownloaderPlus to refresh all repos, update unpinned cogs, reload changed loaded cogs and sync enabled slash commands. |
 | `aria_red_update_status` | Check whether an update is queued and the latest update result. |
 
-An accepted update is queued work, not a completed update. GPT must check its result. If an update request times out, check status before retrying. These tools do not accept shell commands, paths, URLs or container names as arguments.
+An accepted update is queued work, not a completed update. GPT must check its result. If an update request times out, check status before retrying. These four original tools accept no arguments. The additional management tools use typed container names, template filenames, installed script names and job IDs. They do not expose an arbitrary host shell endpoint.
 
 ## 1. Create the account connection
 
@@ -48,9 +64,9 @@ cd /mnt/user/appdata/aria-gpt-bridge/source
 bash tools/aria_bridge/run-unraid.sh tunnel_YOUR_ID
 ```
 
-Replace `tunnel_YOUR_ID` with the ID from step 1. The script privately prompts for the runtime key and Red update token, writes protected credential files, takes an initial container snapshot, builds the image and starts `aria-gpt-bridge`. Existing nonempty credential files are reused. It requires Docker, `jq`, `timeout` and Bash on the Unraid host.
+Replace `tunnel_YOUR_ID` with the ID from step 1. The script privately prompts for the runtime key and Red update token, writes protected credential files, takes an initial container snapshot, builds the image, installs the local management service and starts `aria-gpt-bridge`. Existing nonempty credential files are reused. It requires Unraid's Docker, native PHP with SimpleXML, `jq`, `timeout`, `flock` and Bash.
 
-The image uses Python 3.11 and the SHA256-verified official `tunnel-client` **v0.0.16** Linux AMD64 archive. Runtime UID/GID is `65532:65532`. It has a read-only root filesystem, no Docker socket, no published ports, limited memory/processes/log size and an `unless-stopped` restart policy. Docker on Unraid must be enabled after boot for the container to restart. No startup package download is required.
+The image uses Python 3.11 and the SHA256-verified official `tunnel-client` **v0.0.16** Linux AMD64 archive. Runtime UID/GID is `65532:65532`. It has a read-only root filesystem, no Docker socket, no published ports, limited memory/processes/log size and an `unless-stopped` restart policy. The private host-management socket is mounted separately. Docker on Unraid must be enabled after boot for the container to restart. No startup package download is required.
 
 Check startup:
 
@@ -59,9 +75,11 @@ docker logs --tail 50 aria-gpt-bridge
 docker inspect --format '{{.State.Status}} / {{.State.Health.Status}}' aria-gpt-bridge
 ```
 
-Wait for `running / healthy`. Health checks test tunnel readiness; they do not prove that Red or the snapshot is usable. Tool calls in step 5 check those separately.
+Wait for `running / healthy`. Container health checks test tunnel readiness and, when configured, host-agent connectivity. They do not prove that Red updates or a particular container operation succeed. Check `aria_management_capabilities` and the tool calls in step 5 separately.
 
-## 4. Refresh container status
+## 4. Refresh fallback container status
+
+Management-enabled installations list containers live. The snapshot below remains useful for snapshot-only deployments or after management is deliberately disabled.
 
 The [Unraid User Scripts repository](https://github.com/kevinwaynekelly/unraid-userscripts) includes the standalone job `1_aria_gpt_container_status`. Install it by running your existing `3_pull_github_repo` job, or run this in the Unraid host terminal:
 
@@ -89,24 +107,29 @@ The bridge must keep running for these calls. Use **one active bridge per tunnel
 
 ## Upgrade, stop and revoke
 
-To upgrade the bridge code, update the checkout and build successfully before stopping the old container:
+To upgrade the bridge code, use the installer that preserves the existing connection and builds successfully before stopping the old container:
 
 ```bash
 cd /mnt/user/appdata/aria-gpt-bridge/source
 git pull --ff-only
-docker build --pull -t aria-gpt-bridge:v1 tools/aria_bridge
-docker stop aria-gpt-bridge
-docker rm aria-gpt-bridge
-bash tools/aria_bridge/run-unraid.sh tunnel_YOUR_ID
+bash tools/aria_bridge/upgrade-unraid.sh
 ```
 
-The installer reuses credentials and recreates the container with the current settings. It rebuilds the image using Docker's cache. To stop access temporarily, run `docker stop aria-gpt-bridge`. Revoke the runtime key or disable the tunnel in Platform to revoke account access. Disable Red updates separately with `!download webhook disable`.
+The installer reuses credentials and recreates the container with the current settings. It rebuilds the image using Docker's cache and retains the previous bridge until the replacement is healthy. To stop access temporarily, run `docker stop aria-gpt-bridge`. Revoke the runtime key or disable the tunnel in Platform to revoke account access. Disable Red updates separately with `!download webhook disable`. See [MANAGEMENT.md](MANAGEMENT.md) for stopping or removing the native host service.
 
 If Red credentials change, replace `secrets/red_update_token` locally, retain owner `65532:65532` and mode `0400`, then **recreate** the container. Recreating also picks up atomically replaced file bind mounts. Do not run another `webhook setup` unless you intend to rotate its credentials.
 
 ## Compose alternative and configuration
 
 `compose.yaml` provides the same service for hosts with Docker Compose. Use it instead of the installer, not alongside it. Copy `.env.example` to `.env`, supply the tunnel ID, create the two secret files and initial snapshot, then run `docker compose up -d --build` from this directory. The secret files must be readable by UID `65532` and should have mode `0400`. Their directory may remain root-only because the files are mounted individually.
+
+The base Compose file uses snapshot-only access. To enable management, start the native host service and install its boot hook, then include the management override:
+
+```bash
+bash host-service.sh start
+bash host-service.sh install-boot
+docker compose -f compose.yaml -f compose.management.yaml up -d --build
+```
 
 | Setting | Default |
 | --- | --- |
@@ -115,9 +138,10 @@ If Red credentials change, replace `secrets/red_update_token` locally, retain ow
 | `ARIA_RED_TOKEN_FILE` | `/run/secrets/red_update_token` |
 | `ARIA_HOST_ROOT` | `/host` |
 | `ARIA_DOCKER_SNAPSHOT_FILE` | `/status/containers.json` in deployment |
+| `ARIA_AGENT_SOCKET` | Empty for snapshot-only access; `/run/aria-agent/agent.sock` for management |
 | `ARIA_APPDATA_ROOT` | `/mnt/user/appdata/aria-gpt-bridge` for host scripts |
 
-Only the three selected `/proc` files and Unraid version file are mounted from the host. The stdio server can alternatively query a locally configured `ARIA_DOCKER_SOCKET` through one fixed read endpoint, but neither supplied deployment mounts a socket. A Docker socket mounted `:ro` still permits Docker API writes; use the snapshot deployment for ordinary use.
+Read-only metrics use only the three selected `/proc` files and the Unraid version file. Management adds the private host-service socket directory. Neither deployment mounts the Docker socket. The stdio server can alternatively query an administrator-configured `ARIA_DOCKER_SOCKET` through one fixed read endpoint, but that is not used by the supplied deployments. A Docker socket mounted `:ro` still permits Docker API writes.
 
 For a different appdata path, set `ARIA_APPDATA_ROOT` consistently for the installer and scheduled exporter. For another Red address, set `ARIA_RED_URL` when creating the container. Secrets are never command arguments, repository files, tool results or arbitrary provider error text. The tunnel client's health endpoint stays on container loopback at port 8080.
 

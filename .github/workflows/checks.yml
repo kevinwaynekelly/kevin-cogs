@@ -25,8 +25,8 @@ jobs:
         with:
           node-version: "22"
           package-manager-cache: false
-      - name: Install local audio dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libopus0
+      - name: Install local test dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libopus0 php-cli php-xml jq
       - name: Install test dependencies
         run: python -m pip install -r requirements-dev.txt
       - name: Lint and formatting

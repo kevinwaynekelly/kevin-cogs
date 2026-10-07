@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07: Aria container, template and User Scripts management
+
+- Extend the bridge with typed tools for container inspection, logs, lifecycle actions and image updates; native Unraid template listing, editing and deployment; and installed User Scripts inspection and execution. Keep the original metrics and Red tools compatible and use live container summaries when the host agent is configured.
+- Add a native PHP host service over a private Unix socket, durable serialized jobs, request deduplication, version checks, template backups, bounded commands/output and container rollback. Keep the outbound tunnel container unprivileged, without a Docker socket or published ports.
+- Add an upgrade command that reuses the running bridge's tunnel identity, endpoint and credential mounts, builds before replacing it, and restores the old bridge container if startup fails. Document the required host activation and plugin tool refresh; publishing the code does not activate management on an existing server.
+- Exercise the bridge, host operations and installation through local protocol/filesystem tests and mocked Docker/Unraid boundaries. Live Unraid deployment and application-level health still require verification on Aria.
+
 ## 2026-10-07: Private GPT bridge for Aria
 
 - Add a standalone, dependency-free stdio MCP server with four fixed tools for host metrics, bounded container status, DownloaderPlus update requests and update status. Support modern per-request discovery and legacy initialization, bounded I/O, file-based credentials, fixed HTTP endpoints, no redirects and no automatic mutation retries.
