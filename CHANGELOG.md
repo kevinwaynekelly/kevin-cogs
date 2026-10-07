@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07: Private GPT bridge for Aria
+
+- Add a standalone, dependency-free stdio MCP server with four fixed tools for host metrics, bounded container status, DownloaderPlus update requests and update status. Support modern per-request discovery and legacy initialization, bounded I/O, file-based credentials, fixed HTTP endpoints, no redirects and no automatic mutation retries.
+- Package an outbound OpenAI Secure MCP Tunnel deployment for Unraid with a pinned, SHA256-verified v0.0.16 client, rootless read-only container, automatic restart, loopback health checks and bounded resources/logs. Keep API keys and the Red trigger token outside the repository.
+- Supply a host installer, Compose alternative and atomic container-snapshot exporter for User Scripts. Mount only selected metrics and snapshots; the default deployment has no Docker socket or published port. Report snapshot age/staleness and distinguish queued updates from completion.
+- Validate 1,512 tests on Python 3.10 and 3.11, with two Unix-socket tests skipped because the runner denies AF_UNIX. Real local HTTP, stdio and snapshot tests pass; Docker image build and live tunnel/Unraid activation require the host and account setup in the guide.
+
 ## 2026-10-07: Discord webhook update trigger
 
 - Add owner-only `download discord` status/enable/disable prefix and slash controls for an existing incoming Discord webhook. Validate the webhook's server/channel, bot permissions and message intents before binding. No public Red listener or inbound port is needed.

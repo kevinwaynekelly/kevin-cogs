@@ -1,0 +1,73 @@
+services:
+  aria-gpt-bridge:
+    image: aria-gpt-bridge:v1
+    build: .
+    platform: linux/amd64
+    container_name: aria-gpt-bridge
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=1777
+    environment:
+      CONTROL_PLANE_TUNNEL_ID: ${CONTROL_PLANE_TUNNEL_ID:?Set your OpenAI tunnel ID}
+      ARIA_RED_URL: ${ARIA_RED_URL:-http://10.10.1.200:8766}
+      ARIA_RED_TOKEN_FILE: /run/secrets/red_update_token
+      ARIA_HOST_ROOT: /host
+      ARIA_DOCKER_SNAPSHOT_FILE: /status/containers.json
+    volumes:
+      - type: bind
+        source: ${ARIA_SECRET_DIR:-/mnt/user/appdata/aria-gpt-bridge/secrets}/control-plane-api-key
+        target: /run/secrets/control-plane-api-key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ARIA_SECRET_DIR:-/mnt/user/appdata/aria-gpt-bridge/secrets}/red_update_token
+        target: /run/secrets/red_update_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /proc/uptime
+        target: /host/proc/uptime
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /proc/loadavg
+        target: /host/proc/loadavg
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /proc/meminfo
+        target: /host/proc/meminfo
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/unraid-version
+        target: /host/etc/unraid-version
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ARIA_STATUS_DIR:-/mnt/user/appdata/aria-gpt-bridge/status}
+        target: /status
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
