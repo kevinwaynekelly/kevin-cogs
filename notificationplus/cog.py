@@ -163,7 +163,7 @@ class NotificationPlus(commands.Cog):
             f"**Dropped busy log events** · {self._handler.dropped if self._handler else 0}",
             f"**Dropped busy direct reports** · {self._direct_dropped}",
             "Run Aria's 3_pull_github_repo, then schedule 1_cog_failure_alerts every minute "
-            "and enable Alert email notifications. The bridge discovers redbot:/data; "
+            "and enable Alert email notifications. The bridge discovers red-discordbot:/data; "
             "use the outbox path above for a custom layout. "
             "A queued alert does not confirm host processing or email delivery.",
         ]

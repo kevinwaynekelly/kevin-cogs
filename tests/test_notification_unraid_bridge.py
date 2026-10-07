@@ -315,7 +315,7 @@ def test_real_bridge_uses_the_longest_persistent_docker_mount(bridge):
     docker.write_text(
         f"#!{sys.executable}\n"
         "import json, os, sys\n"
-        "assert sys.argv[1:] == ['inspect', '--format', '{{json .Mounts}}', 'redbot']\n"
+        "assert sys.argv[1:] == ['inspect', '--format', '{{json .Mounts}}', 'red-discordbot']\n"
         "print(os.environ['FAKE_MOUNTS'])\n"
     )
     docker.chmod(0o700)
@@ -463,7 +463,7 @@ def discovery(bridge, *, mounts=None, relative="instance"):
     docker = bridge.binaries / "docker"
     docker.write_text(
         f"#!{sys.executable}\nimport json, os, sys\n"
-        "assert sys.argv[1:] == ['inspect', '--format', '{{json .Mounts}}', 'redbot']\n"
+        "assert sys.argv[1:] == ['inspect', '--format', '{{json .Mounts}}', 'red-discordbot']\n"
         "print(os.environ['FAKE_MOUNTS'])\n"
     )
     docker.chmod(0o700)

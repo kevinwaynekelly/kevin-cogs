@@ -17,7 +17,7 @@ email account or host shell access is needed inside Redbot.
 
 On Aria, run the existing `3_pull_github_repo` User Script to install
 `1_cog_failure_alerts`, then schedule that job every minute (`* * * * *`). It
-automatically discovers a standard `redbot:/data` outbox and uses the existing
+automatically discovers a standard `red-discordbot:/data` outbox and uses the existing
 Unraid Alert email/agent settings. No manual bridge copy is needed.
 
 `notifications` shows the exact **container outbox** path for custom layouts or

@@ -33,7 +33,7 @@ Run it once manually. Future bridge updates arrive through that same updater;
 no `docker cp`, separate bridge file or wrapper is needed for this installation.
 New jobs start unscheduled and existing schedules/settings are preserved.
 
-The default discovers one NotificationPlus outbox in the persistent `redbot:/data`
+The default discovers one NotificationPlus outbox in the persistent `red-discordbot:/data`
 mount, directly under `cogs/NotificationPlus/alerts/unraid.json` or one/two
 instance directories below it. Existing `maintenance.conf` files need no new
 settings for that layout. No Config contents or container environment are read.
@@ -41,6 +41,11 @@ For another container/data root set `COG_ALERTS_CONTAINER`/`COG_ALERTS_DATA_PATH
 in `/boot/config/plugins/user.scripts/maintenance.conf`. With multiple instances,
 nested mounts or a custom layout, set `COG_ALERTS_CONTAINER_PATH` to the exact
 **Container outbox** from `!notifications`, or `COG_ALERTS_PATH` to its host path.
+If an earlier setup saved `COG_ALERTS_CONTAINER="redbot"`, change it to
+`COG_ALERTS_CONTAINER="red-discordbot"` in the shared `maintenance.conf`; the
+repository updater preserves existing settings. The name must exactly match
+the Docker container, not its image or appdata directory name.
+
 Preview sends nothing and leaves delivery cursors untouched. Host job failures
 use Aria's existing failure/cooldown/recovery notifications.
 
@@ -54,11 +59,11 @@ In **Settings → User Scripts**, add a script called `1_cog_failure_alerts`.
 In the Unraid terminal, copy the bridge from the installed cog:
 
 ```sh
-docker cp redbot:/data/cogs/CogManager/cogs/notificationplus/unraid/script \
+docker cp red-discordbot:/data/cogs/CogManager/cogs/notificationplus/unraid/script \
   /boot/config/plugins/user.scripts/scripts/1_cog_failure_alerts/bridge
 ```
 
-Replace `redbot` with your actual container name. The source above is the usual
+Replace `red-discordbot` with your actual container name. The source above is the usual
 installed-source location; adjust it if your Red instance installs cogs elsewhere.
 This is the cog's source file, separate from the status message's data outbox path.
 
@@ -66,7 +71,7 @@ Edit the User Script to contain:
 
 ```bash
 #!/bin/bash
-export COG_ALERTS_CONTAINER=redbot
+export COG_ALERTS_CONTAINER=red-discordbot
 export COG_ALERTS_CONTAINER_PATH='/paste/the/exact/Container-outbox/path/here'
 exec bash /boot/config/plugins/user.scripts/scripts/1_cog_failure_alerts/bridge
 ```

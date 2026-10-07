@@ -12,12 +12,12 @@ if [[ "${1:-}" == --help ]]; then
     cat <<'HELP'
 Kevin's Cogs Unraid notification bridge
 
-By default, discover one NotificationPlus outbox under redbot:/data.
+By default, discover one NotificationPlus outbox under red-discordbot:/data.
 Set COG_ALERTS_DATA_PATH for another container data root. Multiple instances
 require an exact COG_ALERTS_PATH (host) or COG_ALERTS_CONTAINER_PATH override.
 Set COG_ALERTS_PATH to the host path shown by the NotificationPlus setup guide.
 Alternatively set COG_ALERTS_CONTAINER_PATH to the exact container path from
-!notifications; COG_ALERTS_CONTAINER defaults to redbot. Docker bind or
+!notifications; COG_ALERTS_CONTAINER defaults to red-discordbot. Docker bind or
 volume mounts translate that path to the host. No Docker socket is needed in Red.
 COG_ALERTS_STATE_DIR defaults to /mnt/user/appdata/user-scripts-state/notificationplus.
 NOTIFY_BIN defaults to /usr/local/emhttp/webGui/scripts/notify.
@@ -74,10 +74,10 @@ if [[ -z "$outbox" ]]; then
     container_path="${COG_ALERTS_CONTAINER_PATH:-}"
     data_path="${COG_ALERTS_DATA_PATH:-/data}"
     safe_path "${container_path:-$data_path}" || fail 'The configured container path is invalid.'
-    container="${COG_ALERTS_CONTAINER:-redbot}"
+    container="${COG_ALERTS_CONTAINER:-red-discordbot}"
     [[ "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fail 'The configured container name is invalid.'
     command -v docker >/dev/null || fail 'Docker is required to translate the container path.'
-    mounts="$(timeout --signal=TERM --kill-after=2 10 docker inspect --format '{{json .Mounts}}' "$container")" || fail 'Could not read the configured container mounts.'
+    mounts="$(timeout --signal=TERM --kill-after=2 10 docker inspect --format '{{json .Mounts}}' "$container")" || fail "Could not inspect container '$container'. Set COG_ALERTS_CONTAINER to its exact Docker name."
     if [[ -n "$container_path" ]]; then
         outbox="$(resolve_container_path "$container_path")" || fail 'The configured outbox is not inside a persistent Docker bind or volume mount.'
     else

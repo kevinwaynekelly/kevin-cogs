@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-07: Correct Aria's notification container name
+
+- Use Aria's observed Docker name `red-discordbot` for the notification bridge default, setup examples and status hints. Preserve explicit container/path overrides and explain how to fix an older saved `COG_ALERTS_CONTAINER="redbot"` setting. Failed Docker inspection now names the selected container and the setting to correct.
+
 ## 2026-10-07: Aria notification deployment and one-command updates
 
 - Add owner-only `!updateall` and `/updateall`, also available as `download updateall`, for one native update of every repository and unpinned installed cog with automatic reloads. Preserve native checks, pinning, errors and shared webhook serialization. The complete slash surface remains within Discord limits at 92 roots/456 actions.
