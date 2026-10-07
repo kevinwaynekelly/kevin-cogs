@@ -12,9 +12,12 @@ if [[ "${1:-}" == --help ]]; then
     cat <<'HELP'
 Kevin's Cogs Unraid notification bridge
 
+By default, discover one NotificationPlus outbox under redbot:/data.
+Set COG_ALERTS_DATA_PATH for another container data root. Multiple instances
+require an exact COG_ALERTS_PATH (host) or COG_ALERTS_CONTAINER_PATH override.
 Set COG_ALERTS_PATH to the host path shown by the NotificationPlus setup guide.
 Alternatively set COG_ALERTS_CONTAINER_PATH to the exact container path from
-!notifications status; COG_ALERTS_CONTAINER defaults to redbot. Docker bind or
+!notifications; COG_ALERTS_CONTAINER defaults to redbot. Docker bind or
 volume mounts translate that path to the host. No Docker socket is needed in Red.
 COG_ALERTS_STATE_DIR defaults to /mnt/user/appdata/user-scripts-state/notificationplus.
 NOTIFY_BIN defaults to /usr/local/emhttp/webGui/scripts/notify.
@@ -48,16 +51,9 @@ safe_path() {
     done
 }
 
-outbox="${COG_ALERTS_PATH:-}"
-if [[ -z "$outbox" ]]; then
-    container_path="${COG_ALERTS_CONTAINER_PATH:-}"
-    [[ -n "$container_path" ]] || fail 'Set COG_ALERTS_PATH or COG_ALERTS_CONTAINER_PATH from !notifications status.'
-    safe_path "$container_path" || fail 'The configured container path is invalid.'
-    container="${COG_ALERTS_CONTAINER:-redbot}"
-    [[ "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fail 'The configured container name is invalid.'
-    command -v docker >/dev/null || fail 'Docker is required to translate the container path.'
-    mounts="$(timeout --signal=TERM --kill-after=2 10 docker inspect --format '{{json .Mounts}}' "$container")" || fail 'Could not read the configured container mounts.'
-    outbox="$(jq -er --arg path "$container_path" '
+# Resolve the longest matching Docker mount, including mounts masking /data.
+resolve_container_path() {
+    jq -er --arg path "$1" '
         if type != "array" then error("mounts") else . end
         | map(select(.Destination | type == "string")
           | .Destination |= (if . == "/" then . else rtrimstr("/") end)
@@ -70,7 +66,43 @@ if [[ -z "$outbox" ]]; then
             (.Source | rtrimstr("/")) +
             (if .Destination == "/" then $path else $path[(.Destination | length):] end)
           end
-    ' <<<"$mounts" 2>/dev/null)" || fail 'The configured outbox is not inside a persistent Docker bind or volume mount.'
+    ' <<<"$mounts" 2>/dev/null
+}
+
+outbox="${COG_ALERTS_PATH:-}"
+if [[ -z "$outbox" ]]; then
+    container_path="${COG_ALERTS_CONTAINER_PATH:-}"
+    data_path="${COG_ALERTS_DATA_PATH:-/data}"
+    safe_path "${container_path:-$data_path}" || fail 'The configured container path is invalid.'
+    container="${COG_ALERTS_CONTAINER:-redbot}"
+    [[ "$container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fail 'The configured container name is invalid.'
+    command -v docker >/dev/null || fail 'Docker is required to translate the container path.'
+    mounts="$(timeout --signal=TERM --kill-after=2 10 docker inspect --format '{{json .Mounts}}' "$container")" || fail 'Could not read the configured container mounts.'
+    if [[ -n "$container_path" ]]; then
+        outbox="$(resolve_container_path "$container_path")" || fail 'The configured outbox is not inside a persistent Docker bind or volume mount.'
+    else
+        # Inspect only conventional Red data layouts, never the Config database,
+        # container environment, or an unbounded recursive search of appdata.
+        root="$(resolve_container_path "$data_path")" || fail 'The configured data root is not inside a persistent Docker bind or volume mount.'
+        safe_path "$root" && [[ -d "$root" && -r "$root" && -x "$root" ]] || fail 'The data root is unavailable or unsafe.'
+        candidates=()
+        shopt -s nullglob
+        for candidate in "$root"/cogs/NotificationPlus/alerts/unraid.json \
+            "$root"/*/cogs/NotificationPlus/alerts/unraid.json \
+            "$root"/*/*/cogs/NotificationPlus/alerts/unraid.json; do
+            [[ -e "$candidate" || -L "$candidate" ]] || continue
+            safe_path "$candidate" || fail 'A discovered outbox contains a symlink; configure an exact safe path.'
+            resolved="$(resolve_container_path "${data_path}${candidate#"$root"}")" || fail 'A discovered outbox is masked by a nonpersistent mount.'
+            [[ "$resolved" == "$candidate" ]] || fail 'A discovered outbox is shadowed by another mount; configure its exact container path.'
+            candidates+=("$candidate")
+            ((${#candidates[@]} <= 1)) || fail 'Multiple NotificationPlus outboxes found; configure an exact COG_ALERTS_CONTAINER_PATH.'
+        done
+        if ((${#candidates[@]} == 0)); then
+            printf 'Waiting for NotificationPlus: load it and run !notifications enable. For a custom layout set COG_ALERTS_CONTAINER_PATH from !notifications.\n'
+            exit 0
+        fi
+        outbox="${candidates[0]}"
+    fi
 fi
 safe_path "$outbox" || fail 'The outbox path must be absolute and must not contain symlinks.'
 [[ -e "$outbox" ]] || exit 0

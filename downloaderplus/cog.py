@@ -64,6 +64,8 @@ class DownloaderPlus(commands.Cog):
         "download install": "cog install",
         "download uninstall": "cog uninstall",
         "download update": "cog update",
+        "download updateall": "cog update",
+        "updateall": "cog update",
         "download checkupdates": "cog checkforupdates",
         "download pin": "cog pin",
         "download unpin": "cog unpin",
@@ -283,7 +285,7 @@ class DownloaderPlus(commands.Cog):
         embed.add_field(
             name="Common controls",
             value="`/download repos list` · `/download installed`\n"
-            "`/download available` · `/download install` · `/download update`",
+            "`/download available` · `/download install` · `/updateall`",
             inline=False,
         )
         await self._presentation.send(ctx, embed=embed)
@@ -490,6 +492,22 @@ class DownloaderPlus(commands.Cog):
     async def checkupdates(self, ctx):
         """Check available updates without installing them."""
         await self._native(ctx, "cog checkforupdates")
+
+    @download.command(name="updateall")
+    async def download_updateall(self, ctx):
+        """Refresh every repository, update unpinned cogs and reload changed cogs.
+
+        Uses one native Red update pass, including repositories without installed
+        cogs. Pinned packages remain pinned. No webhook setup is required.
+        """
+        await self._native(ctx, "cog update", ["True"])
+
+    @commands.hybrid_command(name="updateall")
+    @commands.is_owner()
+    async def updateall(self, ctx):
+        """Update all repositories and unpinned installed cogs, then reload changes."""
+        await check_command(ctx, self.download_updateall)
+        await self.download_updateall.callback(self, ctx)
 
     @download.command(name="pin")
     async def pin(self, ctx, *, packages: str):

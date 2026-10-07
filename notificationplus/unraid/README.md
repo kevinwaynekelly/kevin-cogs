@@ -19,7 +19,36 @@ Copy the exact **Container outbox** path from the status message. Keep Red's dat
 directory on persistent Docker storage. Update/reload the other suite cogs to
 include their notification failure reporting hooks.
 
-## Install the host bridge
+## Install through Aria's scripts repository
+
+The [Aria scripts repository](https://github.com/kevinwaynekelly/unraid-userscripts)
+includes the self-contained **1_cog_failure_alerts** job. In the Unraid terminal:
+
+```sh
+bash /boot/config/plugins/user.scripts/scripts/3_pull_github_repo/script
+```
+
+Refresh User Scripts and schedule **1_cog_failure_alerts** with `* * * * *`.
+Run it once manually. Future bridge updates arrive through that same updater;
+no `docker cp`, separate bridge file or wrapper is needed for this installation.
+New jobs start unscheduled and existing schedules/settings are preserved.
+
+The default discovers one NotificationPlus outbox in the persistent `redbot:/data`
+mount, directly under `cogs/NotificationPlus/alerts/unraid.json` or one/two
+instance directories below it. Existing `maintenance.conf` files need no new
+settings for that layout. No Config contents or container environment are read.
+For another container/data root set `COG_ALERTS_CONTAINER`/`COG_ALERTS_DATA_PATH`
+in `/boot/config/plugins/user.scripts/maintenance.conf`. With multiple instances,
+nested mounts or a custom layout, set `COG_ALERTS_CONTAINER_PATH` to the exact
+**Container outbox** from `!notifications`, or `COG_ALERTS_PATH` to its host path.
+Preview sends nothing and leaves delivery cursors untouched. Host job failures
+use Aria's existing failure/cooldown/recovery notifications.
+
+## Standalone installation without Aria's updater
+
+Use this alternative only when the repository-managed job is not installed.
+Both approaches use the same cursor by default; keep only one scheduled job.
+
 
 In **Settings → User Scripts**, add a script called `1_cog_failure_alerts`.
 In the Unraid terminal, copy the bridge from the installed cog:

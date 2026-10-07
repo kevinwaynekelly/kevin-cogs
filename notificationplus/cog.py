@@ -162,7 +162,9 @@ class NotificationPlus(commands.Cog):
             f"**Latest write error** · {self._outbox.last_error or 'None'}",
             f"**Dropped busy log events** · {self._handler.dropped if self._handler else 0}",
             f"**Dropped busy direct reports** · {self._direct_dropped}",
-            "Install/schedule the Unraid host bridge and enable Alert email notifications. "
+            "Run Aria's 3_pull_github_repo, then schedule 1_cog_failure_alerts every minute "
+            "and enable Alert email notifications. The bridge discovers redbot:/data; "
+            "use the outbox path above for a custom layout. "
             "A queued alert does not confirm host processing or email delivery.",
         ]
         await self._presentation.send(ctx, "\n".join(lines), title="Status")
@@ -178,7 +180,8 @@ class NotificationPlus(commands.Cog):
                 self._changes.discard(change)
         await self._presentation.send(
             ctx,
-            "Failure alerts enabled. The separately scheduled Unraid host bridge delivers them."
+            "Failure alerts enabled. Schedule Aria's 1_cog_failure_alerts every minute "
+            "to deliver them through Unraid's saved Alert recipients."
             if enabled
             else "Failure alerts disabled and retained queued events cleared.",
             title="Enabled" if enabled else "Disabled",

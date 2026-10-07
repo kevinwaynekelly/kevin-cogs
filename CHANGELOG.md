@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07: Aria notification deployment and one-command updates
+
+- Add owner-only `!updateall` and `/updateall`, also available as `download updateall`, for one native update of every repository and unpinned installed cog with automatic reloads. Preserve native checks, pinning, errors and shared webhook serialization. The complete slash surface remains within Discord limits at 92 roots/456 actions.
+- Add bounded standard-layout outbox discovery to the Unraid bridge, with exact path overrides and rejection of ambiguous, symlinked or shadowed locations. Vendor the bridge into Aria's `1_cog_failure_alerts` job through its existing repository installer and generated maintenance runtime. No separate bridge copy is required; new jobs still need a schedule.
+- Update NotificationPlus status, install guidance and metadata to explain existing Unraid recipients, automatic discovery and the host activation steps. Regression tests use isolated transport; publication does not configure a running Unraid host or confirm SMTP delivery.
+
 ## 2026-10-06: Signed DownloaderPlus webhook updates
 
 - Add owner-only `download webhook` setup/status/enable/disable prefix and slash controls with a persistent, default-off local listener. Validate GitHub HMAC-SHA256 before parsing bounded payloads; accept only pushes to an installed GitHub repository's tracked branch.

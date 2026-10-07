@@ -15,7 +15,13 @@ email account or host shell access is needed inside Redbot.
 !notifications test
 ```
 
-`notifications` shows the exact **container outbox** path. Configure the included
+On Aria, run the existing `3_pull_github_repo` User Script to install
+`1_cog_failure_alerts`, then schedule that job every minute (`* * * * *`). It
+automatically discovers a standard `redbot:/data` outbox and uses the existing
+Unraid Alert email/agent settings. No manual bridge copy is needed.
+
+`notifications` shows the exact **container outbox** path for custom layouts or
+multiple Red instances. Configure the included
 [Unraid host bridge](unraid/) to read the matching persistent host path and run it
 every minute using Unraid's User Scripts plugin. Enable email for **Alert** events
 in Unraid notification settings and verify its SMTP test first. The host bridge

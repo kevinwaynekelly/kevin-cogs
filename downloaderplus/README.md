@@ -14,6 +14,24 @@ The shared theme, owner-only prefix/slash controls and optional GitHub webhook u
 
 Use your configured repository name if it differs from `kevin-cogs`. Requires Red 3.5.24+ and Python 3.10/3.11, with no additional packages. Native Downloader must be loaded for operations; DownloaderPlus can load first and reports an unavailable source clearly. Optional CorePlus combines native Downloader commands with the DownloaderPlus help category.
 
+## Update everything
+
+```text
+!updateall
+```
+
+Or use `/updateall`. Both are bot-owner only and refresh **all configured
+repositories**, update **all unpinned installed cogs** and reload changed loaded
+cogs in one native Red update pass. Repositories without installed cogs are still
+refreshed. No GitHub webhook is needed. Pinned cogs stay pinned, new packages are
+not installed, and native dependency/check failures remain visible. This updates
+Downloader-managed packages, not Red itself or its bundled core cogs.
+
+`!download updateall` and `/download updateall` provide the same action under
+the management group. These commands share the webhook update lock, so manual
+and webhook updates do not run over each other. The shortcut respects disabled
+`download`, `download updateall` and native `cog update` commands.
+
 ## Commands
 
 Every new control requires bot ownership. Server administrator permission alone is insufficient. Root commands have a slash fallback: `[p]download` is `/download status`, and `[p]download repos` is `/download repos list`.
@@ -33,6 +51,8 @@ Every new control requires bot ownership. Server administrator permission alone 
 | `[p]download install <repo> <packages>` | `/download install` | Install space-separated packages; load afterward. |
 | `[p]download uninstall <packages>` | `/download uninstall` | Native uninstall and unload handling. |
 | `[p]download update [reload] [packages]` | `/download update` | Update selected packages or all unpinned packages. Reload defaults to true. |
+| `[p]updateall` | `/updateall` | Refresh all repos, update unpinned cogs and reload changes. |
+| `[p]download updateall` | `/download updateall` | The same complete update under the management group. |
 | `[p]download checkupdates` | `/download checkupdates` | Check without installing updates. |
 | `[p]download pin <packages>` | `/download pin` | Exclude selected installed packages from normal updates. |
 | `[p]download unpin <packages>` | `/download unpin` | Enable normal updates for them. |

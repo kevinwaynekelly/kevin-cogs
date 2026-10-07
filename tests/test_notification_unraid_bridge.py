@@ -453,3 +453,87 @@ def test_real_bridge_help_explains_email_delivery_boundary(bridge):
     assert result.returncode == 0
     assert "do not prove email receipt" in result.stdout
     assert bridge.calls() == []
+
+
+def discovery(bridge, *, mounts=None, relative="instance"):
+    root = bridge.tmp / "persistent"
+    source = root / relative / "cogs" / "NotificationPlus" / "alerts" / "unraid.json"
+    source.parent.mkdir(parents=True)
+    source.write_text(bridge.source.read_text())
+    docker = bridge.binaries / "docker"
+    docker.write_text(
+        f"#!{sys.executable}\nimport json, os, sys\n"
+        "assert sys.argv[1:] == ['inspect', '--format', '{{json .Mounts}}', 'redbot']\n"
+        "print(os.environ['FAKE_MOUNTS'])\n"
+    )
+    docker.chmod(0o700)
+    env = dict(
+        COG_ALERTS_PATH="",
+        COG_ALERTS_CONTAINER_PATH="",
+        FAKE_MOUNTS=json.dumps(
+            mounts or [{"Type": "bind", "Destination": "/data", "Source": str(root)}]
+        ),
+    )
+    return source, env
+
+
+@pytest.mark.parametrize("relative", ["", "instance", "red/instance"])
+def test_bridge_discovers_one_outbox_without_reading_config(bridge, relative):
+    bridge.write()
+    source, env = discovery(bridge, relative=relative)
+    private = source.parents[2] / "Core" / "settings.json"
+    private.parent.mkdir()
+    private.write_text("not JSON and never read")
+    result = bridge.run(**env)
+    assert result.returncode == 0, result.stderr
+    assert len(bridge.calls()) == 1
+    assert bridge.run(**env).returncode == 0
+    assert len(bridge.calls()) == 1
+
+
+def test_bridge_discovery_waits_for_cog_install(bridge):
+    bridge.write()
+    source, env = discovery(bridge)
+    source.unlink()
+    result = bridge.run(**env)
+    assert result.returncode == 0 and "Waiting for NotificationPlus" in result.stdout
+    assert not bridge.calls()
+
+
+def test_bridge_discovery_requires_selection_with_multiple_instances(bridge):
+    bridge.write()
+    source, env = discovery(bridge)
+    discovery(bridge, relative="second")
+    result = bridge.run(**env)
+    assert result.returncode == 1 and "Multiple" in result.stderr
+    assert not bridge.calls()
+    env["COG_ALERTS_CONTAINER_PATH"] = "/data/instance/cogs/NotificationPlus/alerts/unraid.json"
+    assert bridge.run(**env).returncode == 0
+    assert len(bridge.calls()) == 1
+
+
+@pytest.mark.parametrize("kind", ["tmpfs", "bind"])
+def test_bridge_discovery_rejects_shadowed_files(bridge, kind):
+    bridge.write()
+    source, env = discovery(bridge)
+    mounts = json.loads(env["FAKE_MOUNTS"])
+    mounts.append(
+        {"Type": kind, "Destination": "/data/instance/cogs", "Source": str(bridge.tmp / "other")}
+    )
+    env["FAKE_MOUNTS"] = json.dumps(mounts)
+    result = bridge.run(**env)
+    assert result.returncode == 1 and ("masked" in result.stderr or "shadowed" in result.stderr)
+    assert not bridge.calls()
+
+
+def test_bridge_discovery_rejects_symlinked_instance(bridge):
+    bridge.write()
+    source, env = discovery(bridge)
+    root = source.parents[4]
+    instance = root / "instance"
+    moved = root / "moved"
+    instance.rename(moved)
+    instance.symlink_to(moved, target_is_directory=True)
+    result = bridge.run(**env)
+    assert result.returncode == 1 and "symlink" in result.stderr
+    assert not bridge.calls()

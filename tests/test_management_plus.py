@@ -483,8 +483,74 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
                     actions += 1
                     if leaf.binding is core:
                         core_actions += 1
-        assert (len(roots), actions, core_actions) == (91, 454, 14)
+        assert (len(roots), actions, core_actions) == (92, 456, 14)
         print(f"{len(roots)} roots / {actions} actions")
     finally:
         for cog in reversed(loaded):
             await bot.remove_cog(cog.qualified_name)
+
+
+@pytest.mark.parametrize("path", ["updateall", "download updateall"])
+@pytest.mark.parametrize("slash", [False, True])
+async def test_updateall_checks_owner_and_native_command(
+    download_runtime, monkeypatch, path, slash
+):
+    bot, cog, source, repo, installed, member, invoke = download_runtime
+    logic = AsyncMock()
+    monkeypatch.setattr(source, "_cog_update_logic", logic)
+
+    async def run():
+        return (
+            await invoke_slash(bot, invoke, monkeypatch, path)
+            if slash
+            else await invoke("!" + path)
+        )
+
+    assert (await run()).command_failed
+    logic.assert_not_awaited()
+    bot.owner_ids.add(member.id)
+    assert not (await run()).command_failed
+    logic.assert_awaited_once()
+    assert logic.call_args.kwargs == {"cogs": ()}
+    assert logic.call_args.args[0].assume_yes
+    source._cog_update.disable_in(member.guild)
+    assert (await run()).command_failed
+    assert logic.await_count == 1
+
+
+async def test_updateall_shortcut_respects_group_disable(download_runtime, monkeypatch):
+    bot, cog, source, repo, installed, member, invoke = download_runtime
+    bot.owner_ids.add(member.id)
+    logic = AsyncMock()
+    monkeypatch.setattr(source, "_cog_update_logic", logic)
+    cog.download.disable_in(member.guild)
+    assert (await invoke("!updateall")).command_failed
+    logic.assert_not_awaited()
+
+
+async def test_updateall_native_refresh_pins_reload_and_shared_lock(download_runtime, monkeypatch):
+    import asyncio
+    from contextlib import nullcontext
+
+    bot, cog, source, repo, installed, member, invoke = download_runtime
+    bot.owner_ids.add(member.id)
+    monkeypatch.setattr(commands.Context, "typing", lambda self: nullcontext())
+    source._repo_manager.update_repos = AsyncMock(return_value=((repo,), []))
+    installed[1].pinned = True
+    available = AsyncMock(return_value=((installed[0],), ()))
+    monkeypatch.setattr(source, "_available_updates", available)
+    update = AsyncMock(return_value=({"audioplus"}, "Updated."))
+    monkeypatch.setattr(source, "_update_cogs_and_libs", update)
+    reload = AsyncMock()
+    monkeypatch.setattr(source, "_ask_for_cog_reload", reload)
+    async with cog._operation_lock:
+        task = asyncio.create_task(invoke("!updateall"))
+        await asyncio.sleep(0.05)
+        source._repo_manager.update_repos.assert_not_awaited()
+    ctx = await asyncio.wait_for(task, 3)
+    assert not ctx.command_failed, bot.on_command_error.call_args
+    source._repo_manager.update_repos.assert_awaited_once_with()
+    assert available.call_args.args[0] == {installed[0]}
+    reload.assert_awaited_once()
+    assert reload.call_args.args[1] == {"audioplus"}
+    assert reload.call_args.args[0].assume_yes
