@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-07: Honor playback controls at the end of a song
+
+- Fix an AudioPlus race where stop or skip could arrive as playback ended but still repeat the song or trigger autoplay. Track completion now checks whether a newer playback control superseded it before advancing.
+- Exercise stop and skip at the completion boundary with repeat disabled, repeating a track and repeating the queue.
+
 ## 2026-10-07: Recover webhook updates after storage errors
 
 - Keep DownloaderPlus's HTTP update worker alive after failures to save a claim or an error result. Preserve accepted pending work until its claim is saved, serialize claims with incoming requests, and back off between storage retries.

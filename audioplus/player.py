@@ -62,6 +62,7 @@ class GuildPlayer:
         self.last_error = None
         self._runner = None
         self._track_task = None
+        self._playback_generation = 0
         self._restart = None
         self._idle_task = None
         self._queue_requests = 0
@@ -353,6 +354,7 @@ class GuildPlayer:
                         self._schedule_idle()
                         return
                     self.current = track
+                    generation = self._playback_generation
                     self._last_requester = self._requesters.get(id(track), 0)
                     self.recent.append(track.uri)
                     self._track_task = asyncio.create_task(self._play_one(track, start, paused))
@@ -376,6 +378,9 @@ class GuildPlayer:
                         log.warning("Could not deliver AudioPlus playback failure", exc_info=True)
                 finally:
                     async with self.lock:
+                        # A control command can win this lock after the audio task
+                        # finishes. Its stop/skip/seek must supersede that completion.
+                        completed = completed and generation == self._playback_generation
                         self.current = None
                         self._track_task = None
                         if completed and not self.closed:
@@ -392,6 +397,7 @@ class GuildPlayer:
             self.current = None
 
     def _cancel_track(self):
+        self._playback_generation += 1
         if self._track_task and not self._track_task.done():
             self._track_task.cancel()
         self.voice.stop()

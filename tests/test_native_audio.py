@@ -191,6 +191,27 @@ async def test_stop_prevents_late_callback_from_restarting_queue(native_player):
     assert player.current.title == "three" and not player.paused
 
 
+@pytest.mark.parametrize("control", ["stop", "skip"])
+@pytest.mark.parametrize("repeat", ["off", "track", "queue"])
+async def test_control_at_track_end_prevents_repeat_and_autoplay(native_player, control, repeat):
+    player = native_player
+    player.repeat = repeat
+    player.on_end = AsyncMock()
+    await player.enqueue([track()])
+    await eventually(lambda: player.playing)
+    async with player.lock:
+        # The command is waiting for the queue lock when Discord completes playback.
+        command = asyncio.create_task(getattr(player, control)())
+        await asyncio.sleep(0)
+        player.voice.finish()
+        await eventually(lambda: player._track_task.done())
+    await command
+    await eventually(lambda: player._runner.done() or len(player.voice.starts) > 1)
+    assert len(player.voice.starts) == 1
+    assert not player.queue and player.current is None
+    player.on_end.assert_not_awaited()
+
+
 async def test_failed_track_is_reported_then_next_track_plays(native_player):
     player = native_player
     await player.enqueue([track(), track("two")])
