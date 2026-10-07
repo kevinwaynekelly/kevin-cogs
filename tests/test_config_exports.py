@@ -39,6 +39,7 @@ NON_POLICY_GUILD = {
     "SettingsHub": {"configuration_history"},
 }
 NON_POLICY_GLOBAL = {
+    "DownloaderPlus": {"slash_sync"},
     "AudioPlus": {"host", "port", "password", "secure", "resume_timeout"},
     "PresencePlus": {"command_hint_version"},
 }
@@ -46,6 +47,10 @@ NON_POLICY_NESTED = {
     "DownloaderPlus": tuple(
         "GLOBAL.webhook." + key
         for key in ("secret", "owner_id", "channel_id", "pending", "deliveries", "last_result")
+    )
+    + tuple(
+        "GLOBAL.daily." + key
+        for key in ("owner_id", "channel_id", "generation", "next_run", "last_result")
     ),
     "AudioPlus": tuple(
         "GLOBAL.watchdog." + key

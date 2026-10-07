@@ -340,9 +340,11 @@ async def test_real_native_failed_dependency_report_is_not_success(
     monkeypatch.setattr(source, "_install_requirements", AsyncMock(return_value={"PyNaCl"}))
     policy = {**WEBHOOK_DEFAULTS, "owner_id": member.id, "channel_id": context.channel.id}
     status, detail, reload = await cog._webhook_update(policy)
-    assert status == "failed" and reload is None
+    assert status == "failed" and reload is not None
     assert "requirement" in context.channel.send.call_args.kwargs["embed"].description.lower()
     assert "repository or dependency failure" in caplog.text
+    await reload()
+    bot.tree.sync.assert_awaited_once()
 
 
 @pytest.mark.parametrize("action", ["setup", "enable"])

@@ -174,7 +174,10 @@ GUILD = {
 }
 GLOBAL = {
     "DashboardPlus": {"settings": {**fields("enabled bind port url"), "hosts": List(SCALAR)}},
-    "DownloaderPlus": {"webhook": fields("enabled bind port")},
+    "DownloaderPlus": {
+        "webhook": fields("enabled bind port"),
+        "daily": fields("enabled time timezone"),
+    },
     "NotificationPlus": fields("enabled"),
     "AudioPlus": {"watchdog": fields("enabled guild_id channel_id video_url hour minute timezone")},
     "PresencePlus": {

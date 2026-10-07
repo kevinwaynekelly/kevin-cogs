@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 
 from aiohttp import web
 
+from .trigger_page import HEADERS, PAGE, trigger_token
+
 log = logging.getLogger("downloaderplus.webhook")
 MAX_BODY = 1024 * 1024
 MAX_REQUESTS = 8
@@ -91,6 +93,9 @@ class GitHubWebhook:
         listener(self.policy["bind"], self.policy["port"])
         app = web.Application(client_max_size=MAX_BODY)
         app.router.add_post("/github", self.receive)
+        app.router.add_get("/update", self.page)
+        app.router.add_post("/update", self.trigger)
+        app.router.add_get("/update/status", self.status)
         runner = web.AppRunner(app, access_log=None, shutdown_timeout=2, auto_decompress=False)
         await runner.setup()
         try:
@@ -117,6 +122,55 @@ class GitHubWebhook:
             await runner.cleanup()
 
     async def receive(self, request):
+        return await self._guard(request, self._receive)
+
+    async def page(self, request):
+        return web.Response(text=PAGE, content_type="text/html", headers=HEADERS)
+
+    async def trigger(self, request):
+        return await self._guard(request, self._trigger)
+
+    async def status(self, request):
+        return await self._guard(request, self._status)
+
+    def _authenticate_trigger(self, request):
+        value = request.headers.get("Authorization", "")
+        expected = "Bearer " + trigger_token(self.policy["secret"])
+        if not re.fullmatch(r"Bearer [0-9a-f]{64}", value) or not hmac.compare_digest(
+            expected, value
+        ):
+            raise web.HTTPForbidden(text="Invalid update token.", headers=HEADERS)
+
+    def _active(self, policy):
+        if self.closed or not policy["enabled"] or policy["secret"] != self.policy["secret"]:
+            raise web.HTTPServiceUnavailable(headers=HEADERS)
+
+    async def _trigger(self, request):
+        self._authenticate_trigger(request)
+        if request.query_string or request.can_read_body:
+            raise web.HTTPBadRequest(
+                text="Send an empty POST with a Bearer token.", headers=HEADERS
+            )
+        async with self._accept_lock, self.config.webhook() as policy:
+            self._active(policy)
+            policy["pending"] = True
+        self._event.set()
+        return web.json_response({"status": "queued"}, status=202, headers=HEADERS)
+
+    async def _status(self, request):
+        self._authenticate_trigger(request)
+        policy = await self.config.webhook()
+        self._active(policy)
+        result = policy["last_result"]
+        return web.json_response(
+            {
+                "pending": policy["pending"],
+                "result": {key: result[key] for key in ("status", "detail", "at") if key in result},
+            },
+            headers=HEADERS,
+        )
+
+    async def _guard(self, request, handler):
         if self.closed:
             raise web.HTTPServiceUnavailable()
         if len(self._requests) >= MAX_REQUESTS:
@@ -124,12 +178,12 @@ class GitHubWebhook:
         task = asyncio.current_task()
         self._requests.add(task)
         try:
-            return await self._receive(request)
+            return await handler(request)
         except web.HTTPException:
             raise
         except Exception as error:
             log.error(
-                "GitHub webhook could not queue an authenticated update.",
+                "Update webhook could not handle an authenticated request.",
                 extra={
                     "notification_error": type(error).__name__,
                     "notification_stage": "Webhook receipt",

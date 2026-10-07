@@ -1,10 +1,11 @@
-"""Themed owner controls and signed GitHub updates backed by Red Downloader."""
+"""Themed owner controls, authenticated triggers and daily Red Downloader updates."""
 
 import asyncio
 import io
 import json
 import logging
 import secrets
+import time
 from copy import deepcopy
 
 import discord
@@ -12,10 +13,13 @@ from discord.ext.commands.view import StringView
 from redbot.core import Config, commands
 
 from .command_support import check_command, finish_configuration_audit, prepare_hybrid
-from .constants import WEBHOOK_DEFAULTS
+from .constants import DAILY_DEFAULTS, SYNC_DEFAULTS, WEBHOOK_DEFAULTS
+from .daily import DailyUpdates, next_daily
 from .management import invoke_native, native_command, style_replies, words
 from .presentation import Presentation
 from .privacy import ConfigurationBarrier, configuration_request
+from .slash_sync import sync_enabled
+from .trigger_page import trigger_url
 from .webhook import GitHubWebhook, listener, repository_name
 
 log = logging.getLogger("downloaderplus.cog")
@@ -78,7 +82,11 @@ class DownloaderPlus(commands.Cog):
         super().__init__()
         self.bot = bot
         self.config = Config.get_conf(self, identifier=702035017, force_registration=True)
-        self.config.register_global(webhook=deepcopy(WEBHOOK_DEFAULTS))
+        self.config.register_global(
+            webhook=deepcopy(WEBHOOK_DEFAULTS),
+            daily=deepcopy(DAILY_DEFAULTS),
+            slash_sync=deepcopy(SYNC_DEFAULTS),
+        )
         self._presentation = Presentation("DownloaderPlus", "download")
         self._closing = False
         # Keep automatic and overlay updates serialized across a self-reload.
@@ -89,6 +97,9 @@ class DownloaderPlus(commands.Cog):
             "_kevin_downloader_webhook_lock", asyncio.Lock()
         )
         self._webhook = GitHubWebhook(self.config, self._webhook_repos, self._webhook_update)
+        self._daily = DailyUpdates(
+            self.config, self._daily_update, ready=getattr(bot, "wait_until_red_ready", None)
+        )
         self._privacy = ConfigurationBarrier()
 
     async def cog_load(self):
@@ -105,11 +116,23 @@ class DownloaderPlus(commands.Cog):
                 },
             )
 
+        try:
+            await self._daily.start()
+        except Exception as error:
+            log.error(
+                "Daily update scheduler could not start.",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "Daily update",
+                },
+            )
+
     async def cog_unload(self):
         self._closing = True
         self.bot.remove_before_invoke_hook(self.style_native_reply)
         await self._privacy.close()
         await self._webhook.close()
+        await self._daily.close()
 
     async def style_native_reply(self, ctx):
         if (
@@ -130,10 +153,13 @@ class DownloaderPlus(commands.Cog):
         await self._presentation.command_error(ctx, error)
 
     async def red_get_data_for_user(self, *, user_id):
-        policy = await self.config.webhook()
-        if policy["owner_id"] != user_id:
+        data = {}
+        for name in ("webhook", "daily"):
+            policy = await getattr(self.config, name)()
+            if policy["owner_id"] == user_id:
+                data[name] = {key: policy[key] for key in ("owner_id", "channel_id", "enabled")}
+        if not data:
             return {}
-        data = {key: policy[key] for key in ("owner_id", "channel_id", "enabled")}
         return {"downloaderplus.json": io.BytesIO(json.dumps(data, indent=2).encode())}
 
     async def red_delete_data_for_user(self, *, requester, user_id):
@@ -141,12 +167,17 @@ class DownloaderPlus(commands.Cog):
             if not erase:
                 return
             async with self._configuration_lock:
-                async with self.config.webhook() as policy:
-                    if policy["owner_id"] != user_id:
-                        return
-                    policy.clear()
-                    policy.update(deepcopy(WEBHOOK_DEFAULTS))
-                await self._webhook.close()
+                for name, defaults, service in (
+                    ("webhook", WEBHOOK_DEFAULTS, self._webhook),
+                    ("daily", DAILY_DEFAULTS, self._daily),
+                ):
+                    async with getattr(self.config, name)() as policy:
+                        owned = policy["owner_id"] == user_id
+                        if owned:
+                            policy.clear()
+                            policy.update(deepcopy(defaults))
+                    if owned:
+                        await service.close()
 
     async def _native(self, ctx, path, arguments=()):
         async with self._operation_lock:
@@ -156,12 +187,12 @@ class DownloaderPlus(commands.Cog):
         source = self.bot.get_cog("Downloader")
         return source._repo_manager.repos if source else ()
 
-    async def _webhook_context(self, policy, path, text, *, defer_reload=False):
+    async def _webhook_context(self, policy, path, text, *, defer_reload=False, control=None):
         channel = self.bot.get_channel(policy["channel_id"])
         guild = getattr(channel, "guild", None)
         owner = guild.get_member(policy["owner_id"]) if guild else None
         if owner is None or not await self.bot.is_owner(owner):
-            raise commands.CheckFailure("The webhook's bot owner or result channel is unavailable.")
+            raise commands.CheckFailure("The update's bot owner or result channel is unavailable.")
         command = native_command(self.bot, path, {"Downloader" if path == "cog update" else "Core"})
 
         message = WebhookMessage(
@@ -221,15 +252,23 @@ class DownloaderPlus(commands.Cog):
 
         ctx.send = send
         style_replies(ctx, self._presentation)
-        await check_command(ctx, self.webhook)
-        await check_command(ctx, self.update)
+        # Self-reload resets the old command objects' permission readiness.
+        # Resolve current controls so final sync checks the replacement cog.
+        for path in ((control or self.webhook).qualified_name, "download update"):
+            await check_command(ctx, native_command(self.bot, path, {"DownloaderPlus"}))
         await check_command(ctx, command)
         return ctx
 
     async def _webhook_update(self, policy):
+        return await self._automatic_update(policy, self.webhook)
+
+    async def _daily_update(self, policy):
+        return await self._automatic_update(policy, self.daily)
+
+    async def _automatic_update(self, policy, control):
         async with self._operation_lock:
             ctx = await self._webhook_context(
-                policy, "cog update", "update True", defer_reload=True
+                policy, "cog update", "update True", defer_reload=True, control=control
             )
             await self.bot.invoke(ctx)
             if ctx.command_failed:
@@ -238,7 +277,7 @@ class DownloaderPlus(commands.Cog):
         detail = (
             "Native Downloader reported an update failure; check the result channel and Red logs."
             if ctx.update_failed
-            else "All repositories refreshed; unpinned installed cogs checked and updated."
+            else "Repositories and unpinned cogs updated; enabled slash commands synced."
         )
         if ctx.update_failed:
             log.error(
@@ -255,15 +294,21 @@ class DownloaderPlus(commands.Cog):
             packages = sorted(
                 ctx.reload_packages, key=lambda name: (name == "downloaderplus", name)
             )
-            if not packages:
-                return
             async with self._operation_lock:
-                reload_ctx = await self._webhook_context(policy, "reload", " ".join(packages))
-                await self.bot.invoke(reload_ctx)
-                if reload_ctx.command_failed or reload_ctx.update_failed:
-                    raise RuntimeError("Native Core reported an automatic reload failure.")
+                if packages:
+                    reload_ctx = await self._webhook_context(
+                        policy, "reload", " ".join(packages), control=control
+                    )
+                    await self.bot.invoke(reload_ctx)
+                    if reload_ctx.command_failed or reload_ctx.update_failed:
+                        raise RuntimeError("Native Core reported an automatic reload failure.")
+                sync_ctx = await self._webhook_context(
+                    policy, "slash sync", "sync", control=control
+                )
+                summary = await sync_enabled(self.bot, self.config, sync_ctx)
+                await self._presentation.send(sync_ctx, summary, tone="success")
 
-        return status, detail, reload if ctx.reload_packages else None
+        return status, detail, reload
 
     async def _source(self, ctx):
         command = native_command(self.bot, "cog list", {"Downloader"})
@@ -297,7 +342,7 @@ class DownloaderPlus(commands.Cog):
 
     @download.group(name="webhook", invoke_without_command=True, fallback="status")
     async def webhook(self, ctx):
-        """Inspect signed GitHub push updates for all installed repos and cogs."""
+        """Inspect private URL and signed GitHub updates for all repos and cogs."""
         policy = await self.config.webhook()
         result_channel = f"<#{policy['channel_id']}>" if policy["channel_id"] else "Not configured"
         repos = sorted(
@@ -306,14 +351,15 @@ class DownloaderPlus(commands.Cog):
             if repository_name(repo.url)
         )
         embed = self._presentation.embed(
-            "GitHub webhook",
+            "Update webhook",
             f"**Automation** · {'Enabled' if policy['enabled'] else 'Disabled'}\n"
             f"**Listener** · {'Running' if self._webhook.runner else 'Stopped'}\n"
-            f"**Bind** · `{policy['bind']}:{policy['port']}/github`\n"
+            f"**Bind** · `{policy['bind']}:{policy['port']}`\n"
+            "**Paths** · `/github` (signed push) · `/update` (private trigger)\n"
             f"**Result channel** · {result_channel}\n"
             f"**Queued** · {'Yes' if policy['pending'] else 'No'}\n"
             "Matching pushes refresh every repository and update unpinned installed cogs. "
-            "Changed loaded cogs reload automatically.",
+            "Changed loaded cogs reload automatically, then enabled slash commands sync.",
         )
         embed.add_field(
             name="Accepted repositories / branches", value="\n".join(repos) or "None", inline=False
@@ -330,17 +376,21 @@ class DownloaderPlus(commands.Cog):
     @webhook.command(name="setup")
     @commands.guild_only()
     @configuration_request
-    async def webhook_setup(self, ctx, port: int = 8766, bind: str = "0.0.0.0"):
-        """Prepare a GitHub listener and DM its secret; enable it after adding the hook."""
+    async def webhook_setup(self, ctx, port: int = 8766, bind: str = "0.0.0.0", base_url: str = ""):
+        """Prepare the update listener and privately send its trigger link and GitHub secret."""
+        secret = secrets.token_hex(32)
         try:
             listener(bind, port)
+            link = trigger_url(base_url, port, secret)
         except ValueError as exc:
             raise commands.BadArgument(str(exc)) from exc
         await self._source(ctx)
-        secret = secrets.token_hex(32)
         try:
             await ctx.author.send(
-                "DownloaderPlus GitHub webhook secret (keep private):\n"
+                "DownloaderPlus private update link (anyone with it can request an update):\n"
+                f"<{link}>\nOpening this link queues an update after the listener is enabled. "
+                "The default address works on your LAN. Use a reachable HTTPS base URL for remote access.\n\n"
+                "Optional GitHub webhook secret (keep private):\n"
                 f"```\n{secret}\n```\n"
                 "Use `application/json`, subscribe to push events, and enable SSL verification. "
                 "The payload URL is your public HTTPS endpoint forwarding to `/github` on "
@@ -360,7 +410,7 @@ class DownloaderPlus(commands.Cog):
         self._webhook.error = ""
         await self._presentation.send(
             ctx,
-            "Secret sent privately. Add the GitHub webhook, then run `download webhook enable`.",
+            "Private update link and GitHub secret sent by DM. Run `download webhook enable` to start the listener.",
             tone="success",
         )
 
@@ -368,7 +418,7 @@ class DownloaderPlus(commands.Cog):
     @commands.guild_only()
     @configuration_request
     async def webhook_enable(self, ctx):
-        """Enable authenticated push updates; send native update results in this channel."""
+        """Enable the private URL and signed pushes; send update results in this channel."""
         policy = await self.config.webhook()
         if not policy["secret"]:
             raise commands.BadArgument("Run download webhook setup first.")
@@ -396,7 +446,7 @@ class DownloaderPlus(commands.Cog):
         self._webhook.error = ""
         await self._presentation.send(
             ctx,
-            "Webhook updates enabled. Only signed pushes to an installed GitHub repository's tracked branch trigger updates.",
+            "Webhook updates enabled for your private link and signed GitHub pushes. Update, reload and slash sync results go here.",
             tone="success",
         )
 
@@ -408,6 +458,91 @@ class DownloaderPlus(commands.Cog):
             policy.update(enabled=False, pending=False)
         await self._webhook.close()
         await self._presentation.send(ctx, "Webhook updates disabled.", tone="success")
+
+    @webhook.command(name="link")
+    @configuration_request
+    async def webhook_link(self, ctx, base_url: str = ""):
+        """DM the private update URL; optionally use your HTTPS reverse proxy address."""
+        policy = await self.config.webhook()
+        if not policy["secret"]:
+            raise commands.BadArgument("Run download webhook setup first.")
+        try:
+            link = trigger_url(base_url, policy["port"], policy["secret"])
+        except ValueError as exc:
+            raise commands.BadArgument(str(exc)) from exc
+        try:
+            await ctx.author.send(
+                f"Private DownloaderPlus update link: <{link}>\n"
+                "Opening it requests an update of every repository and unpinned cog, "
+                "then reloads changes and syncs enabled slash commands. Keep this link private.\n"
+                f"Listener: {'enabled' if policy['enabled'] else 'disabled; run download webhook enable'}.",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except discord.HTTPException as exc:
+            raise commands.BadArgument("Allow DMs from this bot, then retry.") from exc
+        await self._presentation.send(ctx, "Private update link sent by DM.", tone="success")
+
+    @download.group(name="daily", invoke_without_command=True, fallback="status")
+    async def daily(self, ctx):
+        """Show the daily repository/cog update schedule and latest result."""
+        policy = await self.config.daily()
+        channel = f"<#{policy['channel_id']}>" if policy["channel_id"] else "Not configured"
+        due = f"<t:{policy['next_run']}:F>" if policy["enabled"] else "Disabled"
+        embed = self._presentation.embed(
+            "Daily updates",
+            f"**Automation** · {'Enabled' if policy['enabled'] else 'Disabled'}\n"
+            f"**Schedule** · {policy['time']} · {policy['timezone']}\n"
+            f"**Next update** · {due}\n**Result channel** · {channel}\n"
+            "Refresh all repositories, update unpinned cogs, reload changes and sync enabled slash commands.",
+        )
+        if policy["last_result"]:
+            result = policy["last_result"]
+            embed.add_field(
+                name="Last update", value=f"{result['status']} · {result['detail']}", inline=False
+            )
+        await self._presentation.send(ctx, embed=embed)
+
+    @daily.command(name="enable")
+    @commands.guild_only()
+    @configuration_request
+    async def daily_enable(self, ctx, clock: str = "", timezone: str = ""):
+        """Enable daily updates here; defaults to 04:00 America/Chicago."""
+        policy = await self.config.daily()
+        clock, timezone = clock or policy["time"], timezone or policy["timezone"]
+        try:
+            due = next_daily(time.time(), clock, timezone)
+        except ValueError as exc:
+            raise commands.BadArgument(str(exc)) from exc
+        await self._source(ctx)
+        await check_command(ctx, native_command(self.bot, "cog update", {"Downloader"}))
+        await check_command(ctx, native_command(self.bot, "slash sync", {"Core"}))
+        await self._daily.close()
+        policy.update(
+            enabled=True,
+            time=clock,
+            timezone=timezone,
+            owner_id=ctx.author.id,
+            channel_id=ctx.channel.id,
+            generation=secrets.token_hex(16),
+            next_run=due,
+        )
+        await self.config.daily.set(policy)
+        await self._daily.start()
+        await self._presentation.send(
+            ctx,
+            f"Daily updates enabled at **{clock} {timezone}**. Next: <t:{due}:F>. "
+            "Update, reload and slash sync results will appear here.",
+            tone="success",
+        )
+
+    @daily.command(name="disable")
+    @configuration_request
+    async def daily_disable(self, ctx):
+        """Disable daily updates and cancel the scheduled worker."""
+        async with self.config.daily() as policy:
+            policy["enabled"] = False
+        await self._daily.close()
+        await self._presentation.send(ctx, "Daily updates disabled.", tone="success")
 
     @download.group(name="repos", invoke_without_command=True, fallback="list")
     async def repos(self, ctx):
@@ -495,17 +630,21 @@ class DownloaderPlus(commands.Cog):
 
     @download.command(name="updateall")
     async def download_updateall(self, ctx):
-        """Refresh every repository, update unpinned cogs and reload changed cogs.
+        """Update all repositories and unpinned cogs, reload changes and sync slash commands.
 
         Uses one native Red update pass, including repositories without installed
         cogs. Pinned packages remain pinned. No webhook setup is required.
         """
-        await self._native(ctx, "cog update", ["True"])
+        async with self._operation_lock:
+            child = await invoke_native(self, ctx, "cog update", ["True"], expected={"Downloader"})
+            if not child.command_failed:
+                summary = await sync_enabled(self.bot, self.config, ctx)
+                await self._presentation.send(ctx, summary, tone="success")
 
     @commands.hybrid_command(name="updateall")
     @commands.is_owner()
     async def updateall(self, ctx):
-        """Update all repositories and unpinned installed cogs, then reload changes."""
+        """Update all repositories and unpinned cogs, reload changes and sync slash commands."""
         await check_command(ctx, self.download_updateall)
         await self.download_updateall.callback(self, ctx)
 

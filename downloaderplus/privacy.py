@@ -1,4 +1,4 @@
-"""Cancel/wait configuring owner commands before erasing their webhook settings."""
+"""Cancel/wait owner configuration commands before erasing their automation settings."""
 
 import asyncio
 from contextlib import asynccontextmanager

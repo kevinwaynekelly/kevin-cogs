@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07: Private update URL, daily updates and slash sync
+
+- Add a private browser link and authenticated `POST /update` beside the signed GitHub endpoint. Opening the DM-only link queues all-repo/all-unpinned-cog updates; GET/HEAD previews cannot perform updates. Bearer credentials stay in the URL fragment and are sent in a header. Rotation invalidates old links; requests share bounded ingress, burst coalescing and the existing worker.
+- Add owner-only `download daily` status/enable/disable prefix and slash controls. The default schedule is 04:00 America/Chicago, disabled until configured. Persist the next daily claim before updating, handle DST, coalesce missed days, cancel on unload and preserve completed status across self-reload.
+- Have `updateall`, webhook and daily updates sync enabled global application commands after updates/reloads. Respect native owner/disabled checks, retain slash enable choices, skip unchanged schemas and persist a one-minute retry budget. Resolve replacement commands after self-reload.
+- Extend user-data deletion and settings-only exports for the daily schedule; keep credentials, owner records and runtime sync state out of settings-only exports. The complete slash surface stays within Discord limits at 92 roots/460 actions.
+
 ## 2026-10-07: Correct Aria's notification container name
 
 - Use Aria's observed Docker name `red-discordbot` for the notification bridge default, setup examples and status hints. Preserve explicit container/path overrides and explain how to fix an older saved `COG_ALERTS_CONTAINER="redbot"` setting. Failed Docker inspection now names the selected container and the setting to correct.

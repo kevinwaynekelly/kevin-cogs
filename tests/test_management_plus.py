@@ -44,6 +44,7 @@ async def download_runtime(core_runtime, monkeypatch, tmp_path):
     from redbot.cogs.downloader.repo_manager import Repo
 
     bot, core, member, invoke = core_runtime
+    monkeypatch.setattr(bot.tree, "sync", AsyncMock(return_value=[]))
     monkeypatch.setattr("redbot.cogs.downloader.downloader.cog_data_path", lambda cog: tmp_path)
     repo = Repo(
         "kevin", "https://github.com/kevinwaynekelly/kevin-cogs", "main", "abc", tmp_path / "kevin"
@@ -363,6 +364,9 @@ async def test_native_sync_keeps_original_cooldown_and_handler(core_runtime, mon
     await invoke("!core slash sync")
     bot.tree.sync.assert_awaited_once()
     assert bot.get_command("slash sync").has_error_handler()
+    # discord.py command copies share this decorator's cooldown mapping.
+    # Do not leak the manual sync's budget into a different test bot.
+    bot.get_command("slash sync").reset_cooldown(ctx)
 
 
 async def test_replies_keep_files_mentions_filters_and_original_sender(core_runtime):
@@ -483,7 +487,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
                     actions += 1
                     if leaf.binding is core:
                         core_actions += 1
-        assert (len(roots), actions, core_actions) == (92, 456, 14)
+        assert (len(roots), actions, core_actions) == (92, 460, 14)
         print(f"{len(roots)} roots / {actions} actions")
     finally:
         for cog in reversed(loaded):
