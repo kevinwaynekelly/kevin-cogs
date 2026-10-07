@@ -84,6 +84,7 @@ aria_rollback() {
                     aria_error "A different bridge container now owns the name; it was preserved. The original is retained as $aria_backup."
                     exit "$aria_exit"
                 fi
+                aria_capture_upgrade_failure "$aria_current_id" || true
                 docker rm -f "$aria_current_id" >/dev/null 2>&1 || true
             fi
             if ! docker rename "$aria_backup" aria-gpt-bridge; then aria_error "Restore the retained container named $aria_backup manually."; exit "$aria_exit"; fi

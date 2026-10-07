@@ -28,7 +28,9 @@ result = ""
 if args[0] == "inspect" and "--format" not in args:
     result = json.dumps([state["inspect"]])
 elif args[0] == "inspect":
-    if args[args.index("--format") + 1].startswith("{{.Id}}"):
+    if args[args.index("--format") + 1] == "{{json .State}}":
+        result = json.dumps({"Status": "exited", "ExitCode": 1})
+    elif args[args.index("--format") + 1].startswith("{{.Id}}"):
         current = state["containers"]["aria-gpt-bridge"]
         identifier = {"new": "c", "old": "a", "foreign": "f"}[current["version"]]
         result = identifier * 64 + " <no value>"
@@ -38,6 +40,8 @@ elif args[:2] == ["container", "inspect"]:
     rc = 0 if args[-1] in state["containers"] else 1
 elif args[0] == "build":
     rc = 19 if state.get("build_fails") else 0
+elif args[0] == "logs":
+    result = "PermissionError: management.py; provider-secret-never-print"
 elif args[0] == "stop":
     state["containers"][args[-1]]["running"] = False
 elif args[0] == "rename":
@@ -208,6 +212,21 @@ def test_failed_upgrade_restores_original_running_container(upgrade_host, failur
     assert state["containers"] == {"aria-gpt-bridge": {"version": "old", "running": True}}
 
 
+def test_failed_startup_retains_private_diagnostics_before_rollback(upgrade_host):
+    result, state, service_calls = upgrade_host(bad_health=True)
+    assert result.returncode != 0
+    assert "failed its health check" in result.stderr
+    logs = list((service_calls.parent / "appdata/management").glob("upgrade-failure.*.log"))
+    assert len(logs) == 1
+    assert logs[0].stat().st_mode & 0o777 == 0o600
+    assert "PermissionError: management.py" in logs[0].read_text()
+    assert "provider-secret-never-print" not in result.stdout + result.stderr
+    assert str(logs[0]) in result.stderr
+    calls = [call[0] for call in state["calls"]]
+    assert calls.index("logs") < calls.index("rm") < calls.index("start")
+    assert state["containers"] == {"aria-gpt-bridge": {"version": "old", "running": True}}
+
+
 def test_upgrade_rollback_preserves_concurrent_foreign_bridge(upgrade_host):
     result, state, _ = upgrade_host(foreign_on_run=True)
     assert result.returncode != 0
@@ -297,6 +316,32 @@ def test_container_image_includes_management_module():
     assert "COPY server.py management.py entrypoint.sh *-tools.json ./" in dockerfile
     assert "management.request" in dockerfile
     assert "docker.sock" not in dockerfile
+
+
+def test_image_runtime_permissions_from_private_checkout(tmp_path):
+    # Exercise the real image chmod command against a 0600 build context. No
+    # Docker daemon is used here; CI separately builds and imports as UID 65532.
+    app = tmp_path / "app with spaces"
+    app.mkdir()
+    sources = [BRIDGE / name for name in ("server.py", "management.py", "entrypoint.sh")]
+    sources.extend(BRIDGE.glob("*-tools.json"))
+    for source in sources:
+        target = app / source.name
+        shutil.copyfile(source, target)
+        target.chmod(0o600)
+    dockerfile = (BRIDGE / "Dockerfile").read_text().replace("\\\n", " ")
+    for line in dockerfile.splitlines():
+        if line.startswith("RUN chmod "):
+            command = line.removeprefix("RUN ").replace("/app/", shlex.quote(str(app) + "/"))
+            subprocess.run(["sh", "-c", command], check=True, capture_output=True, timeout=10)
+    for source in sources:
+        mode = (app / source.name).stat().st_mode
+        assert mode & 0o004, f"Container UID cannot read {source.name}"
+        assert not mode & 0o222, f"Runtime code must be read-only: {source.name}"
+    assert (app / "entrypoint.sh").stat().st_mode & 0o001
+    assert dockerfile.index("USER 65532:65532") < dockerfile.index(
+        'RUN python -c "import management, server"'
+    )
 
 
 def service_function_script(tmp_path, suffix):

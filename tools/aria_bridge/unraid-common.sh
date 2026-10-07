@@ -112,10 +112,27 @@ aria_record_installed_revision() {
 aria_wait_healthy() {
     local aria_attempt aria_state
     for ((aria_attempt=0; aria_attempt<100; aria_attempt++)); do
-        aria_state="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' aria-gpt-bridge 2>/dev/null)" || return 1
+        aria_state="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' aria-gpt-bridge 2>/dev/null)" || { aria_error 'Could not inspect bridge startup state.'; return 1; }
         [[ "$aria_state" == 'running healthy' ]] && return 0
-        [[ "$aria_state" == exited* || "$aria_state" == dead* || "$aria_state" == *unhealthy ]] && return 1
+        if [[ "$aria_state" == exited* || "$aria_state" == dead* || "$aria_state" == *unhealthy ]]; then
+            aria_error 'The replacement bridge exited or failed its health check.'; return 1
+        fi
         sleep 1
     done
     aria_error 'Bridge did not become healthy within 100 seconds.'
+}
+
+aria_capture_upgrade_failure() {
+    # Only call for the replacement container owned by this installer. Logs may
+    # contain provider data: keep them root-private and never echo their contents.
+    local aria_failed_id="$1" aria_failure_log
+    mkdir -p "$aria_data/management" || return 0
+    aria_failure_log="$(mktemp "$aria_data/management/upgrade-failure.XXXXXXXX.log")" || return 0
+    chmod 600 "$aria_failure_log" || return 0
+    {
+        printf 'Replacement container: %s\n' "$aria_failed_id"
+        timeout 5 docker inspect --format '{{json .State}}' "$aria_failed_id" || true
+        timeout 5 docker logs --tail 80 "$aria_failed_id" 2>&1 | head -c 32768 || true
+    } > "$aria_failure_log" 2>&1
+    printf 'Startup diagnostics saved locally: %s\n' "$aria_failure_log" >&2
 }

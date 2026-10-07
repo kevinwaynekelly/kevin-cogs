@@ -1,5 +1,11 @@
 # Changelog
 
+## Aria container startup recovery
+
+- Normalize image runtime permissions after private Git updates and verify imports as the
+  container user during the build, before stopping the working bridge.
+- Retain bounded, root-private replacement startup diagnostics before upgrade rollback.
+
 ## Aria private repository authentication
 
 - Reuse saved host GitHub CLI authentication for standalone migration, self-updates and daily CI checks without exposing tokens to command arguments or the bridge container.

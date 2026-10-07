@@ -119,6 +119,12 @@ bash tools/aria_bridge/upgrade-unraid.sh
 
 The installer reuses credentials and recreates the container with the current settings. It rebuilds the image using Docker's cache and retains the previous bridge until the replacement is healthy. To stop access temporarily, run `docker stop aria-gpt-bridge`. Revoke the runtime key or disable the tunnel in Platform to revoke account access. Disable Red updates separately with `!download webhook disable`. See [MANAGEMENT.md](MANAGEMENT.md) for stopping or removing the native host service.
 
+The image build makes runtime code readable regardless of the checkout's file permissions,
+then imports the server as UID `65532`. A failed import stops the upgrade before the working
+container is stopped. If the replacement later fails startup, the installer saves its state
+and a bounded log tail to `management/upgrade-failure.*.log` before rollback. These files are
+root-private and may include sensitive provider output; inspect them locally.
+
 If Red credentials change, replace `secrets/red_update_token` locally, retain owner `65532:65532` and mode `0400`, then **recreate** the container. Recreating also picks up atomically replaced file bind mounts. Do not run another `webhook setup` unless you intend to rotate its credentials.
 
 ## Compose alternative and configuration

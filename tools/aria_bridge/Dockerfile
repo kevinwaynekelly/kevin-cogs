@@ -16,8 +16,12 @@ RUN python /tmp/install_tunnel.py \
 
 WORKDIR /app
 COPY server.py management.py entrypoint.sh *-tools.json ./
-RUN chmod 0555 /app/entrypoint.sh /app/server.py
+RUN chmod 0555 /app/entrypoint.sh /app/server.py \
+    && chmod 0444 /app/management.py /app/*-tools.json
 USER 65532:65532
+# Root's private Git checkout may have mode 0600 files. Validate the actual
+# runtime user during the build, before an upgrade stops the working bridge.
+RUN python -c "import management, server" && test -x /app/entrypoint.sh
 
 # The health listener stays inside the container. No ports need publishing.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

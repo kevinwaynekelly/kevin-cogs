@@ -37,6 +37,11 @@ jobs:
         run: python -m pytest -q
       - name: Native Aria process supervision
         run: sudo "$(command -v python)" -m pytest -q tests/test_aria_bridge_install.py -k service_shutdown_terminates_timeout_group
+      - name: Aria build from a root-private checkout
+        if: matrix.python == '3.11'
+        run: |
+          chmod 600 tools/aria_bridge/*.py tools/aria_bridge/*-tools.json tools/aria_bridge/entrypoint.sh
+          docker build -t aria-bridge-ci tools/aria_bridge
       - name: Dashboard script syntax
         run: node --check dashboardplus/web/app.js
       - name: Dashboard interactions
