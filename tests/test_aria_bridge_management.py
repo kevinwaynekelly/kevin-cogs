@@ -108,8 +108,9 @@ def call_agent(peer, name, arguments=None):
 
 def test_all_management_tools_are_discoverable_and_mutations_deduplicated():
     definitions = {definition["name"]: definition for definition in server.tool_definitions()}
-    assert len(management.TOOLS) == 16
-    assert len(definitions) == 20
+    assert len(management.TOOLS) == 18
+    assert len(definitions) == 22
+    assert server.SERVER_INFO["version"] == "1.2.0"
     for spec in management.TOOL_SPECS:
         definition = definitions[spec.name]
         assert definition["inputSchema"]["additionalProperties"] is False
@@ -187,6 +188,13 @@ def test_lifecycle_tools_have_fixed_action_and_return_job_acceptance(agent_peer,
             "containers_update_all",
             {"request_id": "r1"},
         ),
+        (
+            "aria_bridge_update",
+            {"request_id": "bridge1"},
+            "bridge_update",
+            {"request_id": "bridge1"},
+        ),
+        ("aria_bridge_update_status", {}, "bridge_update_status", {}),
     ],
 )
 def test_named_tools_map_only_to_fixed_host_operations(
@@ -278,6 +286,10 @@ def test_containers_prefers_live_management_over_stale_snapshot_and_docker_socke
     ("tool", "arguments"),
     [
         ("aria_scripts", {"command": "SECRET"}),
+        ("aria_bridge_update", {}),
+        ("aria_bridge_update", {"request_id": "r1", "branch": "other"}),
+        ("aria_bridge_update", {"request_id": "r1", "command": "SECRET"}),
+        ("aria_bridge_update_status", {"job_id": "r1"}),
         ("aria_container_start", {"name": "Plex"}),
         ("aria_container_start", {"name": "Plex", "request_id": "r1", "action": "rm"}),
         ("aria_container_start", {"name": "Plex", "request_id": "r1\n"}),
@@ -405,7 +417,15 @@ def test_invalid_host_response_fails_without_echoing_provider_text(agent_peer, b
 
 
 @pytest.mark.parametrize(
-    "error", ["hash mismatch", "request_id conflict", "job unknown", "SECRET arbitrary exception"]
+    "error",
+    [
+        "hash mismatch",
+        "request_id conflict",
+        "job unknown",
+        "management busy",
+        "bridge update unavailable",
+        "SECRET arbitrary exception",
+    ],
 )
 def test_host_error_allowlist_is_fixed_and_preserves_useful_failures(agent_peer, error):
     agent_peer.body = json.dumps({"ok": False, "error": error}).encode() + b"\n"
@@ -423,15 +443,42 @@ def test_oversized_response_is_bounded(agent_peer):
     assert "exceeds the bridge limit" in response["result"]["structuredContent"]["error"]
 
 
-def test_uncertain_mutation_timeout_is_never_retried(agent_peer, monkeypatch):
+@pytest.mark.parametrize(
+    ("name", "arguments", "status_tool"),
+    [
+        ("aria_container_restart", {"name": "Plex", "request_id": "uncertain1"}, "aria_job_status"),
+        ("aria_bridge_update", {"request_id": "uncertain1"}, "aria_bridge_update_status"),
+    ],
+)
+def test_uncertain_mutation_timeout_is_never_retried(
+    agent_peer, monkeypatch, name, arguments, status_tool
+):
     monkeypatch.setattr(management, "REQUEST_TIMEOUT", 0.03)
     agent_peer.delay = 0.1
-    response = call_agent(
-        agent_peer, "aria_container_restart", {"name": "Plex", "request_id": "uncertain1"}
-    )
+    response = call_agent(agent_peer, name, arguments)
     assert response["result"]["isError"]
     assert "same request_id" in response["result"]["structuredContent"]["error"]
+    assert status_tool in response["result"]["structuredContent"]["error"]
+    if name == "aria_bridge_update":
+        assert "aria_job_status" not in response["result"]["structuredContent"]["error"]
     assert len(agent_peer.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"ok":true,"result":{}}',
+        b"x" * (management.MAX_RESPONSE_BYTES + 1),
+    ],
+)
+def test_uncertain_bridge_update_response_points_to_its_separate_status_tool(agent_peer, body):
+    agent_peer.body = body
+    response = call_agent(agent_peer, "aria_bridge_update", {"request_id": "bridge1"})
+    result = response["result"]
+    assert result["isError"]
+    assert "same request_id" in result["structuredContent"]["error"]
+    assert "aria_bridge_update_status" in result["structuredContent"]["error"]
+    assert "aria_job_status" not in result["structuredContent"]["error"]
 
 
 def test_unsupported_host_action_cannot_connect(agent_peer):

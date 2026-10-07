@@ -67,17 +67,26 @@ aria_backup="aria-gpt-bridge-rollback-$(date +%s)-$$"
 aria_old_stopped=false
 aria_old_renamed=false
 aria_new_created=false
+aria_new_id=''
 aria_completed=false
 aria_rollback() {
-    local aria_exit=$?
+    local aria_exit=$? aria_current_id='' aria_current_update='' aria_current_info='' aria_owned=false
     trap - EXIT INT TERM
     if [[ "$aria_completed" != true && "$aria_old_stopped" == true ]]; then
         printf 'Upgrade failed; restoring the previous bridge container.\n' >&2
         if [[ "$aria_old_renamed" == true ]] && docker container inspect "$aria_backup" >/dev/null 2>&1; then
             if [[ "$aria_new_created" == true ]] || docker container inspect aria-gpt-bridge >/dev/null 2>&1; then
-                docker rm -f aria-gpt-bridge >/dev/null 2>&1 || true
+                aria_current_info="$(docker inspect --format '{{.Id}} {{index .Config.Labels "com.aria-gpt-bridge.update-id"}}' aria-gpt-bridge 2>/dev/null)" || true
+                read -r aria_current_id aria_current_update <<< "$aria_current_info" || true
+                if [[ "$aria_current_id" =~ ^[a-f0-9]{64}$ && "$aria_current_id" == "$aria_new_id" ]]; then aria_owned=true; fi
+                if [[ "$aria_current_id" =~ ^[a-f0-9]{64}$ && -n "${ARIA_BRIDGE_UPDATE_ID:-}" && "$aria_current_update" == "$ARIA_BRIDGE_UPDATE_ID" ]]; then aria_owned=true; fi
+                if [[ "$aria_owned" != true ]]; then
+                    aria_error "A different bridge container now owns the name; it was preserved. The original is retained as $aria_backup."
+                    exit "$aria_exit"
+                fi
+                docker rm -f "$aria_current_id" >/dev/null 2>&1 || true
             fi
-            docker rename "$aria_backup" aria-gpt-bridge || aria_error "Restore the retained container named $aria_backup manually."
+            if ! docker rename "$aria_backup" aria-gpt-bridge; then aria_error "Restore the retained container named $aria_backup manually."; exit "$aria_exit"; fi
         fi
         if [[ "$aria_was_running" == true ]]; then docker start aria-gpt-bridge >/dev/null || aria_error 'The previous bridge could not be restarted; its container has been retained.'; fi
     fi
@@ -91,7 +100,7 @@ aria_old_stopped=true
 docker stop --time 20 aria-gpt-bridge >/dev/null
 aria_old_renamed=true
 docker rename aria-gpt-bridge "$aria_backup"
-aria_run_container
+aria_new_id="$(aria_run_container)"
 aria_new_created=true
 aria_wait_healthy
 aria_completed=true

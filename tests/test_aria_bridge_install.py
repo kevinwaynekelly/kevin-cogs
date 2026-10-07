@@ -28,7 +28,12 @@ result = ""
 if args[0] == "inspect" and "--format" not in args:
     result = json.dumps([state["inspect"]])
 elif args[0] == "inspect":
-    result = "running " + ("unhealthy" if state.get("bad_health") else "healthy")
+    if args[args.index("--format") + 1].startswith("{{.Id}}"):
+        current = state["containers"]["aria-gpt-bridge"]
+        identifier = {"new": "c", "old": "a", "foreign": "f"}[current["version"]]
+        result = identifier * 64 + " <no value>"
+    else:
+        result = "running " + ("unhealthy" if state.get("bad_health") else "healthy")
 elif args[:2] == ["container", "inspect"]:
     rc = 0 if args[-1] in state["containers"] else 1
 elif args[0] == "build":
@@ -41,15 +46,20 @@ elif args[0] == "rename":
     else:
         state["containers"][args[2]] = state["containers"].pop(args[1])
 elif args[0] == "run":
-    if state.get("run_fails"):
+    if state.get("foreign_on_run"):
+        state["containers"]["aria-gpt-bridge"] = {"running": True, "version": "foreign"}
+        rc = 17
+    elif state.get("run_fails"):
         rc = 17
     else:
         state["containers"]["aria-gpt-bridge"] = {"running": True, "version": "new"}
-        result = "new-container-id"
+        result = "c" * 64
 elif args[0] == "start":
     state["containers"][args[-1]]["running"] = True
 elif args[0] == "rm":
-    state["containers"].pop(args[-1], None)
+    name = args[-1]
+    if name == "c" * 64: name = "aria-gpt-bridge"
+    state["containers"].pop(name, None)
 elif args[0] != "info":
     rc = 41
 state_file.write_text(json.dumps(state))
@@ -123,7 +133,7 @@ def upgrade_host(tmp_path):
     state_file = tmp_path / "docker.json"
     service_calls = tmp_path / "service-calls"
 
-    def run(**changes):
+    def run(env_overrides=None, **changes):
         state.update(changes)
         state_file.write_text(json.dumps(state))
         result = subprocess.run(
@@ -134,6 +144,7 @@ def upgrade_host(tmp_path):
                 "ARIA_APPDATA_ROOT": str(data),
                 "ARIA_TEST_DOCKER_STATE": str(state_file),
                 "ARIA_TEST_SERVICE_CALLS": str(service_calls),
+                **(env_overrides or {}),
             },
             capture_output=True,
             text=True,
@@ -187,6 +198,23 @@ def test_failed_upgrade_restores_original_running_container(upgrade_host, failur
     assert result.returncode != 0
     assert "restoring the previous bridge" in result.stderr
     assert state["containers"] == {"aria-gpt-bridge": {"version": "old", "running": True}}
+
+
+def test_upgrade_rollback_preserves_concurrent_foreign_bridge(upgrade_host):
+    result, state, _ = upgrade_host(foreign_on_run=True)
+    assert result.returncode != 0
+    assert state["containers"]["aria-gpt-bridge"]["version"] == "foreign"
+    backups = [name for name in state["containers"] if name.startswith("aria-gpt-bridge-rollback-")]
+    assert len(backups) == 1
+    assert state["containers"][backups[0]]["version"] == "old"
+    assert not any(call[0] == "rm" for call in state["calls"])
+
+
+def test_remote_upgrade_labels_its_replacement_container(upgrade_host):
+    result, state, _ = upgrade_host(env_overrides={"ARIA_BRIDGE_UPDATE_ID": "trusted_internal_job"})
+    assert result.returncode == 0, result.stderr
+    run = next(call for call in state["calls"] if call[0] == "run")
+    assert run[run.index("--label") + 1] == "com.aria-gpt-bridge.update-id=trusted_internal_job"
 
 
 def test_host_boot_hook_is_idempotent_and_preserves_original(tmp_path):

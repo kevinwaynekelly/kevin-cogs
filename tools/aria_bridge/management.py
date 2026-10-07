@@ -40,6 +40,8 @@ SAFE_HOST_ERRORS = frozenset(
         "unsupported template feature",
         "rollback failed",
         "internal error",
+        "management busy",
+        "bridge update unavailable",
     }
 )
 
@@ -251,6 +253,26 @@ TOOL_SPECS = (
         ("request_id",),
         False,
     ),
+    ToolSpec(
+        "aria_bridge_update",
+        "bridge_update",
+        "Queue an Aria bridge update from its fixed repository's main branch using "
+        "fast-forward only. Preserves settings, verifies health and attempts rollback if "
+        "activation fails. May temporarily disconnect the bridge. Returns acceptance, not "
+        "completion. Poll aria_bridge_update_status after reconnecting. Reuse request_id "
+        "with identical arguments after an uncertain timeout. This uses a separate durable "
+        "updater, not aria_job_status.",
+        {"request_id": REQUEST_ID},
+        ("request_id",),
+        False,
+    ),
+    ToolSpec(
+        "aria_bridge_update_status",
+        "bridge_update_status",
+        "Read the separate durable bridge updater's latest status, including its result "
+        "after the bridge reconnects. Use this to verify aria_bridge_update completion.",
+        {},
+    ),
 )
 TOOLS = {spec.name: spec for spec in TOOL_SPECS}
 
@@ -318,6 +340,9 @@ def request(socket_path, action, arguments):
     allowed_actions = {spec.action for spec in TOOL_SPECS} | {"containers"}
     if action not in allowed_actions:
         raise ManagementError("The host management operation is not supported.")
+    status_tool = (
+        "aria_bridge_update_status" if action.startswith("bridge_update") else "aria_job_status"
+    )
     encoded = (
         json.dumps(
             {"action": action, "arguments": arguments}, ensure_ascii=True, allow_nan=False
@@ -347,7 +372,9 @@ def request(socket_path, action, arguments):
         if len(body) > MAX_RESPONSE_BYTES:
             raise ManagementError(
                 "The host management response exceeds the bridge limit. A mutation may already "
-                "be queued; retry with the same request_id and identical arguments."
+                "be queued; retry with the same request_id and identical arguments, then check "
+                + status_tool
+                + "."
             )
         if not body.endswith(b"\n") or b"\n" in body[:-1]:
             raise ValueError("Incomplete response")
@@ -362,7 +389,7 @@ def request(socket_path, action, arguments):
                 raise ManagementError("The host agent rejected this request: " + error + ".")
             raise ManagementError(
                 "The host agent rejected this request. Check the resource name and current "
-                "SHA-256, or check aria_job_status before retrying a mutation."
+                "SHA-256, or check " + status_tool + " before retrying a mutation."
             )
         if not isinstance(payload.get("result"), dict):
             raise ValueError("Invalid result")
@@ -371,12 +398,14 @@ def request(socket_path, action, arguments):
         raise ManagementError(
             "The host agent connection failed or timed out. A mutation may already be queued. "
             "Retry with the same request_id and identical arguments to recover its job, then "
-            "check aria_job_status."
+            "check " + status_tool + "."
         ) from None
     except (ValueError, UnicodeError, RecursionError):
         raise ManagementError(
             "The host agent returned an invalid response. A mutation may already be queued; "
-            "retry with the same request_id and identical arguments."
+            "retry with the same request_id and identical arguments, then check "
+            + status_tool
+            + "."
         ) from None
 
 

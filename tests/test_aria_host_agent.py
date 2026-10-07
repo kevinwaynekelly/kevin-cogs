@@ -556,3 +556,201 @@ def test_job_pruning_keeps_receipts_for_deduplication(agent):
     assert len(list((agent.state / "jobs").glob("*.json"))) == 512
     replay = agent.request("container_action", name="app", action="restart", request_id="request-1")
     assert replay["result"] == {"job_id": job_id, "status": "expired", "deduplicated": True}
+
+
+def install_update_stub(agent, tmp_path, delay=0):
+    """The updater is genuine detached PHP; only upgrade side effects are fake."""
+    runner = tmp_path / "bridge-update-stub.php"
+    runner.write_text(
+        "<?php\nrequire "
+        + json.dumps(str(HOST))
+        + ";\n"
+        + r"""
+$state = $argv[1]; $id = $argv[2];
+$lock = ariaLock($state, 'bridge-update-runner', true);
+$path = "$state/bridge-updates/$id.json";
+$job = ariaReadJson($path);
+if ($job['status'] !== 'queued') exit(0);
+file_put_contents($state.'/stub-launches', "launched\n", FILE_APPEND);
+$job['status'] = 'running'; $job['phase'] = 'testing';
+$job['started_at'] = ariaNow(); $job['pid'] = getmypid(); $job['start_time'] = 'fixture';
+ariaAtomic($path, ariaJson($job));
+usleep((int)getenv('ARIA_STUB_UPDATE_DELAY'));
+$job['status'] = 'succeeded'; $job['phase'] = 'complete'; $job['finished_at'] = ariaNow();
+$job['from_revision'] = str_repeat('a', 40); $job['to_revision'] = str_repeat('b', 40);
+$job['result'] = ['verified' => true];
+ariaAtomic($path, ariaJson($job));
+ariaUnlock($lock);
+"""
+    )
+    agent.env["ARIA_AGENT_UPDATE_RUNNER"] = str(runner)
+    agent.env["ARIA_STUB_UPDATE_DELAY"] = str(delay)
+
+
+def wait_update(agent, status="succeeded"):
+    deadline = time.monotonic() + 5
+    latest = None
+    while time.monotonic() < deadline:
+        latest = agent.request("bridge_update_status")["result"]
+        if latest["status"] == status:
+            return latest
+        time.sleep(0.02)
+    pytest.fail(f"Bridge updater did not reach {status}: {latest}")
+
+
+def seed_update(agent, status="queued", created_at="2020-01-01T00:00:00Z"):
+    agent.request("bridge_update_status")
+    job = {
+        "job_id": "previous-update",
+        "request_id": "previous-request",
+        "action": "bridge_update",
+        "status": status,
+        "phase": status,
+        "created_at": created_at,
+        "started_at": None,
+        "finished_at": None,
+        "from_revision": None,
+        "to_revision": None,
+        "error": None,
+        "result": None,
+    }
+    (agent.state / "bridge-updates" / "previous-update.json").write_text(json.dumps(job))
+    (agent.state / "bridge-update-latest.json").write_text(json.dumps({"job_id": job["job_id"]}))
+    return job
+
+
+def test_bridge_update_idle_and_no_arbitrary_launch_arguments(agent, tmp_path):
+    install_update_stub(agent, tmp_path)
+    assert agent.request("bridge_update_status")["result"]["status"] == "idle"
+    assert agent.request("capabilities")["result"]["bridge_self_update"] is True
+    for field, value in [
+        ("repository", "evil"),
+        ("branch", "topic"),
+        ("command", "id"),
+        ("path", "/tmp/script"),
+    ]:
+        assert agent.request("bridge_update", request_id="update-1", **{field: value}) == {
+            "ok": False,
+            "error": "invalid request",
+        }
+
+
+def test_bridge_update_detaches_and_deduplicates_after_launcher_exits(agent, tmp_path):
+    install_update_stub(agent, tmp_path, delay=200000)
+    accepted = agent.request("bridge_update", request_id="update-1")
+    assert accepted["ok"]
+    assert accepted["result"]["status"] == "queued"
+    # Every request uses a separate PHP process. The updater must survive it.
+    final = wait_update(agent)
+    assert final["result"] == {"verified": True}
+    assert "pid" not in final and "start_time" not in final
+    replay = agent.request("bridge_update", request_id="update-1")["result"]
+    assert replay == {
+        "job_id": accepted["result"]["job_id"],
+        "status": "succeeded",
+        "deduplicated": True,
+    }
+    assert (agent.state / "stub-launches").read_text() == "launched\n"
+    assert list((agent.state / "jobs").glob("*.json")) == []
+    assert (
+        agent.request("container_action", name="app", action="start", request_id="update-1")[
+            "error"
+        ]
+        == "request_id conflict"
+    )
+
+
+def test_bridge_update_gates_mutations_but_duplicate_queries_still_work(agent, tmp_path):
+    install_update_stub(agent, tmp_path, delay=800000)
+    normal = agent.queue("container_action", name="app", action="start", request_id="old-normal")
+    normal_path = agent.state / "jobs" / f"{normal}.json"
+    normal_job = json.loads(normal_path.read_text())
+    normal_job["status"] = "succeeded"
+    normal_path.write_text(json.dumps(normal_job))
+    accepted = agent.request("bridge_update", request_id="update-1")["result"]
+    try:
+        assert agent.request("bridge_update", request_id="update-2")["error"] == "management busy"
+        assert (
+            agent.request("container_action", name="app", action="stop", request_id="new-normal")[
+                "error"
+            ]
+            == "management busy"
+        )
+        assert (
+            agent.request("container_action", name="app", action="start", request_id="old-normal")[
+                "result"
+            ]["deduplicated"]
+            is True
+        )
+        assert (
+            agent.request("bridge_update", request_id="update-1")["result"]["job_id"]
+            == accepted["job_id"]
+        )
+        assert agent.request("containers")["ok"]
+    finally:
+        wait_update(agent)
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_bridge_update_refuses_pending_normal_jobs(agent, tmp_path, status):
+    install_update_stub(agent, tmp_path)
+    job = agent.queue("container_action", name="app", action="start")
+    path = agent.state / "jobs" / f"{job}.json"
+    record = json.loads(path.read_text())
+    record["status"] = status
+    path.write_text(json.dumps(record))
+    assert agent.request("bridge_update", request_id="update-1")["error"] == "management busy"
+    assert not (agent.state / "stub-launches").exists()
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_bridge_update_interrupted_state_is_unknown_and_never_replayed(agent, tmp_path, status):
+    install_update_stub(agent, tmp_path)
+    seed_update(agent, status)
+    response = agent.request("bridge_update_status")["result"]
+    assert response["status"] == "unknown"
+    assert response["phase"] == "interrupted"
+    assert agent.request("bridge_update", request_id="new-request")["error"] == "management busy"
+    assert (
+        agent.request("container_action", name="app", action="start", request_id="normal")["error"]
+        == "management busy"
+    )
+    assert not (agent.state / "stub-launches").exists()
+
+
+def test_bridge_update_failed_launcher_remains_uncertain_and_deduplicated(agent, tmp_path):
+    install_update_stub(agent, tmp_path)
+    agent.env["ARIA_AGENT_SETSID"] = "/bin/false"
+    first = agent.request("bridge_update", request_id="update-1")["result"]
+    assert first["status"] == "unknown"
+    second = agent.request("bridge_update", request_id="update-1")["result"]
+    assert second["job_id"] == first["job_id"]
+    assert second["deduplicated"] is True
+    assert not (agent.state / "stub-launches").exists()
+
+
+def test_bridge_update_cannot_inherit_service_lock(agent, tmp_path):
+    install_update_stub(agent, tmp_path, delay=500000)
+    launcher = (
+        "require $argv[1]; $state=$argv[2]; ariaInit($state);"
+        "$lock=fopen($state.'/inherited.lock','c'); flock($lock,LOCK_EX);"
+        "echo ariaJson(ariaDispatch($state,['action'=>'bridge_update','arguments'=>['request_id'=>'update-1']]));"
+    )
+    subprocess.run(
+        [PHP, "-r", launcher, str(HOST), str(agent.state)],
+        env=agent.env,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    try:
+        # Deliberately lacks CLOEXEC; descriptor remapping must prevent the leak.
+        assert (
+            subprocess.run(
+                ["flock", "-n", str(agent.state / "inherited.lock"), "true"], check=False
+            ).returncode
+            == 0
+        )
+    finally:
+        wait_update(agent)

@@ -64,7 +64,7 @@ cd /mnt/user/appdata/aria-gpt-bridge/source
 bash tools/aria_bridge/run-unraid.sh tunnel_YOUR_ID
 ```
 
-Replace `tunnel_YOUR_ID` with the ID from step 1. The script privately prompts for the runtime key and Red update token, writes protected credential files, takes an initial container snapshot, builds the image, installs the local management service and starts `aria-gpt-bridge`. Existing nonempty credential files are reused. It requires Unraid's Docker, native PHP with SimpleXML, `jq`, `timeout`, `flock` and Bash.
+Replace `tunnel_YOUR_ID` with the ID from step 1. The script privately prompts for the runtime key and Red update token, writes protected credential files, takes an initial container snapshot, builds the image, installs the local management service and starts `aria-gpt-bridge`. Existing nonempty credential files are reused. It requires Unraid's Docker, native PHP with SimpleXML, Git, `jq`, `timeout`, `flock`, `setsid` and Bash.
 
 The image uses Python 3.11 and the SHA256-verified official `tunnel-client` **v0.0.16** Linux AMD64 archive. Runtime UID/GID is `65532:65532`. It has a read-only root filesystem, no Docker socket, no published ports, limited memory/processes/log size and an `unless-stopped` restart policy. The private host-management socket is mounted separately. Docker on Unraid must be enabled after boot for the container to restart. No startup package download is required.
 
@@ -107,7 +107,9 @@ The bridge must keep running for these calls. Use **one active bridge per tunnel
 
 ## Upgrade, stop and revoke
 
-To upgrade the bridge code, use the installer that preserves the existing connection and builds successfully before stopping the old container:
+Once this version is installed and its tools are available, ask ChatGPT to update the Aria bridge. `aria_bridge_update` runs the fixed repository upgrade in a separate host process, and `aria_bridge_update_status` reports its durable result after reconnection. The operation preserves existing connection settings and checks replacement health. It requires a clean, fast-forwardable `main` checkout and an idle management queue. See [remote bridge upgrades](MANAGEMENT.md#upgrade-the-bridge-remotely) for recovery and tool-refresh behavior.
+
+For the initial upgrade to this version, or local recovery, use the installer:
 
 ```bash
 cd /mnt/user/appdata/aria-gpt-bridge/source

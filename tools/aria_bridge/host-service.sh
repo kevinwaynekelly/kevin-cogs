@@ -174,7 +174,7 @@ case "${1:-}" in
         if [[ "$1" == restart ]]; then aria_stop_role serve; aria_stop_role work; fi
         for aria_role in serve work; do
             if ! aria_alive "$aria_role"; then
-                ARIA_APPDATA_ROOT="$aria_data" nohup bash "$aria_source/host-service.sh" _supervise "$aria_role" 9>&- </dev/null >/dev/null 2>&1 &
+                ARIA_APPDATA_ROOT="$aria_data" setsid nohup bash "$aria_source/host-service.sh" _supervise "$aria_role" 9>&- </dev/null >/dev/null 2>&1 &
             fi
         done
         for ((aria_attempt=0; aria_attempt<30; aria_attempt++)); do

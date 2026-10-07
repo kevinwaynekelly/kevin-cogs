@@ -26,6 +26,7 @@ const ARIA_ERRORS = [
     'queue full', 'deduplication capacity reached', 'command failed',
     'operation timed out', 'protected container', 'native template converter unavailable',
     'unsupported template feature', 'rollback failed', 'internal error',
+    'management busy', 'bridge update unavailable',
 ];
 
 function ariaFail(string $message): void { throw new RuntimeException($message); }
@@ -64,14 +65,16 @@ function ariaAtomic(string $path, string $content, int $mode = 0600): void {
 function ariaInit(string $state): void {
     umask(0077);
     if (!ariaTest() && function_exists('posix_geteuid') && posix_geteuid() !== 0) ariaFail('internal error');
-    foreach ([$state, "$state/jobs", "$state/requests", "$state/backups"] as $dir) {
+    foreach ([$state, "$state/jobs", "$state/requests", "$state/backups", "$state/bridge-updates"] as $dir) {
         if (is_link($dir)) ariaFail('internal error');
         if (!is_dir($dir) && !mkdir($dir, 0700, true)) ariaFail('internal error');
         if (!chmod($dir, 0700)) ariaFail('internal error');
     }
 }
 function ariaLock(string $state, string $name, bool $nonblock = false) {
-    $handle = fopen("$state/$name.lock", 'c');
+    // Detached bridge updaters must not inherit service or queue locks across
+    // exec, or replacing the host service would deadlock on its own old locks.
+    $handle = fopen("$state/$name.lock", 'ce');
     if ($handle === false || !flock($handle, LOCK_EX | ($nonblock ? LOCK_NB : 0))) ariaFail('internal error');
     return $handle;
 }
@@ -283,6 +286,7 @@ function ariaValidate(string $action, array $a): array {
         'template_deploy' => ['template', 'expected_sha256', 'pull', 'start', 'request_id'],
         'script_run' => ['name', 'expected_sha256', 'timeout_seconds', 'request_id'],
         'container_update' => ['name', 'request_id'], 'containers_update_all' => ['request_id'],
+        'bridge_update' => ['request_id'], 'bridge_update_status' => [],
     ];
     if (!isset($fields[$action])) ariaFail('unsupported action');
     if (array_diff(array_keys($a), $fields[$action])) ariaFail('invalid request');
@@ -310,6 +314,128 @@ function ariaValidate(string $action, array $a): array {
 }
 function ariaCanonical(array $a): array { ksort($a); return $a; }
 function ariaPublicJob(array $job): array { unset($job['arguments'], $job['fingerprint']); return $job; }
+function ariaBridgeUpdateRunner(): string {
+    return ariaPath('ARIA_AGENT_UPDATE_RUNNER', __DIR__.'/bridge-update.php');
+}
+function ariaBridgeUpdateAvailable(): bool {
+    return is_file(ariaBridgeUpdateRunner()) && !is_link(ariaBridgeUpdateRunner());
+}
+function ariaBridgeLatest(string $state): ?array {
+    $pointer = "$state/bridge-update-latest.json";
+    if (!is_file($pointer)) return null;
+    $latest = ariaReadJson($pointer);
+    $id = ariaName($latest['job_id'] ?? null, 'id');
+    $path = "$state/bridge-updates/$id.json";
+    if (!is_file($path)) ariaFail('internal error');
+    return ariaReadJson($path);
+}
+function ariaBridgePublic(array $job): array {
+    unset($job['pid'], $job['start_time']);
+    return $job;
+}
+function ariaBridgeBusy(string $state): bool {
+    $latest = ariaBridgeLatest($state);
+    return $latest !== null && in_array($latest['status'] ?? '', ['queued', 'running', 'unknown'], true);
+}
+function ariaBridgeStatus(string $state): array {
+    $queueLock = ariaLock($state, 'queue');
+    try {
+        $job = ariaBridgeLatest($state);
+        if ($job === null) return ['job_id' => null, 'request_id' => null, 'action' => 'bridge_update', 'status' => 'idle', 'phase' => 'idle', 'created_at' => null, 'started_at' => null, 'finished_at' => null, 'from_revision' => null, 'to_revision' => null, 'error' => null, 'result' => null];
+        $stale = ($job['status'] === 'queued' && (strtotime($job['created_at']) ?: 0) < time() - 60) || $job['status'] === 'running';
+        if ($stale) {
+            $runnerLock = fopen("$state/bridge-update-runner.lock", 'ce');
+            if ($runnerLock !== false) {
+                if (flock($runnerLock, LOCK_EX | LOCK_NB)) {
+                    // Re-read under the runner lock. It may have committed its
+                    // terminal status between our first read and its release.
+                    $path = "$state/bridge-updates/{$job['job_id']}.json";
+                    $job = ariaReadJson($path);
+                    $stillStale = ($job['status'] === 'queued' && (strtotime($job['created_at']) ?: 0) < time() - 60) || $job['status'] === 'running';
+                    if ($stillStale) {
+                        $job['status'] = 'unknown'; $job['phase'] = 'interrupted';
+                        $job['error'] = 'bridge update interrupted'; $job['finished_at'] = ariaNow();
+                        ariaAtomic($path, ariaJson($job));
+                    }
+                    flock($runnerLock, LOCK_UN);
+                }
+                fclose($runnerLock);
+            }
+        }
+        return ariaBridgePublic($job);
+    } finally { ariaUnlock($queueLock); }
+}
+function ariaBridgeQueue(string $state, array $a): array {
+    $queueLock = ariaLock($state, 'queue');
+    try {
+        $requestId = $a['request_id'];
+        $fingerprint = hash('sha256', ariaJson(['bridge_update', []]));
+        $receiptPath = "$state/requests/$requestId.json";
+        if (is_file($receiptPath)) {
+            $receipt = ariaReadJson($receiptPath);
+            if (!hash_equals($receipt['fingerprint'], $fingerprint)) ariaFail('request_id conflict');
+            $path = "$state/bridge-updates/{$receipt['job_id']}.json";
+            $status = is_file($path) ? ariaReadJson($path)['status'] : 'unknown';
+            return ['job_id' => $receipt['job_id'], 'status' => $status, 'deduplicated' => true];
+        }
+        if (ariaBridgeBusy($state)) ariaFail('management busy');
+        foreach (glob("$state/jobs/*.json") ?: [] as $path) {
+            if (in_array(ariaReadJson($path)['status'], ['queued', 'running'], true)) ariaFail('management busy');
+        }
+        if (!ariaBridgeUpdateAvailable()) ariaFail('bridge update unavailable');
+        if (count(glob("$state/requests/*.json") ?: []) >= ARIA_MAX_RECEIPTS) ariaFail('deduplication capacity reached');
+        $jobId = gmdate('YmdHis').'-'.bin2hex(random_bytes(12));
+        $job = ['job_id' => $jobId, 'request_id' => $requestId, 'action' => 'bridge_update', 'status' => 'queued', 'phase' => 'queued', 'created_at' => ariaNow(), 'started_at' => null, 'finished_at' => null, 'from_revision' => null, 'to_revision' => null, 'error' => null, 'result' => null];
+        // Receipt first means even a failed or interrupted launch cannot be
+        // replayed by retrying a request whose acknowledgement was lost.
+        ariaAtomic($receiptPath, ariaJson(['fingerprint' => $fingerprint, 'job_id' => $jobId, 'action' => 'bridge_update']));
+        ariaAtomic("$state/bridge-updates/$jobId.json", ariaJson($job));
+        ariaAtomic("$state/bridge-update-latest.json", ariaJson(['job_id' => $jobId]));
+        $launched = false;
+        try {
+            $pipes = [];
+            if (!is_dir('/proc/self/fd')) ariaFail('bridge update unavailable');
+            $descriptors = [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'a'], 2 => ['file', '/dev/null', 'a']];
+            // PHP's listening/accepted Unix streams do not universally set
+            // CLOEXEC. Remap every other inherited descriptor before exec so
+            // the updater cannot retain the old listener, client, or locks.
+            foreach (glob('/proc/self/fd/*') ?: [] as $descriptorPath) {
+                $descriptor = basename($descriptorPath);
+                if (ctype_digit($descriptor) && (int)$descriptor >= 3) $descriptors[(int)$descriptor] = ['file', '/dev/null', 'r+'];
+            }
+            // No ariaRun here: its timeout process group is intentionally
+            // cleaned up with the host worker. This runner must outlive both
+            // host services and the bridge it is replacing.
+            $process = proc_open([
+                ariaPath('ARIA_AGENT_SETSID', '/usr/bin/setsid'), '--fork',
+                '/usr/bin/php', ariaBridgeUpdateRunner(), $state, $jobId,
+            ], $descriptors, $pipes, __DIR__, null, ['bypass_shell' => true]);
+            if (!is_resource($process)) ariaFail('bridge update unavailable');
+            $launched = true;
+            if (proc_close($process) !== 0) ariaFail('bridge update unavailable');
+        } catch (Throwable $e) {
+            $runnerLock = fopen("$state/bridge-update-runner.lock", 'ce');
+            if ($runnerLock !== false) {
+                if (flock($runnerLock, LOCK_EX | LOCK_NB)) {
+                    $job = ariaReadJson("$state/bridge-updates/$jobId.json");
+                    if (in_array($job['status'], ['queued', 'running'], true)) {
+                        // A setsid launcher can fail after it forked. Never
+                        // unblock mutations based on an ambiguous launcher exit.
+                        $job['status'] = $launched ? 'unknown' : 'failed';
+                        $job['phase'] = $launched ? 'launch_uncertain' : 'launch_failed';
+                        $job['error'] = 'bridge update unavailable'; $job['finished_at'] = ariaNow();
+                        ariaAtomic("$state/bridge-updates/$jobId.json", ariaJson($job));
+                    }
+                    flock($runnerLock, LOCK_UN);
+                }
+                fclose($runnerLock);
+            }
+            $job = ariaReadJson("$state/bridge-updates/$jobId.json");
+            return ['job_id' => $jobId, 'status' => $job['status'], 'deduplicated' => false];
+        }
+        return ['job_id' => $jobId, 'status' => 'queued', 'deduplicated' => false];
+    } finally { ariaUnlock($queueLock); }
+}
 function ariaQueue(string $state, string $action, array $a): array {
     $lock = ariaLock($state, 'queue');
     try {
@@ -323,6 +449,7 @@ function ariaQueue(string $state, string $action, array $a): array {
             $status = is_file($jobFile) ? ariaReadJson($jobFile)['status'] : 'expired';
             return ['job_id' => $receipt['job_id'], 'status' => $status, 'deduplicated' => true];
         }
+        if (ariaBridgeBusy($state)) ariaFail('management busy');
         if (count(glob("$state/requests/*.json") ?: []) >= ARIA_MAX_RECEIPTS) ariaFail('deduplication capacity reached');
         $pending = 0;
         foreach (glob("$state/jobs/*.json") ?: [] as $path) if (in_array(ariaReadJson($path)['status'], ['queued', 'running'], true)) $pending++;
@@ -352,10 +479,12 @@ function ariaQueue(string $state, string $action, array $a): array {
 function ariaDispatch(string $state, $request): array {
     if (!is_array($request) || array_diff(array_keys($request), ['action', 'arguments']) || !is_string($request['action'] ?? null) || !isset($request['arguments']) || !is_array($request['arguments'])) ariaFail('invalid request');
     $action = $request['action']; $a = ariaValidate($action, $request['arguments']);
+    if ($action === 'bridge_update') return ariaBridgeQueue($state, $a);
+    if ($action === 'bridge_update_status') return ariaBridgeStatus($state);
     if (isset($a['request_id'])) return ariaQueue($state, $action, $a);
     switch ($action) {
         case 'capabilities':
-            return ['version' => 1, 'host_execution' => true, 'queue' => true, 'requires_request_id' => true, 'native_converter_available' => is_file(ariaPath('ARIA_AGENT_NATIVE', '/usr/local/emhttp/plugins/dynamix.docker.manager/include/DockerClient.php')), 'bulk_skipped_containers' => ARIA_PROTECTED, 'protected_containers' => ['aria-gpt-bridge'], 'script_scope' => 'installed Unraid User Scripts, root on host', 'template_secrets' => 'environment values, labels, and sensitive fields redacted; keep placeholders when editing', 'output_redaction' => 'best effort; scripts and application logs can print secrets in unrecognized formats', 'unsupported_template_features' => ['native Tailscale', 'replacement with Docker volumes not explicitly tracked in the template'], 'max_template_bytes' => ARIA_MAX_XML, 'max_script_bytes' => ARIA_MAX_XML, 'max_timeout_seconds' => 86400, 'job_retention' => ARIA_MAX_JOBS, 'deduplication_receipt_limit' => ARIA_MAX_RECEIPTS];
+            return ['version' => 1, 'host_execution' => true, 'queue' => true, 'requires_request_id' => true, 'bridge_self_update' => ariaBridgeUpdateAvailable(), 'bridge_update_status_action' => 'bridge_update_status', 'native_converter_available' => is_file(ariaPath('ARIA_AGENT_NATIVE', '/usr/local/emhttp/plugins/dynamix.docker.manager/include/DockerClient.php')), 'bulk_skipped_containers' => ARIA_PROTECTED, 'protected_containers' => ['aria-gpt-bridge'], 'script_scope' => 'installed Unraid User Scripts, root on host', 'template_secrets' => 'environment values, labels, and sensitive fields redacted; keep placeholders when editing', 'output_redaction' => 'best effort; scripts and application logs can print secrets in unrecognized formats', 'unsupported_template_features' => ['native Tailscale', 'replacement with Docker volumes not explicitly tracked in the template'], 'max_template_bytes' => ARIA_MAX_XML, 'max_script_bytes' => ARIA_MAX_XML, 'max_timeout_seconds' => 86400, 'job_retention' => ARIA_MAX_JOBS, 'deduplication_receipt_limit' => ARIA_MAX_RECEIPTS];
         case 'containers': return ['containers' => ariaContainers(), 'checked_at' => ariaNow()];
         case 'container_inspect':
             $info = ariaInspect($a['name']); $env = [];

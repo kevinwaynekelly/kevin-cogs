@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07: Remote Aria bridge upgrades
+
+- Add `aria_bridge_update` and `aria_bridge_update_status` so an activated installation can upgrade its own bridge from the fixed repository's `main` branch. Preserve tunnel credentials and runtime settings, require a clean fast-forwardable checkout and idle job queue, and report durable progress across tunnel reconnection.
+- Run the updater outside the service it replaces. Block concurrent management mutations, preserve request deduplication, verify replacement health, and attempt source and host-service recovery after a failed upgrade. Interrupted or uncertain updates require inspection rather than automatic replay.
+- Keep the bridge protected from ordinary container operations. The first installation of the self-update tools still requires the host upgrade command; refreshing ChatGPT's available tools remains separate from updating server code.
+
 ## 2026-10-07: Repair Aria host-service restarts
 
 - Close the supervisor lock in background timers and wait for the previous supervisor's lock to be released before replacing it. This prevents a restart from leaving the API available but the job worker stopped. Exercise both the inherited-lock failure and the shutdown handoff with real Bash and file locks.
