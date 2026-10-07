@@ -219,9 +219,12 @@ case "${1:-}" in
         aria_error 'Host management failed to start; inspect management/serve.log, work.log and automation.log.'
         exit 1
         ;;
+    # Migration reserves the queue before quiescing submitters. The worker can
+    # then stop after that queue lock is released.
+    quiesce) aria_stop_role dashboard; aria_stop_role automation; aria_stop_role serve; rm -f "$aria_runtime/agent.sock" ;;
     dashboard-disable) aria_stop_role dashboard; rm -f "$aria_state/dashboard-enabled" ;;
     stop) aria_stop_role dashboard; aria_stop_role automation; aria_stop_role serve; aria_stop_role work; rm -f "$aria_runtime/agent.sock" ;;
     status) for aria_role in serve work automation dashboard; do if aria_alive "$aria_role"; then printf '%s running\n' "$aria_role"; else printf '%s stopped\n' "$aria_role"; fi; done ;;
     install-boot) aria_install_boot; printf 'Boot startup installed; the original go file was backed up before adding its marker.\n' ;;
-    *) aria_error 'Usage: bash host-service.sh {start|stop|restart|status|install-boot|dashboard-enable|dashboard-disable}'; exit 1 ;;
+    *) aria_error 'Usage: bash host-service.sh {start|stop|restart|quiesce|status|install-boot|dashboard-enable|dashboard-disable}'; exit 1 ;;
 esac

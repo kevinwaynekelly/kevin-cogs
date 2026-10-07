@@ -34,6 +34,10 @@ and management queue, and refuses queued, running or uncertain jobs. The clone
 becomes `/mnt/user/appdata/aria-gpt-bridge/source-standalone`. Any directory
 already at that destination is preserved and causes migration to stop.
 
+Migration stops the socket service and scheduler while holding the queue lock,
+then releases that lock to stop the idle worker. It reserves the queue again
+before starting the replacement, avoiding a shutdown blocked by its own lock.
+
 The bridge briefly disconnects while the host service and container switch to
 the dedicated source. The existing upgrade procedure preserves the actual
 tunnel ID, credential files, Red endpoint, mounted status directory and

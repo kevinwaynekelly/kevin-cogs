@@ -122,8 +122,15 @@ def migration(tmp_path):
             "#!/bin/bash\nset -euo pipefail\n"
             f'printf "{version} %s\\n" "$1" >> "$ARIA_TEST_SERVICES"\n'
             'case "$1" in\n'
-            f' restart) printf "{version}" > "$ARIA_TEST_ACTIVE";;\n'
-            f' install-boot) printf "{version}" > "$ARIA_TEST_BOOT";;\n'
+            ' quiesce) if flock -n "$ARIA_APPDATA_ROOT/management/queue.lock" true; then exit 81; fi;;\n'
+            ' stop) flock -n "$ARIA_APPDATA_ROOT/management/queue.lock" true || exit 82;;\n'
+            + (
+                ' restart) flock -n "$ARIA_APPDATA_ROOT/management/queue.lock" true || exit 83; '
+                'printf "old" > "$ARIA_TEST_ACTIVE";;\n'
+                if version == "old"
+                else ' restart) printf "new" > "$ARIA_TEST_ACTIVE";;\n'
+            )
+            + f' install-boot) printf "{version}" > "$ARIA_TEST_BOOT";;\n'
             "esac\n"
         )
         git_run("init", "--initial-branch=main", str(source))
@@ -230,6 +237,7 @@ def test_migration_uses_new_repository_preserving_source_tunnel_and_data(migrati
     assert migration.git("remote", "get-url", "origin", cwd=migration.destination) == NEW_ORIGIN
     assert migration.git("status", "--porcelain", cwd=migration.destination) == ""
     assert migration.trace.read_text().splitlines() == [
+        "old quiesce",
         "old stop",
         "new restart",
         "new install-boot",

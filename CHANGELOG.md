@@ -1,5 +1,10 @@
 # Changelog
 
+## Aria migration shutdown
+
+- Stop new management requests before releasing the queue lock for idle worker shutdown,
+  then reserve it again for the repository switch. Release it before failure recovery too.
+
 ## Aria container startup recovery
 
 - Normalize image runtime permissions after private Git updates and verify imports as the

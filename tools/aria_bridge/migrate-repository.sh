@@ -49,6 +49,7 @@ aria_recover() {
     trap - EXIT INT TERM
     if [[ "$aria_complete" != true && "$aria_host_stopped" == true ]]; then
         printf 'Migration failed; restoring the original host-service and boot paths.\n' >&2
+        flock -u 5 || true
         ARIA_APPDATA_ROOT="$aria_data" bash "$aria_source/host-service.sh" restart 5>&- 6>&- 7>&- || aria_recovered=false
         ARIA_APPDATA_ROOT="$aria_data" bash "$aria_source/host-service.sh" install-boot 5>&- 6>&- 7>&- || aria_recovered=false
         if [[ "$aria_recovered" != true ]]; then
@@ -94,7 +95,13 @@ aria_assert_old_checkout
 mv -T -n -- "$aria_new_source" "$aria_destination"
 [[ ! -e "$aria_new_source" ]] || { aria_error 'The migration destination appeared concurrently and was preserved.'; exit 1; }
 aria_host_stopped=true
+ARIA_APPDATA_ROOT="$aria_data" bash "$aria_source/host-service.sh" quiesce 5>&- 6>&- 7>&-
+# Socket and scheduler submitters are stopped while the queue is reserved.
+# Release it while stopping the idle worker; keeping it locked here can make
+# native PHP shutdown block inside flock. Reserve it again before replacement.
+flock -u 5
 ARIA_APPDATA_ROOT="$aria_data" bash "$aria_source/host-service.sh" stop 5>&- 6>&- 7>&-
+flock -w 15 5 || { aria_error 'The queue became busy after host shutdown; migration stopped.'; exit 1; }
 ARIA_APPDATA_ROOT="$aria_data" ARIA_INHERITED_INSTALL_LOCK=1 bash "$aria_destination/tools/aria_bridge/upgrade-unraid.sh" 5>&- 6>&-
 aria_complete=true
 printf 'Migration complete. Active bridge source: %s\nOriginal source retained for recovery: %s\n' "$aria_destination" "$aria_old_source"
