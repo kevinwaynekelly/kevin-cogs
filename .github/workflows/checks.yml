@@ -1,4 +1,4 @@
-name: Cog checks
+name: Aria bridge checks
 
 on:
   push:
@@ -21,28 +21,25 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: requirements-dev.txt
+      - name: Install native test dependencies
+        run: sudo apt-get update && sudo apt-get install -y php-cli php-xml jq openssl
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
           package-manager-cache: false
-      - name: Install local test dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libopus0 php-cli php-xml jq
-      - name: Install test dependencies
+      - name: Install Python test dependencies
         run: python -m pip install -r requirements-dev.txt
       - name: Lint and formatting
         run: |
           python -m ruff check .
           python -m ruff format --check .
+      - name: PHP and shell syntax
+        run: |
+          for file in tools/aria_bridge/*.php; do php -l "$file"; done
+          for file in tools/aria_bridge/*.sh; do bash -n "$file"; done
       - name: Regression tests
         run: python -m pytest -q
-      - name: Native Aria process supervision
+      - name: Native process supervision
         run: sudo "$(command -v python)" -m pytest -q tests/test_aria_bridge_install.py -k service_shutdown_terminates_timeout_group
-      - name: Dashboard script syntax
-        run: node --check dashboardplus/web/app.js
-      - name: Dashboard interactions
-        run: node tests/dashboard_frontend.js
-      - name: Syntax, metadata, and whitespace
-        run: |
-          python -m compileall -q audioplus communityplus levelplus logplus owoplus settingshub emojistealerplus exportplus backupplus introplus presenceplus coreplus downloaderplus dashboardplus
-          python -c "import json, pathlib; [json.loads(p.read_text()) for p in [pathlib.Path('info.json'), *pathlib.Path('.').glob('*/info.json')]]"
-          git diff --check
+      - name: Whitespace
+        run: git diff --check

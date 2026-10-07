@@ -1,33 +1,7 @@
-# Python-generated files
 __pycache__/
 *.py[cod]
-*.egg-info/
-build/
-dist/
-
-# Local environments and caches
-.venv*/
-venv/
 .pytest_cache/
-.mypy_cache/
 .ruff_cache/
-.coverage
-htmlcov/
-
-# Live Red databases and generated audio/chat files. Commit settings-only exports instead.
-**/settings.json
-**/songs/
-**/clips/
-**/exports/
-
-# Local secrets and editor/OS files
+.venv/
 .env
-.env.*
-!.env.example
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
-
-# Private operational failure handoff, not source code.
-**/alerts/unraid.json
+*.log
