@@ -7,10 +7,12 @@ agent owns the fixed operations, version checks, backups and durable jobs.
 from __future__ import annotations
 
 import json
+import math
 import re
 import socket
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 MAX_XML_BYTES = 128 * 1024
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -42,6 +44,23 @@ SAFE_HOST_ERRORS = frozenset(
         "internal error",
         "management busy",
         "bridge update unavailable",
+        "policy denied",
+        "healthcheck required",
+        "appdata in use",
+        "unsupported appdata entry",
+        "copy budget exceeded",
+        "copy verification failed",
+        "application credential unavailable",
+        "application transport unavailable",
+        "application connection failed",
+        "application redirect refused",
+        "application authentication failed",
+        "application operation unavailable",
+        "application request failed",
+        "application response too large",
+        "application invalid response",
+        "application outcome unknown",
+        "operation outcome unknown",
     }
 )
 
@@ -274,46 +293,115 @@ TOOL_SPECS = (
         {},
     ),
 )
+
+
+def extension_specs():
+    """Load only the fixed, installed manifests, never a caller-supplied path."""
+    specs = []
+    for module in ("operations", "diagnostics", "applications", "automation", "deployment"):
+        path = Path(__file__).with_name(module + "-tools.json")
+        if not path.is_file():
+            continue
+        for row in json.loads(path.read_text(encoding="utf-8")):
+            if not row["action"].startswith(module + "_"):
+                raise ValueError("Invalid installed tool manifest")
+            specs.append(
+                ToolSpec(
+                    row["name"],
+                    row["action"],
+                    row["description"],
+                    row["properties"],
+                    tuple(row.get("required", ())),
+                    row["read_only"],
+                )
+            )
+    return tuple(specs)
+
+
+TOOL_SPECS += extension_specs()
 TOOLS = {spec.name: spec for spec in TOOL_SPECS}
+if len(TOOLS) != len(TOOL_SPECS):
+    raise ValueError("Duplicate installed tools")
+
+
+def validate_value(value, field, depth=0):
+    """Validate the same bounded schema subset as the privileged host."""
+    if depth > 16 or ("enum" in field and value not in field["enum"]):
+        raise ArgumentError("An argument has an invalid value.")
+    kind = field["type"]
+    if kind == "string":
+        if (
+            not isinstance(value, str)
+            or not field.get("minLength", 0) <= len(value) <= field.get("maxLength", MAX_XML_BYTES)
+            or "\x00" in value
+            or ("pattern" in field and re.fullmatch(field["pattern"], value) is None)
+        ):
+            raise ArgumentError("A string argument is invalid or exceeds its limit.")
+        try:
+            encoded = value.encode("utf-8")
+        except UnicodeError:
+            raise ArgumentError("A string argument contains invalid Unicode.") from None
+        if len(encoded) > field.get("maxBytes", MAX_XML_BYTES):
+            raise ArgumentError("A string argument exceeds its byte limit.")
+    elif kind in ("integer", "number"):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int if kind == "integer" else (int, float))
+            or not math.isfinite(value)
+            or not field.get("minimum", -(2**63)) <= value <= field.get("maximum", 2**63 - 1)
+        ):
+            raise ArgumentError("A numeric argument is outside its permitted range.")
+    elif kind == "boolean":
+        if not isinstance(value, bool):
+            raise ArgumentError("A boolean argument must be true or false.")
+    elif kind == "array":
+        if not isinstance(value, list) or not field.get("minItems", 0) <= len(value) <= field.get(
+            "maxItems", 128
+        ):
+            raise ArgumentError("An array argument is invalid or exceeds its limit.")
+        value = [validate_value(item, field["items"], depth + 1) for item in value]
+        if field.get("uniqueItems") and len(
+            {json.dumps(item, sort_keys=True) for item in value}
+        ) != len(value):
+            raise ArgumentError("An array argument contains duplicates.")
+    elif kind == "object":
+        if not isinstance(value, dict) or len(value) > field.get("maxProperties", 128):
+            raise ArgumentError("An object argument is invalid or exceeds its limit.")
+        properties = field.get("properties", {})
+        if set(field.get("required", ())) - set(value):
+            raise ArgumentError("An object argument omits required fields.")
+        result = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or len(key.encode("utf-8")) > 256 or "\x00" in key:
+                raise ArgumentError("An object key is invalid.")
+            if key in properties:
+                result[key] = validate_value(item, properties[key], depth + 1)
+            elif isinstance(field.get("additionalProperties"), dict):
+                result[key] = validate_value(item, field["additionalProperties"], depth + 1)
+            elif field.get("additionalProperties") is True:
+                result[key] = item
+            else:
+                raise ArgumentError("An object argument contains unknown fields.")
+        for key, prop in properties.items():
+            if key not in result and "default" in prop:
+                result[key] = validate_value(prop["default"], prop, depth + 1)
+        value = result
+    else:
+        raise ArgumentError("Unsupported installed argument schema.")
+    return value
 
 
 def validate_arguments(spec, arguments):
-    """Enforce precisely the schema subset we publish, before contacting the host."""
-    if not isinstance(arguments, dict):
-        raise ArgumentError("Tool arguments must be an object.")
-    if set(arguments) - set(spec.properties) or set(spec.required) - set(arguments):
-        raise ArgumentError("Tool arguments contain unknown fields or omit required fields.")
-    result = {}
-    for name, field in spec.properties.items():
-        if name not in arguments:
-            if "default" in field:
-                result[name] = field["default"]
-            continue
-        value = arguments[name]
-        if field["type"] == "string":
-            if (
-                not isinstance(value, str)
-                or not field.get("minLength", 0) <= len(value) <= field["maxLength"]
-                or ("pattern" in field and re.fullmatch(field["pattern"], value) is None)
-                or "\x00" in value
-            ):
-                raise ArgumentError("A string argument has an invalid value or exceeds its limit.")
-            try:
-                encoded = value.encode("utf-8")
-            except UnicodeError:
-                raise ArgumentError("A string argument contains invalid Unicode.") from None
-            if name == "xml" and len(encoded) > MAX_XML_BYTES:
-                raise ArgumentError("Template XML exceeds the 128 KiB limit.")
-        elif field["type"] == "integer":
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or not field["minimum"] <= value <= field["maximum"]
-            ):
-                raise ArgumentError("An integer argument is outside its permitted range.")
-        elif field["type"] == "boolean" and not isinstance(value, bool):
-            raise ArgumentError("A boolean argument must be true or false.")
-        result[name] = value
+    """Enforce the installed schema before contacting the privileged host."""
+    result = validate_value(
+        arguments,
+        {
+            "type": "object",
+            "properties": spec.properties,
+            "required": list(spec.required),
+            "additionalProperties": False,
+        },
+    )
     result.update(spec.fixed_arguments)
     return result
 

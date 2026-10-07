@@ -15,7 +15,7 @@ RUN python /tmp/install_tunnel.py \
     && mkdir -p /app /host/proc /host/etc /run/secrets /run/aria-agent /status
 
 WORKDIR /app
-COPY server.py management.py entrypoint.sh ./
+COPY server.py management.py entrypoint.sh *-tools.json ./
 RUN chmod 0555 /app/entrypoint.sh /app/server.py
 USER 65532:65532
 

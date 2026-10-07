@@ -50,4 +50,5 @@ aria_status_dir="$aria_data/status"
 aria_resource_flags=(--pids-limit 64 --memory 256m --cpus 1)
 aria_run_container
 aria_wait_healthy || { aria_error 'Bridge startup failed. Inspect docker logs aria-gpt-bridge locally.'; exit 1; }
+aria_record_installed_revision
 printf 'Aria bridge is healthy; host management is enabled and will start after reboot.\n'

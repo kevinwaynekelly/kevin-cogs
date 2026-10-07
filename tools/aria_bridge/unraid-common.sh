@@ -11,8 +11,15 @@ aria_install_lock() {
     mkdir -p "$aria_data"
     chmod 700 "$aria_data"
     [[ ! -L "$aria_data/install.lock" ]] || { aria_error 'The installer lock must not be a symlink.'; return 1; }
-    exec 7> "$aria_data/install.lock"
-    flock -n 7 || { aria_error 'Another Aria installation or upgrade is already running.'; return 1; }
+    if [[ "${ARIA_INHERITED_INSTALL_LOCK:-}" == 1 ]]; then
+        # The repository migration keeps the installer lock across its child
+        # upgrade. Only the exact already-open lock inode may be reused.
+        [[ /proc/self/fd/7 -ef "$aria_data/install.lock" ]] || { aria_error 'The inherited Aria installer lock is invalid.'; return 1; }
+        flock -n 7 || { aria_error 'The inherited Aria installer lock is unavailable.'; return 1; }
+    else
+        exec 7> "$aria_data/install.lock"
+        flock -n 7 || { aria_error 'Another Aria installation or upgrade is already running.'; return 1; }
+    fi
     if [[ -f "$aria_data/management/bridge-update-runner.lock" ]] && ! flock -n "$aria_data/management/bridge-update-runner.lock" true; then
         # Only the detached updater's current child installer may pass its
         # liveness lock. A manual installer must not race source replacement.
@@ -41,6 +48,15 @@ aria_preflight() {
     }
     php -l "$aria_source/host-agent.php" >/dev/null || return 1
     php -l "$aria_source/bridge-update.php" >/dev/null || return 1
+    local aria_module
+    for aria_module in extensions operations diagnostics applications deployment automation; do
+        [[ -f "$aria_source/host-$aria_module.php" ]] || { aria_error "Missing host module: $aria_module"; return 1; }
+        php -l "$aria_source/host-$aria_module.php" >/dev/null || return 1
+        if [[ "$aria_module" != extensions ]]; then
+            jq -e 'type == "array" and length > 0' "$aria_source/$aria_module-tools.json" >/dev/null || return 1
+        fi
+    done
+    [[ -f "$aria_source/automation-service.sh" ]] || { aria_error 'The automation service launcher is missing.'; return 1; }
     aria_valid_path "$aria_data" || { aria_error 'Use an absolute appdata path without commas or newlines.'; return 1; }
     case "$aria_source" in /mnt/*|/boot/*) ;; *) aria_error 'Keep the bridge checkout on persistent Unraid storage under /mnt or /boot.'; return 1;; esac
     [[ ! -L "$aria_data" && ! -L "$aria_data/management" && ! -L /var/run/aria-gpt-bridge ]] || {
@@ -50,9 +66,14 @@ aria_preflight() {
 
 aria_run_container() {
     local -a aria_update_labels=()
+    local aria_revision
+    aria_revision="$(git -C "$aria_source" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "$aria_revision" =~ ^[a-f0-9]{40}$ ]]; then
+        aria_update_labels+=(--label "com.aria-gpt-bridge.source-revision=$aria_revision")
+    fi
     if [[ -n "${ARIA_BRIDGE_UPDATE_ID:-}" ]]; then
         [[ "$ARIA_BRIDGE_UPDATE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] || { aria_error 'Invalid internal bridge update ID.'; return 1; }
-        aria_update_labels=(--label "com.aria-gpt-bridge.update-id=$ARIA_BRIDGE_UPDATE_ID")
+        aria_update_labels+=(--label "com.aria-gpt-bridge.update-id=$ARIA_BRIDGE_UPDATE_ID")
     fi
     docker run -d --name aria-gpt-bridge \
         --init --restart unless-stopped --read-only --user 65532:65532 \
@@ -74,6 +95,17 @@ aria_run_container() {
         --mount type=bind,src=/proc/meminfo,dst=/host/proc/meminfo,readonly \
         --mount type=bind,src=/etc/unraid-version,dst=/host/etc/unraid-version,readonly \
         aria-gpt-bridge:v1
+}
+
+aria_record_installed_revision() {
+    local aria_revision
+    aria_revision="$(git -C "$aria_source" rev-parse HEAD 2>/dev/null || true)"
+    [[ "$aria_revision" =~ ^[a-f0-9]{40}$ ]] || return 0
+    mkdir -p "$aria_data/management"
+    jq -n --arg revision "$aria_revision" --arg installed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{revision:$revision,installed_at:$installed_at}' > "$aria_data/management/.installed-revision.tmp"
+    chmod 600 "$aria_data/management/.installed-revision.tmp"
+    mv -f "$aria_data/management/.installed-revision.tmp" "$aria_data/management/installed-revision.json"
 }
 
 aria_wait_healthy() {

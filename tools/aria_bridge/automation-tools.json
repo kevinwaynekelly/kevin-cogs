@@ -1,0 +1,275 @@
+[
+  {
+    "name": "aria_automation_status",
+    "action": "automation_status",
+    "description": "Read host scheduler heartbeat, last bridge update check and schedule runtime.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_automation_schedules",
+    "action": "automation_schedules",
+    "description": "List durable schedules with compare-and-swap hashes. Action arguments are redacted.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_automation_dashboard",
+    "action": "automation_dashboard",
+    "description": "Create and return a private static HTML status snapshot, available on the host without ChatGPT. No HTTP listener.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_automation_jobs",
+    "action": "automation_jobs",
+    "description": "List recent jobs and queued/running states. Read individual job status for full output.",
+    "properties": {
+      "status": {
+        "type": "string",
+        "enum": [
+          "all",
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "partial",
+          "unknown",
+          "cancelled"
+        ]
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_automation_inbox",
+    "action": "automation_inbox",
+    "description": "Read locally stored job failure and automation notifications; no external messages.",
+    "properties": {
+      "include_acknowledged": {
+        "type": "boolean"
+      }
+    },
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_automation_schedule_save",
+    "action": "automation_schedule_save",
+    "description": "Create/update an interval, daily or job-success workflow. Edits require the current schedule hash. Automation runs only when management is idle; changed scripts fail their pinned hash. No container schedules are installed by default.",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Stable identifier.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "label": {
+        "type": "string",
+        "description": "Human-readable label.",
+        "maxLength": 120
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "trigger": {
+        "type": "string",
+        "enum": [
+          "interval",
+          "daily",
+          "event"
+        ]
+      },
+      "interval_minutes": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 525600
+      },
+      "daily_time": {
+        "type": "string",
+        "description": "HH:MM local time.",
+        "maxLength": 5
+      },
+      "time_zone": {
+        "type": "string",
+        "description": "IANA timezone, e.g. America/Chicago.",
+        "maxLength": 128
+      },
+      "event_action": {
+        "type": "string",
+        "description": "Successful source action for an event rule.",
+        "maxLength": 81
+      },
+      "event_status": {
+        "type": "string",
+        "enum": [
+          "succeeded"
+        ]
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "script_run",
+          "container_action",
+          "container_update",
+          "template_deploy",
+          "operations_archive_create",
+          "operations_archive_verify",
+          "operations_script_run_arguments",
+          "operations_config_inventory",
+          "applications_command",
+          "bridge_auto_update"
+        ]
+      },
+      "arguments": {
+        "type": "object",
+        "description": "Arguments for the selected action without request_id; target action schema is validated. Pin script/profile/template hashes.",
+        "additionalProperties": true
+      },
+      "window_start": {
+        "type": "string",
+        "description": "Optional inclusive HH:MM maintenance-window start.",
+        "maxLength": 5
+      },
+      "window_end": {
+        "type": "string",
+        "description": "Optional exclusive HH:MM end; supports windows spanning midnight.",
+        "maxLength": 5
+      },
+      "window_timezone": {
+        "type": "string",
+        "description": "IANA timezone of the maintenance window.",
+        "maxLength": 128
+      },
+      "expected_sha256": {
+        "type": "string",
+        "description": "SHA-256 from schedule list; empty string only for creation.",
+        "maxLength": 64,
+        "pattern": "^(?:[a-f0-9]{64})?$"
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Unique request identifier; repeat only to recover the same operation.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "use_event_archive": {
+        "type": "boolean",
+        "description": "For an archive-create success event leading to archive verification, bind archive_id and expected_sha256 from that exact job result; omit those two fields from arguments."
+      }
+    },
+    "required": [
+      "id",
+      "action",
+      "arguments",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_automation_schedule_delete",
+    "action": "automation_schedule_delete",
+    "description": "Delete a schedule using its current hash.",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Stable identifier.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "description": "SHA-256 from schedule list; empty string only for creation.",
+        "maxLength": 64,
+        "pattern": "^(?:[a-f0-9]{64})?$"
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Unique request identifier; repeat only to recover the same operation.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "id",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_automation_job_cancel",
+    "action": "automation_job_cancel",
+    "description": "Immediately cancel a queued job atomically. Running or ambiguous jobs cannot be cancelled through this action.",
+    "properties": {
+      "job_id": {
+        "type": "string",
+        "description": "Stable identifier.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Unique request identifier; repeat only to recover the same operation.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "job_id",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_automation_inbox_ack",
+    "action": "automation_inbox_ack",
+    "description": "Acknowledge one local notification.",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Stable identifier.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Unique request identifier; repeat only to recover the same operation.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "id",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_automation_bridge_check",
+    "action": "automation_bridge_check",
+    "description": "Check fixed repository main for bridge changes and verify GitHub CI without installing. The separate default daily host schedule can install CI-verified revisions during its maintenance window.",
+    "properties": {
+      "request_id": {
+        "type": "string",
+        "description": "Unique request identifier; repeat only to recover the same operation.",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "request_id"
+    ],
+    "read_only": false
+  }
+]

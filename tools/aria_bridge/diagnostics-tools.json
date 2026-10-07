@@ -1,0 +1,439 @@
+[
+  {
+    "name": "aria_diagnostics_health",
+    "action": "diagnostics_health",
+    "description": "Read live host memory, load, uptime, Unraid and source versions, worker observation and job counts.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_storage",
+    "action": "diagnostics_storage",
+    "description": "Read filesystem use and mount inventory without scanning file contents.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_shares",
+    "action": "diagnostics_shares",
+    "description": "List Unraid share settings, including SMB export and access lists, excluding credentials.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_permissions",
+    "action": "diagnostics_permissions",
+    "description": "Inspect POSIX ownership and permissions for one existing path under /mnt; does not recurse or modify files.",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 4096
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_container",
+    "action": "diagnostics_container",
+    "description": "Diagnose one container using Docker state, OOM and restart evidence, mount existence and redacted recent logs.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_resources",
+    "action": "diagnostics_resources",
+    "description": "Sample container CPU, RAM, network, block I/O and PIDs. Retains up to 64 bounded snapshots locally.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_resource_history",
+    "action": "diagnostics_resource_history",
+    "description": "Read up to 20 retained resource snapshots collected on demand or by a configured monitoring schedule.",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20,
+        "default": 10
+      }
+    },
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_network",
+    "action": "diagnostics_network",
+    "description": "Run a bounded host DNS, TCP, HTTP or TLS certificate check. DNS needs host; TCP needs host and port; TLS needs host and optional port (443); HTTP needs url. No redirects, credentials or response bodies are returned.",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "dns",
+          "tcp",
+          "http",
+          "tls"
+        ]
+      },
+      "host": {
+        "type": "string",
+        "maxLength": 253
+      },
+      "port": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+      },
+      "url": {
+        "type": "string",
+        "maxLength": 2048
+      }
+    },
+    "required": [
+      "kind"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_devices",
+    "action": "diagnostics_devices",
+    "description": "List GPU utilization, PCI and USB inventory using installed host tools. Missing dependencies are reported.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_disks",
+    "action": "diagnostics_disks",
+    "description": "List block devices, filesystems, models and mountpoints using lsblk.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_vm_list",
+    "action": "diagnostics_vm_list",
+    "description": "List all native libvirt VMs and their current state.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_vm_inspect",
+    "action": "diagnostics_vm_inspect",
+    "description": "Read one VM configuration, disks, interfaces and passed-through devices, excluding secrets and raw XML.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_vm_action",
+    "action": "diagnostics_vm_action",
+    "description": "Queue a native VM start, graceful shutdown, reboot, pause or resume. Guest shutdown/reboot completion is asynchronous.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "start",
+          "shutdown",
+          "reboot",
+          "suspend",
+          "resume"
+        ]
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Unique idempotency key.",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "operation",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_diagnostics_smart",
+    "action": "diagnostics_smart",
+    "description": "Queue a read-only SMART health report for one physical disk. Does not start self-tests or change disk settings.",
+    "properties": {
+      "device": {
+        "type": "string",
+        "pattern": "^/dev/(sd[a-z]{1,3}|hd[a-z]{1,3}|nvme[0-9]{1,3}n[0-9]{1,3}|mmcblk[0-9]{1,3})$"
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Unique idempotency key.",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "device",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_diagnostics_security_capabilities",
+    "action": "diagnostics_security_capabilities",
+    "description": "Report whether the host has a supported Trivy vulnerability scanner installed.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_security_scan",
+    "action": "diagnostics_security_scan",
+    "description": "Queue a bounded vulnerability scan using installed Trivy. May download vulnerability databases and image metadata; reports findings and completeness.",
+    "properties": {
+      "image": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$"
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Unique idempotency key.",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "image",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_diagnostics_cleanup_plan",
+    "action": "diagnostics_cleanup_plan",
+    "description": "Show Docker disk-use and reclaimable-space estimates. Does not delete images, containers or volumes.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_device_assignments",
+    "action": "diagnostics_device_assignments",
+    "description": "Map explicitly assigned GPU/USB/device paths to containers and saved VM configurations. Shared paths are reported as observations, not proven conflicts.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_vm_config",
+    "action": "diagnostics_vm_config",
+    "description": "Read inactive VM XML with opaque credential markers and the exact original XML SHA256 for editing.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_vm_config_save",
+    "action": "diagnostics_vm_config_save",
+    "description": "Queue an offline VM configuration edit. Requires matching original XML hash, same name and UUID, backs up the original, restores credential markers, and runs native libvirt schema validation before defining it.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "xml": {
+        "type": "string",
+        "maxLength": 131072
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "xml",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_diagnostics_vm_snapshots",
+    "action": "diagnostics_vm_snapshots",
+    "description": "List native libvirt snapshots for one VM.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_vm_snapshot_read",
+    "action": "diagnostics_vm_snapshot_read",
+    "description": "Read one snapshot metadata summary and hash for guarded reversion.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "snapshot": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      }
+    },
+    "required": [
+      "name",
+      "snapshot"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_vm_snapshot_create",
+    "action": "diagnostics_vm_snapshot_create",
+    "description": "Queue an atomic internal snapshot of a shut-off VM with file-backed qcow2 writable disks. Requires current configuration hash. Unsupported libvirt/storage features are reported as failures.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "snapshot": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "snapshot",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_diagnostics_vm_snapshot_revert",
+    "action": "diagnostics_vm_snapshot_revert",
+    "description": "Revert a shut-off qcow2 VM to an offline internal snapshot. Discards disk changes since that snapshot. Requires current configuration and snapshot hashes and explicit discard acknowledgement; saves current XML but does not back up current disk contents.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "snapshot": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "expected_snapshot_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "discard_current_disk_changes": {
+        "type": "boolean",
+        "enum": [
+          true
+        ]
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "snapshot",
+      "expected_sha256",
+      "expected_snapshot_sha256",
+      "discard_current_disk_changes",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_diagnostics_monitor",
+    "action": "diagnostics_monitor",
+    "description": "Run bounded storage and container health monitoring. Records local inbox warnings at 90% filesystem use, critical alerts at 95%, and unhealthy or restarting container alerts. Deduplicates active incidents and never repairs automatically.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_diagnostics_history",
+    "action": "diagnostics_history",
+    "description": "Read bounded storage, monitor or explicitly sampled SMART history. Retains at most 288 samples and 4 MiB per category; no SMART scans are started by this read.",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "storage",
+          "monitor",
+          "smart"
+        ]
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 10
+      },
+      "device": {
+        "type": "string",
+        "pattern": "^/dev/(sd[a-z]{1,3}|hd[a-z]{1,3}|nvme[0-9]{1,3}n[0-9]{1,3}|mmcblk[0-9]{1,3})$",
+        "description": "Optional device filter, valid only for smart history."
+      }
+    },
+    "required": [
+      "kind"
+    ],
+    "read_only": true
+  }
+]

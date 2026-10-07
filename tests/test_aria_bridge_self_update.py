@@ -80,6 +80,11 @@ if action[0] != "upgrade":
 mode = os.environ.get("ARIA_TEST_UPGRADE_MODE", "success")
 source = Path(os.environ["ARIA_BRIDGE_UPDATE_SOURCE"])
 git = os.environ["ARIA_TEST_REAL_GIT"]
+if mode in {"fail_metadata", "foreign_metadata", "foreign_container_metadata"}:
+    target = subprocess.run([git, "-C", str(source), "rev-parse", "HEAD"], check=True, text=True, capture_output=True).stdout.strip()
+    revision = "f" * 40 if mode == "foreign_metadata" else target
+    Path(os.environ["ARIA_TEST_INSTALLED_METADATA"]).write_text(json.dumps({"revision": revision, "installed_at": "2026-10-07T01:00:00Z"}))
+    mode = "foreign" if mode == "foreign_container_metadata" else "fail"
 if mode in {"dirty", "moved"}:
     (source / "version.txt").write_text("concurrent user edit\n")
     if mode == "moved":
@@ -211,6 +216,7 @@ def updater(tmp_path):
         "ARIA_TEST_DEPLOY_TRACE": str(trace),
         "ARIA_TEST_PYTHON": sys.executable,
         "ARIA_TEST_HELPER": str(helper),
+        "ARIA_TEST_INSTALLED_METADATA": str(state / "installed-revision.json"),
     }
 
     def run(mode="success"):
@@ -238,6 +244,7 @@ def updater(tmp_path):
         docker_state=docker_state,
         trace=trace,
         git_trace=git_trace,
+        installed_metadata=state / "installed-revision.json",
     )
 
 
@@ -264,6 +271,47 @@ def test_bridge_update_rebuilds_when_checkout_is_already_latest(updater):
     assert completed.returncode == 0, job
     assert job["from_revision"] == job["to_revision"] == updater.target
     assert ["upgrade"] in [json.loads(line) for line in updater.trace.read_text().splitlines()]
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://github.com/kevinwaynekelly/aria-gpt-bridge.git",
+        "https://github.com/kevinwaynekelly/aria-gpt-bridge",
+        "git@github.com:kevinwaynekelly/aria-gpt-bridge.git",
+        "git@github.com:kevinwaynekelly/aria-gpt-bridge",
+        "ssh://git@github.com/kevinwaynekelly/aria-gpt-bridge.git",
+    ],
+)
+def test_bridge_update_accepts_dedicated_repository(updater, origin):
+    updater.git("remote", "set-url", "origin", origin, cwd=updater.source)
+    completed, job = updater.run()
+    assert completed.returncode == 0, job
+    assert updater.git("remote", "get-url", "origin", cwd=updater.source) == origin
+
+
+def test_scheduled_update_installs_the_exact_checked_revision(updater):
+    record = json.loads(updater.record.read_text())
+    record["target_revision"] = updater.target
+    updater.record.write_text(json.dumps(record))
+    completed, job = updater.run()
+    assert completed.returncode == 0, job
+    assert job["target_revision"] == job["to_revision"] == updater.target
+
+
+@pytest.mark.parametrize("target", ["moved", "malformed", 12, "a" * 64])
+def test_scheduled_update_rejects_changed_or_invalid_checked_revision(updater, target):
+    record = json.loads(updater.record.read_text())
+    record["target_revision"] = updater.before if target == "moved" else target
+    updater.record.write_text(json.dumps(record))
+    completed, job = updater.run()
+    assert completed.returncode != 0
+    assert job["status"] == "failed"
+    assert job["to_revision"] is None
+    assert "checked bridge revision changed" in job["error"]
+    assert updater.git("rev-parse", "HEAD", cwd=updater.source) == updater.before
+    assert not updater.trace.exists()
+    assert not json.loads(updater.docker_state.read_text())["calls"]
 
 
 @pytest.mark.parametrize("condition", ["dirty", "wrong_origin", "wrong_branch", "diverged"])
@@ -310,6 +358,45 @@ def test_bridge_failure_restores_source_host_and_original_container(updater, mod
     if mode == "partial":
         assert ["rm", "-f", NEW_ID] in state["calls"]
         assert any(item["timed_out"] for item in job["diagnostics"])
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_rollback_restores_installed_metadata_after_original_container_verification(
+    updater, existing
+):
+    original = '{"revision":"' + "1" * 40 + '","installed_at":"2026-09-01T00:00:00Z"}\n'
+    if existing:
+        updater.installed_metadata.write_text(original)
+    completed, job = updater.run("fail_metadata")
+    assert completed.returncode != 0
+    assert job["status"] == "failed", job
+    assert job["result"]["rollback"]["container_restored"] is True
+    assert job["result"]["rollback"]["installed_metadata_restored"] is True
+    if existing:
+        assert updater.installed_metadata.read_text() == original
+    else:
+        assert not updater.installed_metadata.exists()
+
+
+def test_rollback_preserves_unrelated_installed_metadata_revision(updater):
+    updater.installed_metadata.write_text(json.dumps({"revision": updater.before}))
+    completed, job = updater.run("foreign_metadata")
+    assert completed.returncode != 0
+    assert job["status"] == "unknown", job
+    assert job["result"]["rollback"]["container_restored"] is True
+    assert job["result"]["rollback"]["installed_metadata_restored"] is False
+    assert "metadata changed during update" in job["result"]["rollback"]["error"]
+    assert json.loads(updater.installed_metadata.read_text())["revision"] == "f" * 40
+
+
+def test_rollback_does_not_restore_metadata_if_original_container_recovery_fails(updater):
+    updater.installed_metadata.write_text(json.dumps({"revision": updater.before}))
+    completed, job = updater.run("foreign_container_metadata")
+    assert completed.returncode != 0
+    assert job["status"] == "unknown", job
+    assert job["result"]["rollback"]["container_restored"] is False
+    assert job["result"]["rollback"]["installed_metadata_restored"] is False
+    assert json.loads(updater.installed_metadata.read_text())["revision"] == updater.target
 
 
 @pytest.mark.parametrize("mode", ["dirty", "moved"])

@@ -5,6 +5,13 @@ require_once __DIR__.'/host-agent.php';
 
 final class AriaBridgeUpdater {
     private const ORIGINS = [
+        'https://github.com/kevinwaynekelly/aria-gpt-bridge.git',
+        'https://github.com/kevinwaynekelly/aria-gpt-bridge',
+        'git@github.com:kevinwaynekelly/aria-gpt-bridge.git',
+        'git@github.com:kevinwaynekelly/aria-gpt-bridge',
+        'ssh://git@github.com/kevinwaynekelly/aria-gpt-bridge.git',
+        // Existing installations remain updatable until the separate checkout
+        // migration is completed. Never retarget unrelated Git history in place.
         'https://github.com/kevinwaynekelly/kevin-cogs.git',
         'https://github.com/kevinwaynekelly/kevin-cogs',
         'git@github.com:kevinwaynekelly/kevin-cogs.git',
@@ -20,6 +27,8 @@ final class AriaBridgeUpdater {
     private ?array $original = null;
     private bool $upgradeAttempted = false;
     private bool $upgradeCompleted = false;
+    private bool $installedMetadataCaptured = false;
+    private ?string $originalInstalledMetadata = null;
 
     public function __construct(string $state, string $jobId) {
         if ($state === '' || $state[0] !== '/' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/D', $jobId)) ariaFail('invalid request');
@@ -119,9 +128,30 @@ final class AriaBridgeUpdater {
         if ($current['running']) $this->docker(['stop', '--time', '20', $old['id']], 'original stopped bridge could not be restored', 30);
     }
 
+    private function installedMetadata(): ?string {
+        $path = $this->state.'/installed-revision.json';
+        if (is_link($path) || (file_exists($path) && !is_file($path))) $this->fail('installed bridge metadata is invalid');
+        if (!is_file($path)) return null;
+        $bytes = ariaReadFile($path, 16384);
+        $value = json_decode($bytes, true);
+        if (!is_array($value) || !is_string($value['revision'] ?? null) || !preg_match('/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/D', $value['revision'])) $this->fail('installed bridge metadata is invalid');
+        return $bytes;
+    }
+    private function restoreInstalledMetadata(): void {
+        if (!$this->installedMetadataCaptured) $this->fail('original installed bridge metadata is unknown');
+        $current = $this->installedMetadata();
+        if ($current === $this->originalInstalledMetadata) return;
+        $value = $current === null ? [] : json_decode($current, true);
+        if (($value['revision'] ?? null) !== $this->job['to_revision']) $this->fail('installed bridge metadata changed during update');
+        $path = $this->state.'/installed-revision.json';
+        ariaHash($path, hash('sha256', $current));
+        if ($this->originalInstalledMetadata === null) {
+            if (!unlink($path)) $this->fail('installed bridge metadata could not be restored');
+        } else ariaAtomic($path, $this->originalInstalledMetadata);
+    }
     private function rollback(): array {
         $this->deadline = microtime(true) + 300;
-        $result = ['status' => 'incomplete', 'source_restored' => false, 'host_restarted' => false, 'container_restored' => false];
+        $result = ['status' => 'incomplete', 'source_restored' => false, 'host_restarted' => false, 'container_restored' => false, 'installed_metadata_restored' => false];
         $this->phase('rollback');
         try {
             $from = $this->job['from_revision'];
@@ -144,6 +174,11 @@ final class AriaBridgeUpdater {
                 // shell installer's EXIT trap before it could finish rollback.
                 $this->restoreContainer();
                 $result['container_restored'] = true;
+                // A failed installer may have committed new metadata before
+                // failing later. Restore it only after verifying the original
+                // immutable container ID, and preserve any unrelated revision.
+                $this->restoreInstalledMetadata();
+                $result['installed_metadata_restored'] = true;
             }
             $result['status'] = 'complete';
         } catch (Throwable $e) {
@@ -191,11 +226,17 @@ final class AriaBridgeUpdater {
                 $this->git(['fetch', '--no-tags', '--no-recurse-submodules', 'origin', 'refs/heads/main:'.$this->ref], 'bridge fetch failed', 120);
                 $target = $this->text(['rev-parse', '--verify', $this->ref.'^{commit}']);
                 if (!preg_match('/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/D', $target)) $this->fail('invalid target revision');
+                $expectedTarget = $this->job['target_revision'] ?? null;
+                if ($expectedTarget !== null && (!is_string($expectedTarget) || !preg_match('/^[a-f0-9]{40}$/D', $expectedTarget) || $target !== $expectedTarget)) {
+                    $this->fail('checked bridge revision changed; wait for the next update check');
+                }
                 $this->job['to_revision'] = $target;
                 $this->save();
                 $this->assertCheckout($from);
                 if ($this->git(['merge-base', '--is-ancestor', $from, $target], 'bridge history diverged', 30, false)['exit_code'] !== 0) $this->fail('bridge history diverged');
                 $this->original = $this->inspect('aria-gpt-bridge');
+                $this->originalInstalledMetadata = $this->installedMetadata();
+                $this->installedMetadataCaptured = true;
                 $this->job['original_container'] = $this->original;
                 $this->phase('checkout');
                 $this->git(['merge', '--ff-only', '--no-edit', $target], 'source fast-forward failed');

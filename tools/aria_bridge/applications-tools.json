@@ -1,0 +1,304 @@
+[
+  {
+    "name": "aria_application_profiles",
+    "action": "applications_profiles",
+    "description": "List saved Sonarr, Radarr, Plex and qBittorrent profiles, API operations and credential setup requirements.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_application_profile_get",
+    "action": "applications_profile_get",
+    "description": "Read a saved application profile and its SHA. Credentials are represented only by a host vault reference.",
+    "properties": {
+      "profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "profile"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_application_profile_save",
+    "action": "applications_profile_save",
+    "description": "Create or replace an application profile with a backup and expected SHA. Set secret_ref to a previously imported host secret. Sonarr/Radarr/Plex secrets are raw tokens; qBittorrent secrets are JSON {username,password}. Does not contact the application.",
+    "properties": {
+      "profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "type": {
+        "type": "string",
+        "enum": [
+          "sonarr",
+          "radarr",
+          "plex",
+          "qbittorrent"
+        ]
+      },
+      "base_url": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 1024,
+        "description": "Explicit HTTP(S) application base URL, optionally including its reverse proxy path. No credentials, query or fragment."
+      },
+      "secret_ref": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "verify_tls": {
+        "type": "boolean",
+        "default": true
+      },
+      "api_version": {
+        "type": "string",
+        "enum": [
+          "v3",
+          "v5"
+        ],
+        "default": "v3",
+        "description": "v5 is permitted only for Sonarr. v3 is used for Radarr. Ignored by Plex/qBittorrent."
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^(?:[a-f0-9]{64})?$",
+        "maxLength": 64,
+        "description": "Empty only when creating a new profile; otherwise the SHA returned by profile_get."
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "profile",
+      "type",
+      "base_url",
+      "secret_ref",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_application_profile_delete",
+    "action": "applications_profile_delete",
+    "description": "Remove a saved integration profile with a backup and expected SHA. Does not delete the application or its secret.",
+    "properties": {
+      "profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "profile",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_application_query",
+    "action": "applications_query",
+    "description": "Read typed application information. Arr supports status/health/queue/history/missing/commands/library; Plex status/sessions/library; qBittorrent status/downloads. Results are bounded and projected to omit credentials and tracker URLs. item_id selects an Arr library item/command or Plex library section.",
+    "properties": {
+      "profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "status",
+          "health",
+          "queue",
+          "history",
+          "missing",
+          "commands",
+          "library",
+          "sessions",
+          "downloads"
+        ]
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200,
+        "default": 50
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100000,
+        "default": 1
+      },
+      "item_id": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2147483647
+      },
+      "torrent_hash": {
+        "type": "string",
+        "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$",
+        "minLength": 40,
+        "maxLength": 64,
+        "description": "Optional exact torrent hash, only for qBittorrent downloads."
+      }
+    },
+    "required": [
+      "profile",
+      "operation"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_application_command",
+    "action": "applications_command",
+    "description": "Queue a typed application action against the reviewed profile SHA. Arr refresh/rescan requires one series/movie id; Sonarr search one series id; Radarr search movie ids; rss_sync takes no ids. Plex rescan requires one section id. qBittorrent pause/resume/recheck/reannounce requires explicit torrent hashes. Acceptance does not mean the provider finished.",
+    "properties": {
+      "profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "refresh",
+          "rescan",
+          "search",
+          "rss_sync",
+          "pause",
+          "resume",
+          "recheck",
+          "reannounce"
+        ]
+      },
+      "ids": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "uniqueItems": true
+      },
+      "hashes": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "string",
+          "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$",
+          "minLength": 40,
+          "maxLength": 64
+        },
+        "uniqueItems": true
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "profile",
+      "expected_sha256",
+      "operation",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_application_activity",
+    "action": "applications_activity",
+    "description": "Read bounded activity across explicitly named profiles: Plex sessions, Arr queues, and qBittorrent transfer status. Missing or unreachable applications are marked unavailable, never assumed idle. This does not authorize maintenance.",
+    "properties": {
+      "profiles": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "required": [
+      "profiles"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_application_download_trace",
+    "action": "applications_download_trace",
+    "description": "Correlate a torrent hash with Sonarr/Radarr import queue diagnostics and one qBittorrent download. Scans up to600 queue records; marks partial/unavailable evidence explicitly. Never changes either application.",
+    "properties": {
+      "arr_profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "download_profile": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "download_id": {
+        "type": "string",
+        "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$",
+        "minLength": 40,
+        "maxLength": 64
+      }
+    },
+    "required": [
+      "arr_profile",
+      "download_profile",
+      "download_id"
+    ],
+    "read_only": true
+  }
+]

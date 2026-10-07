@@ -1,0 +1,484 @@
+[
+  {
+    "name": "aria_template_preview",
+    "action": "deployment_template_preview",
+    "description": "Compare reviewed template XML to the saved template without writing; secret values stay redacted.",
+    "properties": {
+      "template": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "xml": {
+        "type": "string",
+        "maxLength": 131072
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "required": [
+      "template",
+      "xml",
+      "expected_sha256"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_template_history",
+    "action": "deployment_template_history",
+    "description": "List matching saved template backups and hashes, including backups retained by existing template edits.",
+    "properties": {
+      "template": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "template"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_template_restore",
+    "action": "deployment_template_restore",
+    "description": "Restore a selected template backup after checking the current template hash; save another backup and do not deploy automatically.",
+    "properties": {
+      "template": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "backup_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "template",
+      "backup_id",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_config_search",
+    "action": "deployment_config_search",
+    "description": "Search redacted saved template settings for paths, ports, images and addresses; never search secret values.",
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_config_drift",
+    "action": "deployment_config_drift",
+    "description": "Compare running image, network, privilege, declared mounts and ports against its unique saved template.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_image_details",
+    "action": "deployment_image_details",
+    "description": "Read the running image immutable ID, repository digests, build time and OCI release/source metadata; does not pull.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_image_pin",
+    "action": "deployment_image_pin",
+    "description": "Pin a template to a verified locally available repository digest of the running image, retaining a backup. Does not deploy.",
+    "properties": {
+      "template": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "digest": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/:\\-]*@sha256:[a-f0-9]{64}$",
+        "maxLength": 600
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "template",
+      "digest",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_container_policy",
+    "action": "deployment_container_policy",
+    "description": "Read the bridge policy for a container and its revision hash. Root scripts and external Unraid changes are outside this boundary.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_container_policy_save",
+    "action": "deployment_container_policy_save",
+    "description": "Replace a container bridge policy with optimistic concurrency. Explicitly configurable actions, update hold, UTC hours, stopped dependencies and Docker health requirements. Optional require_idle_profiles blocks changes while configured app activity is busy or unknown.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "maxItems": 13,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "inspect",
+                "logs",
+                "start",
+                "stop",
+                "restart",
+                "update",
+                "deploy",
+                "save",
+                "restore",
+                "pin",
+                "test",
+                "migrate",
+                "exec"
+              ]
+            }
+          },
+          "hold_updates": {
+            "type": "boolean"
+          },
+          "require_healthcheck": {
+            "type": "boolean"
+          },
+          "health_timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 600
+          },
+          "maintenance_utc_hours": {
+            "type": "array",
+            "maxItems": 24,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 23
+            }
+          },
+          "require_stopped_containers": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "require_idle_profiles": {
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+            }
+          }
+        }
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^(?:[a-f0-9]{64})?$"
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "policy",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_stack_save",
+    "action": "deployment_stack_save",
+    "description": "Save a reusable stack of reviewed template hashes and template dependencies; validates all members and rejects cycles.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "definition": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "members": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "template": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "expected_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "depends_on": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              },
+              "required": [
+                "template",
+                "expected_sha256",
+                "depends_on"
+              ]
+            }
+          }
+        },
+        "required": [
+          "members"
+        ]
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^(?:[a-f0-9]{64})?$"
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "definition",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_stacks",
+    "action": "deployment_stacks",
+    "description": "List saved reusable stack definitions and revision hashes.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_stack_plan",
+    "action": "deployment_stack_plan",
+    "description": "Validate all saved stack template hashes and show dependency order and active policy before deployment.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_stack_apply",
+    "action": "deployment_stack_apply",
+    "description": "Deploy a reviewed stack in dependency order and stop on the first failure. Completed members remain deployed and are reported; not an atomic multi-container transaction.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "pull": {
+        "type": "boolean"
+      },
+      "start": {
+        "type": "boolean"
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "expected_sha256",
+      "pull",
+      "start",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_upgrade_test",
+    "action": "deployment_upgrade_test",
+    "description": "Test an image in a temporary network-none container with copied, size-bounded appdata and no host devices, published ports or original mounts. Requires all source writers stopped, simple bind-only template and no privileged/device/extra command features. Cleans its own container and copied data.",
+    "properties": {
+      "template": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "image": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$"
+      },
+      "max_copy_bytes": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1099511627776
+      },
+      "health_timeout_seconds": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 600
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "template",
+      "expected_sha256",
+      "image",
+      "max_copy_bytes",
+      "health_timeout_seconds",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_appdata_migrate",
+    "action": "deployment_appdata_migrate",
+    "description": "Copy and checksum-verify one stopped appdata directory to a new appdata path within the configured appdata root, then update matching reviewed template mounts and back up the template. Original data is retained. Does not deploy or delete either copy.",
+    "properties": {
+      "template": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "expected_sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "source": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "destination": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "max_copy_bytes": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1099511627776
+      },
+      "request_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "template",
+      "expected_sha256",
+      "source",
+      "destination",
+      "max_copy_bytes",
+      "request_id"
+    ],
+    "read_only": false
+  }
+]

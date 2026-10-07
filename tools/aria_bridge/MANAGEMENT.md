@@ -53,7 +53,7 @@ The original `aria_status`, `aria_containers`, `aria_update_red`, and `aria_red_
 | `aria_script_run` | Queue execution of the selected installed script. |
 | `aria_job_status` | Read a queued operation's progress or terminal result. |
 
-There is no arbitrary shell-command tool. Templates are selected by filename inside `/boot/config/plugins/dockerMan/templates-user`, and scripts by directory name inside `/boot/config/plugins/user.scripts/scripts`. Absolute paths and parent-directory traversal are rejected. Containers are selected by exact Docker name.
+Version 2 adds explicit administrator tools for host and container argument-vector execution, reviewed script editing and execution, and managed files. Host commands and saved scripts have root authority. Per-container policies are operational controls for typed tools, not a sandbox against the administrator command tool. Templates are selected by filename inside `/boot/config/plugins/dockerMan/templates-user`, and scripts by directory name inside `/boot/config/plugins/user.scripts/scripts`. Absolute paths and parent-directory traversal are rejected. Containers are selected by exact Docker name.
 
 ## Template workflow
 
@@ -69,13 +69,13 @@ Container recreation can interrupt the service. The old container is retained wh
 
 Updates use the image reference already in the saved template, preserving any pinned version tag. They retain whether an existing container was running or stopped. Bulk updates skip the bridge itself, retained rollback containers, `cloudflared` and `haproxy`, and report containers without a unique valid template. `cloudflared` and `haproxy` can be managed individually. The bridge has its own `aria_bridge_update` operation.
 
-Native Tailscale-enabled templates are not deployed by this version because Unraid performs additional entrypoint provisioning outside its XML converter. Existing Docker volumes that cannot be reproduced from the template also stop deployment before the old container is changed. These cases are reported, never silently treated as successful updates. Application health after startup must be checked separately.
+Native Tailscale-enabled templates are not deployed by this version because Unraid performs additional entrypoint provisioning outside its XML converter. Existing Docker volumes that cannot be reproduced from the template also stop deployment before the old container is changed. These cases are reported, never silently treated as successful updates. Version 2 checks configured Docker health checks before deleting the retained original container. Containers without a health check are reported as unverified unless policy requires one.
 
 ## Script workflow
 
 List installed scripts, read the chosen script, and pass its current hash to `aria_script_run`. Scripts execute using Bash with their script directory as the working directory. The hash is checked again when the worker starts the job, preventing execution of a script that changed after review.
 
-Scripts and submitted templates are limited to 128 KiB. The default script timeout is one hour and the maximum is 24 hours. A timed-out or interrupted script may have performed partial work; check its output and the affected service before starting another run. Existing User Scripts schedules are separate from bridge execution.
+Scripts and submitted templates are limited to 128 KiB. The default script timeout is one hour and the maximum is 24 hours. A timed-out or interrupted script may have performed partial work; check its output and the affected service before starting another run. Existing User Scripts schedules remain separate. Version 2 also provides a durable bridge scheduler for scripts and other named actions, with hashes checked at execution.
 
 ## Jobs and retries
 
@@ -97,8 +97,28 @@ A separate host process performs the upgrade and survives replacing the bridge c
 
 The connection can briefly disappear during replacement. After it returns, check the existing update's status; do not submit a new request ID because the connection was interrupted. Reusing the original request ID recovers the same update. An interrupted updater can report `unknown` and block further mutations until its state is inspected on the host. Persistent update records are under `management/bridge-updates`.
 
+Version 2 installs a host-local daily updater. Its first check is deferred for 24 hours, it runs during 02:00–06:00 America/Chicago, and it only installs bridge changes from an exact main revision with successful Python 3.10 and 3.11 GitHub Actions checks. Busy or uncertain jobs, dirty checkouts, unavailable CI, and failed checks defer installation. It does not schedule updates for unrelated containers.
+
 Installing server code and refreshing ChatGPT's registered tool list are separate operations. New tools may require refreshing or reconnecting the plugin even when the remote upgrade succeeds. A failed tunnel or unavailable host service still requires local recovery.
 
 ## Verification limits
 
 Automated tests exercise protocol validation, local files, version conflicts, queue behavior, fake Docker operations and deployment orchestration. They do not prove compatibility with every image, native Unraid plugin, host filesystem or account-specific tunnel setup. Final verification requires activating the upgrade on Aria, checking management capabilities, and inspecting the result of each requested operation.
+
+
+## Version 2 administrator toolkit
+
+See [FEATURES.md](FEATURES.md) for the complete tool inventory and workflows. See
+[STANDALONE.md](STANDALONE.md) to migrate the running installation into the dedicated
+`kevinwaynekelly/aria-gpt-bridge` repository without replacing credentials or appdata.
+
+The application integrations are enabled by saved profiles. Register local credential files
+with the secret-import tool and use their references in profiles. Credentials are not returned
+by profile reads. No app endpoints or credentials are guessed or activated by installation.
+
+Optional host programs such as libvirt, SMART tools, NVIDIA tools and Trivy are detected at
+runtime. Missing programs are reported explicitly. The bridge does not silently install them.
+
+A local status dashboard and notification inbox work without an external notification service.
+The default dashboard tool generates a static snapshot. An optional authenticated loopback
+browser dashboard and direct root CLI provide interactive local control; see FEATURES.md. External messages require a separately configured delivery mechanism.

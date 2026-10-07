@@ -1,0 +1,651 @@
+[
+  {
+    "name": "aria_file_roots",
+    "action": "operations_file_roots",
+    "description": "List managed host filesystem roots and size bounds. File operations reject symlinks and the bridge management state directory.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_file_stat",
+    "action": "operations_file_stat",
+    "description": "Inspect a managed path and obtain a signature for a subsequent permission change.",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_file_list",
+    "action": "operations_file_list",
+    "description": "List one directory page, without recursion or following symlinks. Filesystem ordering may change between calls.",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000,
+        "default": 0
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500,
+        "default": 100
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_file_read",
+    "action": "operations_file_read",
+    "description": "Read a UTF8 managed text file up to 128 KiB. Output is limited to its last 64 KiB and known secrets are redacted. Private key and shadow files cannot be read. Hash covers original bytes, never edit redaction markers as if they were original values.",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "read_only": true
+  },
+  {
+    "name": "aria_host_exec",
+    "action": "operations_host_exec",
+    "description": "Queue a privileged root command as a literal argv array. First argument must be an absolute executable path; no implicit shell parsing occurs. Use script_save plus script_run_arguments for shell text. This can change the host; only use for the requested administration task. Output is bounded and redacted on a best-effort basis.",
+    "properties": {
+      "argv": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[^\\x00]*$"
+        },
+        "minItems": 1
+      },
+      "working_directory": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      },
+      "secret_environment": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "environment": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            },
+            "secret_ref": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+            }
+          },
+          "required": [
+            "environment",
+            "secret_ref"
+          ]
+        }
+      },
+      "timeout_seconds": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 86400,
+        "default": 300
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "argv",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_container_exec",
+    "action": "operations_container_exec",
+    "description": "Queue a literal argv command inside an existing container, resolved to its immutable ID. First command argument must be an absolute executable path. Supports user, working directory and named secret environment references; rejects bridge self-execution. A timeout stops the Docker client; the command inside the container may continue and requires inspection.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      },
+      "argv": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[^\\x00]*$"
+        },
+        "minItems": 1
+      },
+      "user": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$"
+      },
+      "working_directory": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      },
+      "secret_environment": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "environment": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            },
+            "secret_ref": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+            }
+          },
+          "required": [
+            "environment",
+            "secret_ref"
+          ]
+        }
+      },
+      "timeout_seconds": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 86400,
+        "default": 300
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "argv",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_script_save",
+    "action": "operations_script_save",
+    "description": "Create or edit an installed Unraid User Script using expected SHA256. Validates Bash syntax, backs up the previous script and writes atomically; does not execute it. Store credentials separately and use named secret references.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "script": {
+        "type": "string",
+        "maxLength": 131072,
+        "pattern": "^[^\\x00]*$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^(?:[a-f0-9]{64})?$",
+        "description": "Expected existing SHA256; empty means the file must not exist."
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "script",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_script_run_arguments",
+    "action": "operations_script_run_arguments",
+    "description": "Run exactly the installed User Script bytes identified by SHA256 with literal positional arguments and optional named secret environment references. Root execution uses the script directory and a bounded timeout.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,127}$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "arguments": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[^\\x00]*$"
+        }
+      },
+      "secret_environment": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "environment": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            },
+            "secret_ref": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+            }
+          },
+          "required": [
+            "environment",
+            "secret_ref"
+          ]
+        }
+      },
+      "timeout_seconds": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 86400,
+        "default": 3600
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_secret_list",
+    "action": "operations_secret_list",
+    "description": "List named credential references and their opaque revisions. Secret values are never returned.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_secret_import",
+    "action": "operations_secret_import",
+    "description": "Import or rotate a named secret from a managed host UTF8 file up to 16 KiB. Source hash prevents importing changed content; expected_revision is empty for a new name or the current revision when replacing it. Raw file bytes are preserved, including trailing newlines. Values are stored root-only and never returned.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+      },
+      "source_path": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      },
+      "expected_source_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "expected_revision": {
+        "type": "string",
+        "maxLength": 32,
+        "pattern": "^(?:[a-f0-9]{32})?$"
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "source_path",
+      "expected_source_sha256",
+      "expected_revision",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_secret_delete",
+    "action": "operations_secret_delete",
+    "description": "Delete a named credential reference only if its revision still matches. Profiles referencing it will stop working until reconfigured.",
+    "properties": {
+      "name": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+      },
+      "expected_revision": {
+        "type": "string",
+        "maxLength": 32,
+        "pattern": "^[a-f0-9]{32}$"
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "name",
+      "expected_revision",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_file_write",
+    "action": "operations_file_write",
+    "description": "Create or atomically replace a managed text file up to 128 KiB using expected SHA256. Existing content is backed up. Content containing redaction placeholders is rejected; supply complete intended content.",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      },
+      "content": {
+        "type": "string",
+        "maxLength": 131072,
+        "pattern": "^[^\\x00]*$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^(?:[a-f0-9]{64})?$",
+        "description": "Expected existing SHA256; empty means the file must not exist."
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "path",
+      "content",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_file_mkdir",
+    "action": "operations_file_mkdir",
+    "description": "Create exactly one managed directory with an existing parent. Does not overwrite an existing path.",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      },
+      "mode": {
+        "type": "string",
+        "maxLength": 4,
+        "pattern": "^0[0-7]{3}$"
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "path",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_file_permissions",
+    "action": "operations_file_permissions",
+    "description": "Change permissions and optionally numeric owner/group for one managed file or directory, only if its stat signature matches. Never recursive. Mode is a four-digit octal string without special bits.",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      },
+      "expected_signature": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "mode": {
+        "type": "string",
+        "maxLength": 4,
+        "pattern": "^0[0-7]{3}$"
+      },
+      "uid": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2147483647
+      },
+      "gid": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2147483647
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "path",
+      "expected_signature",
+      "mode",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_file_backup",
+    "action": "operations_file_backup",
+    "description": "Save a root-only recovery copy of a managed regular file up to 128 KiB after checking its SHA256.",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 4096,
+        "pattern": "^/[^\\x00-\\x1f\\x7f]+$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "path",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_file_restore",
+    "action": "operations_file_restore",
+    "description": "Restore a previously backed-up file to its original managed path, checking current SHA256 first. Empty expected SHA means currently absent. Backs up overwritten content again.",
+    "properties": {
+      "backup_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^(?:[a-f0-9]{64})?$",
+        "description": "Expected existing SHA256; empty means the file must not exist."
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "backup_id",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_config_inventory",
+    "action": "operations_config_inventory",
+    "description": "Queue a complete bounded template/User Script inventory and a content/mode signature for archive restore preconditions. This is queued because large inventories may exceed interactive timeouts; it does not change configuration.",
+    "properties": {
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_archive_create",
+    "action": "operations_archive_create",
+    "description": "Queue a root-only compressed recovery archive of Docker XML templates and installed User Scripts script files, with per-file hashes. Excludes appdata, vault credentials, plugin schedule settings and container images.",
+    "properties": {
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_archive_list",
+    "action": "operations_archive_list",
+    "description": "List up to 100 retained configuration recovery archives with integrity hashes and size metadata.",
+    "properties": {},
+    "required": [],
+    "read_only": true
+  },
+  {
+    "name": "aria_archive_verify",
+    "action": "operations_archive_verify",
+    "description": "Queue archive integrity, XML parsing and Bash syntax checks. Does not start applications or validate backed-up application data.",
+    "properties": {
+      "archive_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "archive_id",
+      "expected_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  },
+  {
+    "name": "aria_archive_restore",
+    "action": "operations_archive_restore",
+    "description": "Restore configuration files from a verified archive, after checking the current complete inventory hash. Backs up current configuration first and attempts rollback on write failure. overwrite must be true to replace different existing files. Does not deploy containers, remove extra files, or restore changed bridge templates.",
+    "properties": {
+      "archive_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "expected_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "expected_inventory_sha256": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "overwrite": {
+        "type": "boolean"
+      },
+      "request_id": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      }
+    },
+    "required": [
+      "archive_id",
+      "expected_sha256",
+      "expected_inventory_sha256",
+      "request_id"
+    ],
+    "read_only": false
+  }
+]

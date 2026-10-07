@@ -47,7 +47,26 @@ aria_rotate() {
 }
 
 aria_ready() {
-    aria_alive serve && aria_alive work && [[ -S "$aria_runtime/agent.sock" && -f "$aria_state/worker.lock" ]] || return 1
+    aria_alive serve && aria_alive work && aria_alive automation && [[ -S "$aria_runtime/agent.sock" && -f "$aria_state/worker.lock" ]] || return 1
+    if [[ -f "$aria_state/dashboard-enabled" ]] && ! aria_alive dashboard; then return 1; fi
+    if [[ -f "$aria_state/dashboard-enabled" ]]; then
+        local aria_dashboard_supervisor aria_dashboard_start
+        read -r aria_dashboard_supervisor aria_dashboard_start < "$aria_state/dashboard.pid" || return 1
+        timeout 3 php -r '
+            $s = @stream_socket_client("tcp://127.0.0.1:8786", $e, $m, 1);
+            if (!$s) exit(1);
+            stream_set_timeout($s, 1);
+            fwrite($s, "GET /health HTTP/1.0\r\nHost: 127.0.0.1:8786\r\nConnection: close\r\n\r\n");
+            $reply = stream_get_contents($s, 4096); fclose($s);
+            $parts = explode("\r\n\r\n", $reply, 2);
+            $body = json_decode($parts[1] ?? "", true);
+            $pid = $body["pid"] ?? 0;
+            if (($body["service"] ?? "") !== "aria-local-dashboard" || !is_int($pid) || $pid < 2) exit(1);
+            $stat = (string)@file_get_contents("/proc/$pid/stat");
+            $fields = preg_split("/\\s+/", trim(substr($stat, (int)strrpos($stat, ")") + 1)));
+            exit(($fields[1] ?? "") === $argv[1] && ($fields[2] ?? "") === (string)$pid ? 0 : 1);
+        ' "$aria_dashboard_supervisor" >/dev/null 2>&1 || return 1
+    fi
     # A live worker owns this lock. Supervisors alone are not readiness evidence.
     if flock -n "$aria_state/worker.lock" true; then return 1; fi
     timeout 4 php -r '
@@ -63,14 +82,18 @@ aria_ready() {
 
 aria_supervise() {
     local aria_role="$1" aria_child='' aria_child_start='' aria_attempt aria_active_pid='' aria_active_start='' aria_active_stat=''
-    [[ "$aria_role" == serve || "$aria_role" == work ]] || exit 1
+    [[ "$aria_role" == serve || "$aria_role" == work || "$aria_role" == automation || "$aria_role" == dashboard ]] || exit 1
+    local aria_process_record=active-process.json
+    if [[ "$aria_role" == dashboard ]]; then aria_process_record=dashboard-no-host-process; fi
+    if [[ "$aria_role" == automation ]]; then aria_process_record=active-automation-process.json; fi
+    if [[ "$aria_role" == serve ]]; then aria_process_record=active-serve-process.json; fi
     exec 8> "$aria_state/$aria_role.supervisor.lock"
     flock -n 8 || exit 0
     printf '%s %s\n' "$$" "$(aria_pid_start "$$")" > "$aria_state/$aria_role.pid"
     aria_signal_active() {
         aria_active_pid=''
-        if [[ "$aria_role" == work && -f "$aria_state/active-process.json" && ! -L "$aria_state/active-process.json" ]]; then
-            read -r aria_active_pid aria_active_start < <(jq -r '[.pid, .start_time] | @tsv' "$aria_state/active-process.json" 2>/dev/null) || aria_active_pid=''
+        if [[ -f "$aria_state/$aria_process_record" && ! -L "$aria_state/$aria_process_record" ]]; then
+            read -r aria_active_pid aria_active_start < <(jq -r '[.pid, .start_time] | @tsv' "$aria_state/$aria_process_record" 2>/dev/null) || aria_active_pid=''
         fi
         if [[ ! "$aria_active_pid" =~ ^[0-9]+$ || ! "$aria_active_start" =~ ^[0-9]+$ || "$aria_active_pid" -le 1 || "$(aria_pid_start "$aria_active_pid" || true)" != "$aria_active_start" ]]; then
             # PHP is frozen before shutdown. Catch the direct timeout child even
@@ -111,6 +134,10 @@ aria_supervise() {
         aria_rotate "$aria_state/$aria_role.log"
         if [[ "$aria_role" == serve ]]; then
             setsid php -d short_open_tag=On "$aria_source/host-agent.php" serve "$aria_state" "$aria_runtime/agent.sock" 8>&- >> "$aria_state/$aria_role.log" 2>&1 &
+        elif [[ "$aria_role" == dashboard ]]; then
+            setsid bash "$aria_source/dashboard-service.sh" "$aria_state" 8>&- >> "$aria_state/$aria_role.log" 2>&1 &
+        elif [[ "$aria_role" == automation ]]; then
+            setsid bash "$aria_source/automation-service.sh" "$aria_state" 8>&- >> "$aria_state/$aria_role.log" 2>&1 &
         else
             setsid php -d short_open_tag=On "$aria_source/host-agent.php" work "$aria_state" 8>&- >> "$aria_state/$aria_role.log" 2>&1 &
         fi
@@ -170,9 +197,15 @@ if [[ "${1:-}" == _supervise ]]; then aria_supervise "${2:-}"; exit; fi
 exec 9> "$aria_state/service.lock"
 flock -w 30 9 || { aria_error 'Another host-service operation is in progress.'; exit 1; }
 case "${1:-}" in
-    start|restart)
-        if [[ "$1" == restart ]]; then aria_stop_role serve; aria_stop_role work; fi
-        for aria_role in serve work; do
+    start|restart|dashboard-enable)
+        if [[ "$1" == dashboard-enable ]]; then
+            [[ ! -L "$aria_state/dashboard-enabled" ]] || { aria_error 'The dashboard marker must not be a symlink.'; exit 1; }
+            : > "$aria_state/dashboard-enabled"
+        fi
+        if [[ "$1" == restart ]]; then aria_stop_role dashboard; aria_stop_role automation; aria_stop_role serve; aria_stop_role work; fi
+        aria_roles=(serve work automation)
+        if [[ -f "$aria_state/dashboard-enabled" ]]; then aria_roles+=(dashboard); fi
+        for aria_role in "${aria_roles[@]}"; do
             if ! aria_alive "$aria_role"; then
                 ARIA_APPDATA_ROOT="$aria_data" setsid nohup bash "$aria_source/host-service.sh" _supervise "$aria_role" 9>&- </dev/null >/dev/null 2>&1 &
             fi
@@ -183,11 +216,12 @@ case "${1:-}" in
             fi
             sleep 1
         done
-        aria_error 'Host management failed to start; inspect management/serve.log and work.log.'
+        aria_error 'Host management failed to start; inspect management/serve.log, work.log and automation.log.'
         exit 1
         ;;
-    stop) aria_stop_role serve; aria_stop_role work; rm -f "$aria_runtime/agent.sock" ;;
-    status) for aria_role in serve work; do if aria_alive "$aria_role"; then printf '%s running\n' "$aria_role"; else printf '%s stopped\n' "$aria_role"; fi; done ;;
+    dashboard-disable) aria_stop_role dashboard; rm -f "$aria_state/dashboard-enabled" ;;
+    stop) aria_stop_role dashboard; aria_stop_role automation; aria_stop_role serve; aria_stop_role work; rm -f "$aria_runtime/agent.sock" ;;
+    status) for aria_role in serve work automation dashboard; do if aria_alive "$aria_role"; then printf '%s running\n' "$aria_role"; else printf '%s stopped\n' "$aria_role"; fi; done ;;
     install-boot) aria_install_boot; printf 'Boot startup installed; the original go file was backed up before adding its marker.\n' ;;
-    *) aria_error 'Usage: bash host-service.sh {start|stop|restart|status|install-boot}'; exit 1 ;;
+    *) aria_error 'Usage: bash host-service.sh {start|stop|restart|status|install-boot|dashboard-enable|dashboard-disable}'; exit 1 ;;
 esac

@@ -104,5 +104,14 @@ aria_new_id="$(aria_run_container)"
 aria_new_created=true
 aria_wait_healthy
 aria_completed=true
-docker rm "$aria_backup" >/dev/null
+aria_record_installed_revision
+if ! docker rm "$aria_backup" >/dev/null; then
+    # A healthy replacement is committed. Failure to remove a stopped backup
+    # must not make the detached updater roll back a successful installation.
+    if docker update --restart=no "$aria_backup" >/dev/null; then
+        printf 'The healthy bridge is installed. Stopped backup retained with restart disabled: %s\n' "$aria_backup" >&2
+    else
+        printf 'The healthy bridge is installed. Inspect retained backup %s; its restart policy could not be disabled.\n' "$aria_backup" >&2
+    fi
+fi
 printf 'Aria bridge is healthy. Tunnel settings and credentials were preserved; host management is enabled.\n'

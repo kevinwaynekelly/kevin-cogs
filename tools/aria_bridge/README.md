@@ -59,7 +59,7 @@ For a first checkout with Git authentication already configured:
 
 ```bash
 mkdir -p /mnt/user/appdata/aria-gpt-bridge
-git clone https://github.com/kevinwaynekelly/kevin-cogs.git /mnt/user/appdata/aria-gpt-bridge/source
+git clone https://github.com/kevinwaynekelly/aria-gpt-bridge.git /mnt/user/appdata/aria-gpt-bridge/source
 cd /mnt/user/appdata/aria-gpt-bridge/source
 bash tools/aria_bridge/run-unraid.sh tunnel_YOUR_ID
 ```
@@ -150,3 +150,14 @@ For a different appdata path, set `ARIA_APPDATA_ROOT` consistently for the insta
 ## Verification limits
 
 Regression tests exercise real local HTTP, snapshot files and stdio subprocesses, with mocked Discord and remote provider boundaries. They cover protocol discovery, fixed endpoints, credential handling, redirects, malformed responses, input/output limits and update acknowledgement. The upstream release checksum and binary CLI were checked. This environment cannot build a Docker image or connect to your live Unraid/ChatGPT account; installation, tunnel readiness and live Red calls must be verified on Aria.
+
+
+## Expanded management and dedicated repository
+
+Version 2 adds host/container execution, version-checked scripts and files, secret references,
+application integrations, VM management, diagnostics, recoverable deployment workflows and
+host-native scheduling. See [FEATURES.md](FEATURES.md) for supported tools and limits.
+
+Existing installations from `kevin-cogs` should use [STANDALONE.md](STANDALONE.md) for the
+one-time repository migration. The old checkout is retained for recovery. Refresh the Aria
+plugin after installation so the new MCP tool catalog is discovered.

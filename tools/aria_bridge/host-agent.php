@@ -12,6 +12,7 @@
  * their entrypoint injection needs the Web UI's separate provisioning sequence.
  */
 declare(strict_types=1);
+require_once __DIR__.'/host-extensions.php';
 
 const ARIA_MAX_INPUT = 1048576;
 const ARIA_MAX_XML = 131072;
@@ -27,6 +28,19 @@ const ARIA_ERRORS = [
     'operation timed out', 'protected container', 'native template converter unavailable',
     'unsupported template feature', 'rollback failed', 'internal error',
     'management busy', 'bridge update unavailable',
+    'policy denied', 'healthcheck required', 'appdata in use', 'unsupported appdata entry',
+    'copy budget exceeded', 'copy verification failed',
+    'application credential unavailable',
+    'application transport unavailable',
+    'application connection failed',
+    'application redirect refused',
+    'application authentication failed',
+    'application operation unavailable',
+    'application request failed',
+    'application response too large',
+    'application invalid response',
+    'application outcome unknown',
+    'operation outcome unknown',
 ];
 
 function ariaFail(string $message): void { throw new RuntimeException($message); }
@@ -191,19 +205,34 @@ function ariaRun(array $argv, int $seconds = 30, ?string $cwd = null): array {
     $initial = proc_get_status($process);
     $processId = $initial['pid'];
     $workerState = $GLOBALS['ARIA_WORKER_STATE'] ?? null;
+    $processRecord = $GLOBALS['ARIA_PROCESS_RECORD'] ?? 'active-process.json';
+    if (!in_array($processRecord, ['active-process.json', 'active-automation-process.json', 'active-serve-process.json'], true)) ariaFail('internal error');
     if ($workerState !== null) {
         $stat = (string)@file_get_contents('/proc/'.$processId.'/stat');
         $fields = preg_split('/\s+/', trim(substr($stat, (int)strrpos($stat, ')') + 1)));
-        ariaAtomic($workerState.'/active-process.json', ariaJson(['pid' => $processId, 'start_time' => $fields[19] ?? '', 'started_at' => ariaNow()]));
+        ariaAtomic($workerState.'/'.$processRecord, ariaJson(['pid' => $processId, 'start_time' => $fields[19] ?? '', 'started_at' => ariaNow()]));
     }
     foreach ($pipes as $pipe) stream_set_blocking($pipe, false);
     $output = ''; $truncated = false; $exit = -1; $status = $initial;
+    $commandStarted = microtime(true); $lastProgress = 0; $outputBytes = 0;
     do {
         foreach ($pipes as $pipe) {
             $chunk = stream_get_contents($pipe, 8192);
-            if ($chunk !== false) $output .= $chunk;
+            if ($chunk !== false) { $output .= $chunk; $outputBytes += strlen($chunk); }
         }
         if (strlen($output) > ARIA_MAX_OUTPUT) { $output = substr($output, -ARIA_MAX_OUTPUT); $truncated = true; }
+        if ($workerState !== null && isset($GLOBALS['ARIA_CURRENT_JOB_ID']) && microtime(true) - $lastProgress >= 1) {
+            $progressPath = $workerState.'/jobs/'.$GLOBALS['ARIA_CURRENT_JOB_ID'].'.json';
+            if (is_file($progressPath)) {
+                $progressJob = ariaReadJson($progressPath);
+                if (($progressJob['status'] ?? '') === 'running') {
+                    // Never publish command arguments or raw, not-yet-redacted output.
+                    $progressJob['progress'] = ['updated_at' => ariaNow(), 'command_elapsed_seconds' => (int)(microtime(true)-$commandStarted), 'output_bytes_observed' => $outputBytes, 'output_truncated' => $truncated];
+                    ariaAtomic($progressPath, ariaJson($progressJob));
+                }
+            }
+            $lastProgress = microtime(true);
+        }
         if (!$status['running']) { $exit = $status['exitcode']; break; }
         usleep(20000);
         $status = proc_get_status($process);
@@ -223,7 +252,7 @@ function ariaRun(array $argv, int $seconds = 30, ?string $cwd = null): array {
         fclose($pipe);
     }
     $closed = proc_close($process);
-    if ($workerState !== null) @unlink($workerState.'/active-process.json');
+    if ($workerState !== null) @unlink($workerState.'/'.$processRecord);
     if ($exit < 0) $exit = $closed;
     if (strlen($output) > ARIA_MAX_OUTPUT) $truncated = true;
     return ['exit_code' => $exit, 'output' => substr($output, -ARIA_MAX_OUTPUT), 'truncated' => $truncated, 'timed_out' => in_array($exit, [124, 137], true)];
@@ -279,6 +308,8 @@ function ariaFindTemplate(string $name): array {
     return $matches[0];
 }
 function ariaValidate(string $action, array $a): array {
+    $extension = ariaExtensionValidate($action, $a);
+    if ($extension !== null) return strpos($action, 'automation_') === 0 ? ariaAutomationValidate($action, $extension) : $extension;
     $fields = [
         'capabilities' => [], 'containers' => [], 'container_inspect' => ['name'], 'container_logs' => ['name', 'tail'],
         'templates_list' => [], 'template_get' => ['template'], 'scripts_list' => [], 'script_get' => ['name'], 'job_status' => ['job_id'],
@@ -312,7 +343,11 @@ function ariaValidate(string $action, array $a): array {
     }
     return $a;
 }
-function ariaCanonical(array $a): array { ksort($a); return $a; }
+function ariaCanonical(array $a): array {
+    if ($a !== [] && array_keys($a) !== range(0, count($a)-1)) ksort($a);
+    foreach ($a as $key => $value) if (is_array($value)) $a[$key] = ariaCanonical($value);
+    return $a;
+}
 function ariaPublicJob(array $job): array { unset($job['arguments'], $job['fingerprint']); return $job; }
 function ariaBridgeUpdateRunner(): string {
     return ariaPath('ARIA_AGENT_UPDATE_RUNNER', __DIR__.'/bridge-update.php');
@@ -365,11 +400,12 @@ function ariaBridgeStatus(string $state): array {
         return ariaBridgePublic($job);
     } finally { ariaUnlock($queueLock); }
 }
-function ariaBridgeQueue(string $state, array $a): array {
+function ariaBridgeQueue(string $state, array $a, ?string $targetRevision = null): array {
+    if ($targetRevision !== null && !preg_match('/^[a-f0-9]{40}$/D', $targetRevision)) ariaFail('invalid request');
     $queueLock = ariaLock($state, 'queue');
     try {
         $requestId = $a['request_id'];
-        $fingerprint = hash('sha256', ariaJson(['bridge_update', []]));
+        $fingerprint = hash('sha256', ariaJson(['bridge_update', $targetRevision === null ? [] : ['target_revision' => $targetRevision]]));
         $receiptPath = "$state/requests/$requestId.json";
         if (is_file($receiptPath)) {
             $receipt = ariaReadJson($receiptPath);
@@ -386,6 +422,7 @@ function ariaBridgeQueue(string $state, array $a): array {
         if (count(glob("$state/requests/*.json") ?: []) >= ARIA_MAX_RECEIPTS) ariaFail('deduplication capacity reached');
         $jobId = gmdate('YmdHis').'-'.bin2hex(random_bytes(12));
         $job = ['job_id' => $jobId, 'request_id' => $requestId, 'action' => 'bridge_update', 'status' => 'queued', 'phase' => 'queued', 'created_at' => ariaNow(), 'started_at' => null, 'finished_at' => null, 'from_revision' => null, 'to_revision' => null, 'error' => null, 'result' => null];
+        if ($targetRevision !== null) $job['target_revision'] = $targetRevision;
         // Receipt first means even a failed or interrupted launch cannot be
         // replayed by retrying a request whose acknowledgement was lost.
         ariaAtomic($receiptPath, ariaJson(['fingerprint' => $fingerprint, 'job_id' => $jobId, 'action' => 'bridge_update']));
@@ -450,6 +487,7 @@ function ariaQueue(string $state, string $action, array $a): array {
             return ['job_id' => $receipt['job_id'], 'status' => $status, 'deduplicated' => true];
         }
         if (ariaBridgeBusy($state)) ariaFail('management busy');
+        ariaExtensionAuthorize($state, $action, $a);
         if (count(glob("$state/requests/*.json") ?: []) >= ARIA_MAX_RECEIPTS) ariaFail('deduplication capacity reached');
         $pending = 0;
         foreach (glob("$state/jobs/*.json") ?: [] as $path) if (in_array(ariaReadJson($path)['status'], ['queued', 'running'], true)) $pending++;
@@ -470,6 +508,7 @@ function ariaQueue(string $state, string $action, array $a): array {
         }
         $jobId = gmdate('YmdHis').'-'.bin2hex(random_bytes(12));
         $job = ['job_id' => $jobId, 'action' => $action, 'status' => 'queued', 'created_at' => ariaNow(), 'started_at' => null, 'finished_at' => null, 'arguments' => $a, 'result' => null, 'error' => null];
+        if (isset($GLOBALS['ARIA_AUTOMATION_CONTEXT'])) $job['automation'] = $GLOBALS['ARIA_AUTOMATION_CONTEXT'];
         // Persist the receipt first: a crash can make this request unknown, never replay it.
         ariaAtomic($receiptPath, ariaJson(['fingerprint' => $fingerprint, 'job_id' => $jobId]));
         ariaAtomic("$state/jobs/$jobId.json", ariaJson($job));
@@ -481,10 +520,13 @@ function ariaDispatch(string $state, $request): array {
     $action = $request['action']; $a = ariaValidate($action, $request['arguments']);
     if ($action === 'bridge_update') return ariaBridgeQueue($state, $a);
     if ($action === 'bridge_update_status') return ariaBridgeStatus($state);
+    if ($action === 'automation_job_cancel' && function_exists('ariaAutomationControl')) return ariaAutomationControl($state, $action, $a);
     if (isset($a['request_id'])) return ariaQueue($state, $action, $a);
+    ariaExtensionAuthorize($state, $action, $a);
+    if (isset(ariaExtensionSpecs()[$action])) return ariaExtensionRead($state, $action, $a);
     switch ($action) {
         case 'capabilities':
-            return ['version' => 1, 'host_execution' => true, 'queue' => true, 'requires_request_id' => true, 'bridge_self_update' => ariaBridgeUpdateAvailable(), 'bridge_update_status_action' => 'bridge_update_status', 'native_converter_available' => is_file(ariaPath('ARIA_AGENT_NATIVE', '/usr/local/emhttp/plugins/dynamix.docker.manager/include/DockerClient.php')), 'bulk_skipped_containers' => ARIA_PROTECTED, 'protected_containers' => ['aria-gpt-bridge'], 'script_scope' => 'installed Unraid User Scripts, root on host', 'template_secrets' => 'environment values, labels, and sensitive fields redacted; keep placeholders when editing', 'output_redaction' => 'best effort; scripts and application logs can print secrets in unrecognized formats', 'unsupported_template_features' => ['native Tailscale', 'replacement with Docker volumes not explicitly tracked in the template'], 'max_template_bytes' => ARIA_MAX_XML, 'max_script_bytes' => ARIA_MAX_XML, 'max_timeout_seconds' => 86400, 'job_retention' => ARIA_MAX_JOBS, 'deduplication_receipt_limit' => ARIA_MAX_RECEIPTS];
+            return ['version' => 2, 'bridge_version' => '2.0.0', 'extension_actions' => array_keys(ariaExtensionSpecs()), 'host_execution' => true, 'queue' => true, 'requires_request_id' => true, 'bridge_self_update' => ariaBridgeUpdateAvailable(), 'bridge_update_status_action' => 'bridge_update_status', 'native_converter_available' => is_file(ariaPath('ARIA_AGENT_NATIVE', '/usr/local/emhttp/plugins/dynamix.docker.manager/include/DockerClient.php')), 'bulk_skipped_containers' => ARIA_PROTECTED, 'protected_containers' => ['aria-gpt-bridge'], 'script_scope' => 'installed Unraid User Scripts, root on host', 'template_secrets' => 'environment values, labels, and sensitive fields redacted; keep placeholders when editing', 'output_redaction' => 'best effort; scripts and application logs can print secrets in unrecognized formats', 'unsupported_template_features' => ['native Tailscale', 'replacement with Docker volumes not explicitly tracked in the template'], 'max_template_bytes' => ARIA_MAX_XML, 'max_script_bytes' => ARIA_MAX_XML, 'max_timeout_seconds' => 86400, 'job_retention' => ARIA_MAX_JOBS, 'deduplication_receipt_limit' => ARIA_MAX_RECEIPTS];
         case 'containers': return ['containers' => ariaContainers(), 'checked_at' => ariaNow()];
         case 'container_inspect':
             $info = ariaInspect($a['name']); $env = [];
@@ -494,7 +536,7 @@ function ariaDispatch(string $state, $request): array {
             $info = ariaInspect($a['name']); $secrets = [];
             foreach ($info['Config']['Env'] ?? [] as $entry) $secrets[] = explode('=', $entry, 2)[1] ?? '';
             $r = ariaDocker(['logs', '--tail', (string)$a['tail'], '--timestamps', $a['name']]);
-            return ['name' => $a['name'], 'output' => ariaScrub($r['output'], $secrets), 'truncated' => $r['truncated'], 'redacted' => true];
+            return ['name' => $a['name'], 'output' => ariaOpsScrub($state, ariaScrub($r['output'], $secrets)), 'truncated' => $r['truncated'], 'redacted' => true];
         case 'templates_list': return ['templates' => ariaTemplateList()];
         case 'template_get':
             $xml = ariaReadFile(ariaTemplatePath($a['template']), ARIA_MAX_XML);
@@ -507,7 +549,7 @@ function ariaDispatch(string $state, $request): array {
             return ['scripts' => $rows];
         case 'script_get':
             $script = ariaReadFile(ariaScriptPath($a['name']), ARIA_MAX_XML);
-            return ['name' => $a['name'], 'sha256' => hash('sha256', $script), 'script' => ariaScrub($script, [], ARIA_MAX_XML), 'redacted' => true, 'truncated' => false];
+            return ['name' => $a['name'], 'sha256' => hash('sha256', $script), 'script' => ariaOpsScrub($state, ariaScrub($script, [], ARIA_MAX_XML), ARIA_MAX_XML), 'redacted' => true, 'truncated' => false];
         case 'job_status':
             $path = "$state/jobs/{$a['job_id']}.json";
             if (!is_file($path)) ariaFail('job unknown');
@@ -547,6 +589,7 @@ function ariaDeployment(string $state, string $jobId, array $a, bool $updating =
     $xml = ariaReadFile($path, ARIA_MAX_XML);
     if (!hash_equals($a['expected_sha256'], hash('sha256', $xml))) ariaFail('hash mismatch');
     $tree = ariaXML($xml); $name = (string)$tree->Name;
+    ariaExtensionAuthorize($state, $updating ? 'container_update' : 'template_deploy', array_merge($a, ['name' => $name]));
     if (ariaProtected($name)) ariaFail('protected container');
     if (strtolower((string)$tree->TailscaleEnabled) === 'true') ariaFail('unsupported template feature');
     [$command, $nativeName, $image] = ariaNativeCommand($xml);
@@ -581,28 +624,41 @@ function ariaDeployment(string $state, string $jobId, array $a, bool $updating =
     $old = $current;
     $start = $updating ? !empty($old['State']['Running']) : $a['start'];
     $backup = 'aria-backup-'.substr($name, 0, 60).'-'.substr(hash('sha256', $jobId.$name), 0, 16);
-    $wasRunning = !empty($old['State']['Running']); $renamed = false; $created = false;
+    $oldId = $old['Id'] ?? null; $createdId = null;
+    if ($oldId !== null && (!is_string($oldId) || !preg_match('/^[a-f0-9]{64}$/D', $oldId))) ariaFail('command failed');
+    $wasRunning = !empty($old['State']['Running']); $renamed = false;
     if ($old !== null && ariaInspect($backup, false) !== null) ariaFail('command failed');
     $secrets = array_values(ariaRedactedXML($xml)[1]);
+    $assertOwner = function(string $id, string $expectedName): array {
+        $info = ariaInspect($id);
+        if (($info['Id'] ?? null) !== $id || ($info['Name'] ?? null) !== '/'.$expectedName) ariaFail('hash mismatch');
+        return $info;
+    };
     try {
-        if ($old !== null) {
-            if ($wasRunning) ariaDocker(['stop', '--time', '30', $name], 45);
-            ariaDocker(['rename', $name, $backup]); $renamed = true;
+        if ($oldId !== null) {
+            $assertOwner($oldId, $name);
+            if ($wasRunning) ariaDocker(['stop', '--time', '30', $oldId], 45);
+            $assertOwner($oldId, $name);
+            ariaDocker(['rename', $oldId, $backup]); $renamed = true;
+            $assertOwner($oldId, $backup);
         }
         // Only Unraid's trusted converter generates shell syntax. The API accepts
         // no command string; template ExtraParams/PostArgs intentionally carry
         // the same host privilege as editing a template in Unraid itself.
         $r = ariaRun(['/bin/bash', '-c', $command], 600);
-        $candidate = ariaInspect($name, false);
-        // A failed create can race an unrelated external create using this name.
-        // Remove only a container whose ID our own successful create emitted.
-        $created = $candidate !== null && ($r['exit_code'] === 0 || preg_match('/(?:^|\n)'.preg_quote($candidate['Id'], '/').'(?:\n|$)/', $r['output']));
-        if ($r['exit_code'] !== 0 || !$created) ariaFail('command failed');
+        // Ownership comes from the immutable ID emitted by our own create, never
+        // from whichever container happens to occupy the requested name later.
+        preg_match_all('/(?:^|\n)([a-f0-9]{64})(?=\r?\n|\r?$)/D', $r['output'], $emitted);
+        $ids = array_values(array_unique($emitted[1]));
+        if (count($ids) === 1 && $ids[0] !== $oldId) $createdId = $ids[0];
+        if ($r['exit_code'] !== 0 || $createdId === null) ariaFail('command failed');
+        $assertOwner($createdId, $name);
         foreach ($extraNetworks as $network) {
             if ($network === (string)$tree->Network) continue;
-            ariaDocker(['network', 'connect', $network, $name]);
+            $assertOwner($createdId, $name);
+            ariaDocker(['network', 'connect', $network, $createdId]);
         }
-        $configured = ariaInspect($name);
+        $configured = $assertOwner($createdId, $name);
         $networkOverride = function_exists('hasNetworkParam') && hasNetworkParam((string)$tree->ExtraParams);
         if (!$networkOverride) {
             $expectedNetwork = strtolower(ariaRequestedNetwork($tree));
@@ -612,40 +668,68 @@ function ariaDeployment(string $state, string $jobId, array $a, bool $updating =
             }
             if (strtolower($configured['HostConfig']['NetworkMode'] ?? '') !== $expectedNetwork) ariaFail('command failed');
         }
+        $health = ['application_health_verified' => false];
         if ($start) {
-            ariaDocker(['start', $name], 120);
+            $assertOwner($createdId, $name);
+            ariaDocker(['start', $createdId], 120);
+            $assertOwner($createdId, $name);
             if (function_exists('addRoute')) { ob_start(); try { addRoute($name); } finally { ob_end_clean(); } }
-            $check = ariaInspect($name);
+            $check = $assertOwner($createdId, $name);
             if (empty($check['State']['Running'])) ariaFail('command failed');
+            if (function_exists('ariaDeploymentHealth')) $health = ariaDeploymentHealth($state, $name);
         }
+        $assertOwner($createdId, $name);
         // Existing user data remains attached to the replacement; never -v.
-        $retained = false; $backupRestartDisabled = null;
+        $retained = false; $backupRestartDisabled = null; $backupCleanupError = null;
         if ($renamed) {
-            $remove = ariaDocker(['rm', $backup], 30, false);
-            $retained = $remove['exit_code'] !== 0;
-            if ($retained) $backupRestartDisabled = ariaDocker(['update', '--restart=no', $backup], 30, false)['exit_code'] === 0;
+            // Once cleanup can remove the original, an uncertain cleanup result
+            // must not trigger removal of the healthy replacement as rollback.
+            try {
+                $assertOwner($oldId, $backup);
+                $remove = ariaDocker(['rm', $oldId], 30, false);
+                $retained = $remove['exit_code'] !== 0 && ariaInspect($oldId, false) !== null;
+                if ($retained) {
+                    $assertOwner($oldId, $backup);
+                    $backupRestartDisabled = ariaDocker(['update', '--restart=no', $oldId], 30, false)['exit_code'] === 0;
+                }
+            } catch (Throwable $cleanupError) { $retained = null; $backupCleanupError = 'backup cleanup could not be verified'; }
         }
-        return ['name' => $name, 'template' => $a['template'], 'image' => $image, 'status' => $start ? 'running' : 'created', 'pulled' => $a['pull'], 'backup_retained' => $retained, 'backup_name' => $retained ? $backup : null, 'backup_restart_disabled' => $backupRestartDisabled, 'output' => ariaScrub($r['output'], $secrets), 'truncated' => $r['truncated'], 'application_health_verified' => false];
+        return ['name' => $name, 'container_id' => $createdId, 'template' => $a['template'], 'image' => $image, 'status' => $start ? 'running' : 'created', 'pulled' => $a['pull'], 'backup_retained' => $retained, 'backup_name' => $retained !== false ? $backup : null, 'backup_id' => $retained !== false ? $oldId : null, 'backup_restart_disabled' => $backupRestartDisabled, 'backup_cleanup_error' => $backupCleanupError, 'output' => ariaScrub($r['output'], $secrets), 'truncated' => $r['truncated'], 'application_health_verified' => $health['application_health_verified'] ?? false, 'health' => $health];
     } catch (Throwable $e) {
         $rollbackOk = true;
-        if ($created) {
-            $removed = ariaDocker(['rm', '--force', $name], 45, false);
-            $rollbackOk = $removed['exit_code'] === 0;
-        }
-        if ($renamed && $rollbackOk) {
-            $restored = ariaDocker(['rename', $backup, $name], 30, false);
-            $rollbackOk = $restored['exit_code'] === 0;
-        }
-        if ($old !== null && $wasRunning && $rollbackOk) {
-            $restarted = ariaDocker(['start', $name], 120, false);
-            $rollbackOk = $restarted['exit_code'] === 0;
-        }
+        try {
+            if ($createdId !== null && ariaInspect($createdId, false) !== null) {
+                $removed = ariaDocker(['rm', '--force', $createdId], 45, false);
+                if ($removed['exit_code'] !== 0) ariaFail('rollback failed');
+            }
+            if ($oldId !== null) {
+                $original = ariaInspect($oldId, false);
+                $occupant = ariaInspect($name, false);
+                if ($original === null || ($original['Id'] ?? null) !== $oldId) ariaFail('rollback failed');
+                // This also recovers a rename whose acknowledgement was lost.
+                // Never rename an externally moved original or replace a foreign
+                // container now occupying the original name.
+                if (($original['Name'] ?? null) === '/'.$backup && $occupant === null) {
+                    $restored = ariaDocker(['rename', $oldId, $name], 30, false);
+                    if ($restored['exit_code'] !== 0) ariaFail('rollback failed');
+                } elseif (($original['Name'] ?? null) !== '/'.$name || ($occupant['Id'] ?? null) !== $oldId) ariaFail('rollback failed');
+                $assertOwner($oldId, $name);
+                if ($wasRunning) {
+                    $restarted = ariaDocker(['start', $oldId], 120, false);
+                    if ($restarted['exit_code'] !== 0) ariaFail('rollback failed');
+                    $restored = $assertOwner($oldId, $name);
+                    if (empty($restored['State']['Running'])) ariaFail('rollback failed');
+                }
+            }
+        } catch (Throwable $recoveryError) { $rollbackOk = false; }
         if (!$rollbackOk) ariaFail('rollback failed');
         throw $e;
     }
 }
 function ariaExecute(string $state, array $job): array {
     $a = $job['arguments']; $id = $job['job_id'];
+    ariaExtensionAuthorize($state, $job['action'], $a);
+    if (isset(ariaExtensionSpecs()[$job['action']])) return ariaExtensionExecute($state, $job);
     switch ($job['action']) {
         case 'container_action':
             if (ariaProtected($a['name'])) ariaFail('protected container');
@@ -679,7 +763,7 @@ function ariaExecute(string $state, array $job): array {
             $copy = "$state/jobs/$id.script"; ariaAtomic($copy, $script, 0700);
             try { $r = ariaRun(['/bin/bash', $copy], $a['timeout_seconds'], dirname($path)); }
             finally { @unlink($copy); }
-            $r['name'] = $a['name']; $r['output'] = ariaScrub($r['output']);
+            $r['name'] = $a['name']; $r['output'] = ariaOpsScrub($state, $r['output']);
             return $r;
         case 'container_update':
             $plan = $a['plan'];
@@ -704,7 +788,7 @@ function ariaPrune(string $state): void {
         if (count($files) <= ARIA_MAX_JOBS) break;
         $job = ariaReadJson($path);
         if (in_array($job['status'], ['queued', 'running'], true)) continue;
-        @unlink("$state/backups/{$job['job_id']}.xml"); @unlink($path); array_pop($files);
+        @unlink("$state/backups/{$job['job_id']}.xml"); @unlink("$state/backups/{$job['job_id']}.meta.json"); @unlink($path); array_pop($files);
     }
 }
 function ariaWorker(string $state): void {
@@ -724,16 +808,26 @@ function ariaWorker(string $state): void {
     while (true) {
         $found = false;
         foreach (glob("$state/jobs/*.json") ?: [] as $path) {
-            $job = ariaReadJson($path);
-            if ($job['status'] !== 'queued') continue;
-            $found = true; $job['status'] = 'running'; $job['started_at'] = ariaNow();
-            ariaAtomic($path, ariaJson($job));
+            $claim = ariaLock($state, 'queue');
+            try {
+                if (!is_file($path)) continue;
+                $job = ariaReadJson($path);
+                if ($job['status'] !== 'queued') continue;
+                $found = true; $job['status'] = 'running'; $job['started_at'] = ariaNow();
+                ariaAtomic($path, ariaJson($job));
+            } finally { ariaUnlock($claim); }
+            $GLOBALS['ARIA_CURRENT_JOB_ID'] = $job['job_id'];
             try {
                 $job['result'] = ariaExecute($state, $job);
                 $job['status'] = isset($job['result']['exit_code']) && $job['result']['exit_code'] !== 0 ? 'failed' : 'succeeded';
-                if ($job['status'] === 'failed') $job['error'] = $job['result']['timed_out'] ? 'operation timed out' : 'command failed';
+                if ($job['status'] === 'failed') $job['error'] = !empty($job['result']['timed_out']) ? 'operation timed out' : 'command failed';
                 if ($job['action'] === 'containers_update_all' && !$job['result']['all_updated']) $job['status'] = 'partial';
-            } catch (Throwable $e) { $job['status'] = 'failed'; $job['error'] = ariaError($e); }
+                if (in_array($job['result']['status'] ?? '', ['failed', 'unknown'], true)) { $job['status'] = $job['result']['status']; $job['error'] = $job['status'] === 'unknown' ? 'operation outcome unknown' : 'command failed'; }
+                if (($job['result']['partial'] ?? false) === true || ($job['result']['status'] ?? '') === 'partial') $job['status'] = 'partial';
+            } catch (Throwable $e) { $job['error'] = ariaError($e); $job['status'] = $job['error'] === 'application outcome unknown' ? 'unknown' : 'failed'; }
+            unset($GLOBALS['ARIA_CURRENT_JOB_ID']);
+            $lastRecord = ariaReadJson($path);
+            if (isset($lastRecord['progress'])) $job['progress'] = $lastRecord['progress'];
             $job['finished_at'] = ariaNow(); unset($job['arguments']);
             ariaAtomic($path, ariaJson($job));
             ariaPrune($state);
@@ -743,6 +837,8 @@ function ariaWorker(string $state): void {
     ariaUnlock($worker);
 }
 function ariaServe(string $state, string $socket): void {
+    $GLOBALS['ARIA_WORKER_STATE'] = $state;
+    $GLOBALS['ARIA_PROCESS_RECORD'] = 'active-serve-process.json';
     $serverLock = ariaLock($state, 'server', true);
     $dir = dirname($socket);
     if (is_link($dir) || is_link($socket)) ariaFail('internal error');

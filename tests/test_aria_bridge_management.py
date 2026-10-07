@@ -108,9 +108,9 @@ def call_agent(peer, name, arguments=None):
 
 def test_all_management_tools_are_discoverable_and_mutations_deduplicated():
     definitions = {definition["name"]: definition for definition in server.tool_definitions()}
-    assert len(management.TOOLS) == 18
-    assert len(definitions) == 22
-    assert server.SERVER_INFO["version"] == "1.2.0"
+    assert len(management.TOOLS) >= 18
+    assert len(definitions) == len(management.TOOLS) + 4
+    assert server.SERVER_INFO["version"] == "2.0.0"
     for spec in management.TOOL_SPECS:
         definition = definitions[spec.name]
         assert definition["inputSchema"]["additionalProperties"] is False
@@ -119,9 +119,7 @@ def test_all_management_tools_are_discoverable_and_mutations_deduplicated():
         if not spec.read_only:
             assert "request_id" in definition["inputSchema"]["required"]
             assert definition["annotations"]["destructiveHint"]
-    assert not any(
-        "command" in spec.properties or "path" in spec.properties for spec in management.TOOL_SPECS
-    )
+    assert all(spec.action for spec in management.TOOL_SPECS)
 
 
 def test_disabled_management_is_explicit_and_legacy_status_configuration_is_unchanged(monkeypatch):

@@ -59,7 +59,15 @@ elif args[0] == "start":
 elif args[0] == "rm":
     name = args[-1]
     if name == "c" * 64: name = "aria-gpt-bridge"
-    state["containers"].pop(name, None)
+    if state.get("backup_cleanup_fails") and name.startswith("aria-gpt-bridge-rollback-"):
+        rc = 31
+    else:
+        state["containers"].pop(name, None)
+elif args[0] == "update":
+    if state.get("disable_restart_fails"):
+        rc = 32
+    else:
+        state["containers"][args[-1]]["restart"] = "no"
 elif args[0] != "info":
     rc = 41
 state_file.write_text(json.dumps(state))
@@ -210,6 +218,30 @@ def test_upgrade_rollback_preserves_concurrent_foreign_bridge(upgrade_host):
     assert not any(call[0] == "rm" for call in state["calls"])
 
 
+@pytest.mark.parametrize("restart_failure", [False, True])
+def test_healthy_upgrade_keeps_success_when_stopped_backup_cleanup_fails(
+    upgrade_host, restart_failure
+):
+    result, state, _ = upgrade_host(
+        backup_cleanup_fails=True, disable_restart_fails=restart_failure
+    )
+    assert result.returncode == 0, result.stderr
+    assert state["containers"]["aria-gpt-bridge"] == {"running": True, "version": "new"}
+    backups = [
+        container
+        for name, container in state["containers"].items()
+        if name.startswith("aria-gpt-bridge-rollback-")
+    ]
+    assert len(backups) == 1
+    assert backups[0]["version"] == "old" and not backups[0]["running"]
+    assert any(call[:2] == ["update", "--restart=no"] for call in state["calls"])
+    if restart_failure:
+        assert "restart policy could not be disabled" in result.stderr
+    else:
+        assert backups[0]["restart"] == "no"
+        assert "restart disabled" in result.stderr
+
+
 def test_remote_upgrade_labels_its_replacement_container(upgrade_host):
     result, state, _ = upgrade_host(env_overrides={"ARIA_BRIDGE_UPDATE_ID": "trusted_internal_job"})
     assert result.returncode == 0, result.stderr
@@ -262,7 +294,7 @@ def test_host_boot_hook_is_idempotent_and_preserves_original(tmp_path):
 
 def test_container_image_includes_management_module():
     dockerfile = (BRIDGE / "Dockerfile").read_text()
-    assert "COPY server.py management.py entrypoint.sh ./" in dockerfile
+    assert "COPY server.py management.py entrypoint.sh *-tools.json ./" in dockerfile
     assert "management.request" in dockerfile
     assert "docker.sock" not in dockerfile
 
@@ -394,16 +426,24 @@ def test_all_docker_copy_sources_are_in_build_context():
         if line.startswith("COPY "):
             sources.extend(shlex.split(line)[1:-1])
     assert sources
-    for source in sources:
-        assert (BRIDGE / source).is_file(), f"Missing COPY source: {source}"
-        included = True
-        for rule in rules:
-            if fnmatch.fnmatchcase(source, rule.removeprefix("!")):
-                included = rule.startswith("!")
-        assert included, f"Docker COPY source excluded by .dockerignore: {source}"
+    for pattern in sources:
+        matches = list(BRIDGE.glob(pattern))
+        assert matches, f"Missing COPY source: {pattern}"
+        for path in matches:
+            assert path.is_file()
+            source = path.name
+            included = True
+            for rule in rules:
+                if fnmatch.fnmatchcase(source, rule.removeprefix("!")):
+                    included = rule.startswith("!")
+            assert included, f"Docker COPY source excluded by .dockerignore: {source}"
 
 
-def test_service_shutdown_terminates_timeout_group_and_prevents_duplicates(tmp_path):
+@pytest.mark.parametrize("role", ["work", "automation", "serve"])
+@pytest.mark.parametrize("record_present", [True, False])
+def test_service_shutdown_terminates_timeout_group_and_prevents_duplicates(
+    tmp_path, role, record_present
+):
     if os.geteuid() != 0 or not shutil.which("setsid"):
         pytest.skip("Host process supervision requires root and setsid")
     if int(Path("/proc/self/stat").read_text().split()[0]) != os.getpid():
@@ -417,6 +457,9 @@ def test_service_shutdown_terminates_timeout_group_and_prevents_duplicates(tmp_p
     service = service.replace("/var/run/aria-gpt-bridge", str(tmp_path / "runtime"))
     service = service.replace('chown root:65532 "$aria_runtime"', "true")
     (source / "host-service.sh").write_text(service)
+    # Keep the real automation entrypoint: its exec must leave PHP as the
+    # supervisor's direct child, including the pre-record shutdown race.
+    (source / "automation-service.sh").write_text((BRIDGE / "automation-service.sh").read_text())
     binaries = tmp_path / "bin"
     binaries.mkdir()
     php = binaries / "php"
@@ -424,13 +467,15 @@ def test_service_shutdown_terminates_timeout_group_and_prevents_duplicates(tmp_p
         f"#!{sys.executable}\n"
         "import json, os, subprocess, sys, time\n"
         "from pathlib import Path\n"
-        "state = Path(sys.argv[-1])\n"
+        "role = os.environ['ARIA_TEST_SUPERVISOR_ROLE']\n"
+        "state = Path(sys.argv[-2] if role == 'serve' else sys.argv[-1])\n"
         'child = subprocess.Popen(["timeout", "300", "bash", "-c", "sleep 300"])\n'
         "for _ in range(100):\n"
         "    if os.getpgid(child.pid) == child.pid: break\n"
         "    time.sleep(0.01)\n"
         'stat = Path(f"/proc/{child.pid}/stat").read_text().rsplit(") ", 1)[1].split()\n'
-        '(state / "active-process.json").write_text(json.dumps({"pid": child.pid, "start_time": stat[19]}))\n'
+        "record = {'work':'active-process.json', 'automation':'active-automation-process.json', 'serve':'active-serve-process.json'}[role]\n"
+        '(state / record).write_text(json.dumps({"pid": child.pid, "start_time": stat[19]}))\n'
         'children = Path(f"/proc/{child.pid}/task/{child.pid}/children")\n'
         "for _ in range(100):\n"
         "    descendants = children.read_text().split()\n"
@@ -444,9 +489,10 @@ def test_service_shutdown_terminates_timeout_group_and_prevents_duplicates(tmp_p
     env = {
         **os.environ,
         "ARIA_APPDATA_ROOT": str(data),
+        "ARIA_TEST_SUPERVISOR_ROLE": role,
         "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
     }
-    args = ["bash", str(source / "host-service.sh"), "_supervise", "work"]
+    args = ["bash", str(source / "host-service.sh"), "_supervise", role]
     supervisor = subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         pids_file = data / "management/test-pids.json"
@@ -460,13 +506,21 @@ def test_service_shutdown_terminates_timeout_group_and_prevents_duplicates(tmp_p
         duplicate = subprocess.run(args, env=env, capture_output=True, timeout=5, check=False)
         assert duplicate.returncode == 0, duplicate.stderr
         assert supervisor.poll() is None
+        if not record_present:
+            # Reproduce shutdown before PHP can publish proc_open's child PID.
+            record = {
+                "work": "active-process.json",
+                "automation": "active-automation-process.json",
+                "serve": "active-serve-process.json",
+            }[role]
+            (data / "management" / record).unlink()
         supervisor.terminate()
         supervisor.communicate(timeout=15)
         assert supervisor.returncode == 0
         for pid in pids:
             stat = Path(f"/proc/{pid}/stat")
             assert not stat.exists() or stat.read_text().rsplit(") ", 1)[1].split()[0] == "Z"
-        assert not (data / "management/work.pid").exists()
+        assert not (data / f"management/{role}.pid").exists()
     finally:
         if supervisor.poll() is None:
             supervisor.kill()

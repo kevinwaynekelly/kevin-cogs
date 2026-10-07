@@ -57,6 +57,11 @@ def missing():
 def fail():
     print('operation failed with SECRET_THAT_MUST_NOT_LEAK', file=sys.stderr)
     sys.exit(1)
+def key(value):
+    if value in containers: return value
+    for name, container in containers.items():
+        if container['Id'] == value: return name
+    missing()
 def info(name, running, generation):
     return {'Id': hashlib.sha256(str(generation).encode()).hexdigest(),
             'Name': '/' + name, 'Config': {'Image': 'vendor/app:stable', 'Env': ['API_KEY=secret&value']},
@@ -66,8 +71,19 @@ def info(name, running, generation):
 action = args[0]
 if state.get('daemon_failure'): fail()
 if action == 'inspect':
-    name = args[-1]
-    if name not in containers: missing()
+    name = key(args[-1])
+    if (args[-1] == 'app' and state.get('foreign_during_health')
+            and containers[name]['Id'] == state.get('owned_created_id')
+            and containers[name]['State']['Running']):
+        state['health_name_reads'] = state.get('health_name_reads', 0) + 1
+        if state['health_name_reads'] >= 2:
+            containers['created-moved'] = containers.pop(name)
+            containers['created-moved']['Name'] = '/created-moved'
+            containers[name] = info(name, True, 999)
+            containers[name]['State']['Health'] = {'Status': 'healthy'}
+        else:
+            containers[name]['State']['Health'] = {'Status': 'starting'}
+        save()
     print(json.dumps([containers[name]]))
 elif action == 'ps':
     template = args[args.index('--format') + 1]
@@ -88,25 +104,45 @@ elif action == 'create':
     if name in containers or state.get('fail_create'): fail()
     state['generation'] = state.get('generation', 10) + 1
     containers[name] = info(name, False, state['generation'])
-    print(containers[name]['Id']); save()
+    state['owned_created_id'] = containers[name]['Id']
+    print(containers[name]['Id'])
+    if state.get('foreign_after_create'):
+        containers['created-moved'] = containers.pop(name)
+        containers['created-moved']['Name'] = '/created-moved'
+        containers[name] = info(name, True, 999)
+    save()
 elif action in {'stop', 'start', 'restart'}:
-    name = args[-1]
-    if name not in containers: missing()
+    if action == 'start' and state.get('foreign_before_start') and not state.get('start_raced'):
+        state['start_raced'] = True
+        containers['created-moved'] = containers.pop('app')
+        containers['created-moved']['Name'] = '/created-moved'
+        containers['app'] = info('app', False, 999)
+        save()
+    name = key(args[-1])
     if action == 'start' and state.get('fail_start') and containers[name]['Id'] != state.get('original_id'): fail()
     containers[name]['State']['Running'] = action != 'stop' and not state.get('start_exits')
     containers[name]['State']['Status'] = 'exited' if action == 'stop' or state.get('start_exits') else 'running'
     save(); print(name)
 elif action == 'rename':
     old, new = args[1:]
+    old = key(old)
     if old not in containers or new in containers: fail()
     containers[new] = containers.pop(old); containers[new]['Name'] = '/' + new
     save()
+    if state.get('rename_lost_ack') and new.startswith('aria-backup-'): fail()
 elif action == 'rm':
-    name = args[-1]
-    if name not in containers: missing()
+    name = key(args[-1])
+    if state.get('foreign_backup_during_cleanup') and name.startswith('aria-backup-'):
+        containers['original-moved'] = containers.pop(name)
+        containers['original-moved']['Name'] = '/original-moved'
+        containers[name] = info(name, False, 999)
+        save()
+        name = key(args[-1])
     del containers[name]; save()
+    if state.get('remove_lost_ack'): fail()
 elif action == 'network':
     _, _, network, name = args
+    name = key(name)
     if network in containers[name]['NetworkSettings']['Networks']: fail()
     containers[name]['NetworkSettings']['Networks'][network] = {}; save()
 elif action == 'logs': print('connected with secret&value and token=other-secret')
@@ -374,6 +410,75 @@ def test_failed_replace_rolls_back_original_running_container(agent, failure):
     assert all("-v" not in command for command in agent.commands())
 
 
+@pytest.mark.parametrize(
+    "race", ["foreign_after_create", "foreign_before_start", "foreign_during_health"]
+)
+def test_deployment_preserves_foreign_name_during_create_start_and_health(agent, race):
+    agent.change_state(**{race: True})
+    job = agent.queue(
+        "template_deploy",
+        template="my-app.xml",
+        expected_sha256=sha(agent.templates / "my-app.xml"),
+    )
+    assert agent.execute(job) == {"ok": False, "error": "rollback failed"}
+    state = json.loads(agent.docker_state.read_text())
+    current = state["containers"]
+    foreign_id = hashlib.sha256(b"999").hexdigest()
+    assert current["app"]["Id"] == foreign_id
+    assert current["app"]["State"]["Running"] is (race != "foreign_before_start")
+    assert any(item["Id"] == agent.original_id for item in current.values())
+    assert all(item["Id"] != state["owned_created_id"] for item in current.values())
+    mutations = [
+        command
+        for command in agent.commands()
+        if command[0] in {"stop", "start", "restart", "rename", "rm", "network", "update"}
+    ]
+    assert all(foreign_id not in command for command in mutations)
+    assert all(command[-1] != "app" for command in mutations)
+    assert ["rm", "--force", state["owned_created_id"]] in mutations
+
+
+def test_deployment_cleanup_does_not_remove_foreign_backup_name(agent):
+    agent.change_state(foreign_backup_during_cleanup=True)
+    job = agent.queue("container_update", name="app")
+    result = agent.execute(job)
+    assert result["ok"], result
+    state = json.loads(agent.docker_state.read_text())
+    foreign_id = hashlib.sha256(b"999").hexdigest()
+    backups = {
+        name: item for name, item in state["containers"].items() if name.startswith("aria-backup-")
+    }
+    assert len(backups) == 1
+    assert next(iter(backups.values()))["Id"] == foreign_id
+    assert ["rm", agent.original_id] in agent.commands()
+    assert not any(command[0] == "rm" and command[-1] in backups for command in agent.commands())
+
+
+def test_deployment_recovers_original_when_rename_acknowledgement_is_lost(agent):
+    agent.change_state(rename_lost_ack=True)
+    job = agent.queue("container_update", name="app")
+    assert agent.execute(job) == {"ok": False, "error": "command failed"}
+    current = json.loads(agent.docker_state.read_text())["containers"]
+    assert list(current) == ["app"]
+    assert current["app"]["Id"] == agent.original_id
+    assert current["app"]["State"]["Running"] is True
+    assert ["rename", agent.original_id, "app"] in agent.commands()
+    assert ["start", agent.original_id] in agent.commands()
+
+
+def test_deployment_does_not_remove_healthy_replacement_on_lost_backup_removal_ack(agent):
+    agent.change_state(remove_lost_ack=True)
+    job = agent.queue("container_update", name="app")
+    result = agent.execute(job)
+    assert result["ok"], result
+    assert result["result"]["backup_retained"] is False
+    current = json.loads(agent.docker_state.read_text())["containers"]
+    assert list(current) == ["app"]
+    assert current["app"]["State"]["Running"] is True
+    assert current["app"]["Id"] != agent.original_id
+    assert not any(command[:2] == ["rm", "--force"] for command in agent.commands())
+
+
 def test_update_preserves_stopped_state_and_tag(agent):
     data = json.loads(agent.docker_state.read_text())
     data["containers"]["app"]["State"] = {"Running": False, "Status": "exited"}
@@ -507,8 +612,10 @@ def test_logs_and_inspect_do_not_expose_environment_secrets(agent):
 
 
 def test_protected_bridge_but_explicit_infrastructure_changes_allowed(agent):
-    bridge = agent.queue("container_action", name="aria-gpt-bridge", action="restart")
-    assert agent.execute(bridge)["error"] == "protected container"
+    bridge = agent.request(
+        "container_action", name="aria-gpt-bridge", action="restart", request_id="bridge"
+    )
+    assert bridge["error"] == "protected container"
     data = json.loads(agent.docker_state.read_text())
     data["containers"]["haproxy"] = {**data["containers"]["app"], "Name": "/haproxy"}
     agent.change_state(containers=data["containers"])

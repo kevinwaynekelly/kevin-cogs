@@ -1,5 +1,18 @@
 # Changelog
 
+## Aria bridge 2.0.0
+
+- Expand the bridge with typed host/container commands, version-checked script and file
+  management, secret references, configuration archives, application APIs, storage/network/
+  device/VM diagnostics, native VM lifecycle and offline snapshots.
+- Add template preview/history/restore, image pinning, deployment policies and health checks,
+  dependency-ordered stacks, isolated trials and verified appdata copy workflows.
+- Add durable host scheduling, exact-CI-revision daily bridge updates, event workflows,
+  queued-job cancellation, progress metadata, local notifications and a status snapshot.
+- Prepare migration into the dedicated aria-gpt-bridge repository while retaining the old
+  checkout, credentials and recovery path. Refresh the plugin catalog after upgrading.
+
+
 ## 2026-10-07: Honor playback controls at the end of a song
 
 - Fix an AudioPlus race where stop or skip could arrive as playback ended but still repeat the song or trigger autoplay. Track completion now checks whether a newer playback control superseded it before advancing.
