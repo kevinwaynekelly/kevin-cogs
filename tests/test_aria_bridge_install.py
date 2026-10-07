@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -236,6 +237,119 @@ def test_container_image_includes_management_module():
     assert "COPY server.py management.py entrypoint.sh ./" in dockerfile
     assert "management.request" in dockerfile
     assert "docker.sock" not in dockerfile
+
+
+def service_function_script(tmp_path, suffix):
+    """Load real service functions without invoking Unraid startup or root setup."""
+    source = tmp_path / "source"
+    source.mkdir()
+    shutil.copyfile(BRIDGE / "unraid-common.sh", source / "unraid-common.sh")
+    functions = (BRIDGE / "host-service.sh").read_text().split("\naria_preflight\n", 1)[0]
+    script = source / "host-service-test.sh"
+    script.write_text(functions + "\n" + suffix)
+    data = tmp_path / "appdata"
+    (data / "management").mkdir(parents=True)
+    return script, data
+
+
+def test_supervisor_wait_does_not_retain_lock_after_shutdown(tmp_path):
+    if not shutil.which("setsid"):
+        pytest.skip("Host process supervision requires setsid")
+    # PID identity is separately tested on native /proc. This test must also run
+    # where the sandbox's visible /proc and signal PID namespaces differ.
+    script, data = service_function_script(
+        tmp_path, 'aria_pid_start() { printf "1\\n"; }\naria_supervise work\n'
+    )
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    php = binaries / "php"
+    php.write_text("#!/bin/bash\nexec /bin/sleep 300\n")
+    php.chmod(0o755)
+    sleep = binaries / "sleep"
+    sleep.write_text(
+        '#!/bin/bash\nif [[ "$1" == 2 ]]; then\n'
+        '  printf "%s\\n" "$$" > "$ARIA_APPDATA_ROOT/wait.pid"\n'
+        "  exec /bin/sleep 30\n"
+        "fi\nexec /bin/sleep 0.01\n"
+    )
+    sleep.chmod(0o755)
+    env = {
+        **os.environ,
+        "ARIA_APPDATA_ROOT": str(data),
+        "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+    }
+    supervisor = subprocess.Popen(
+        ["bash", str(script)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    waiting_pid = None
+    try:
+        waiting_file = data / "wait.pid"
+        for _ in range(250):
+            if waiting_file.exists() and waiting_file.read_text().strip():
+                break
+            time.sleep(0.01)
+        assert waiting_file.exists(), supervisor.poll()
+        waiting_pid = int(waiting_file.read_text())
+        supervisor.terminate()
+        supervisor.wait(timeout=5)
+        assert supervisor.returncode == 0
+        # The wait is deliberately still alive. It must not own the old
+        # supervisor lock or prevent a replacement supervisor from starting.
+        os.kill(waiting_pid, 0)
+        lock = subprocess.run(
+            ["flock", "-n", str(data / "management/work.supervisor.lock"), "true"],
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+        assert lock.returncode == 0, "Background sleep retained the supervisor lock"
+    finally:
+        if supervisor.poll() is None:
+            supervisor.kill()
+            supervisor.wait(timeout=5)
+        if waiting_pid is not None:
+            try:
+                os.kill(waiting_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+
+def test_stop_waits_for_old_supervisor_lock_after_pid_disappears(tmp_path):
+    script, data = service_function_script(
+        tmp_path,
+        "aria_alive() { return 1; }\naria_stop_role work\n"
+        'flock -n "$aria_state/work.supervisor.lock" true\n',
+    )
+    lock = data / "management/work.supervisor.lock"
+    ready = data / "lock-ready"
+    holder = subprocess.Popen(
+        [
+            "bash",
+            "-c",
+            'exec 8> "$1"; flock 8; touch "$2"; sleep 0.5',
+            "old-supervisor-wait",
+            str(lock),
+            str(ready),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        for _ in range(250):
+            if ready.exists():
+                break
+            time.sleep(0.01)
+        assert ready.exists()
+        result = subprocess.run(
+            ["bash", str(script)],
+            env={**os.environ, "ARIA_APPDATA_ROOT": str(data)},
+            capture_output=True,
+            timeout=7,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        holder.wait(timeout=2)
 
 
 def test_all_docker_copy_sources_are_in_build_context():

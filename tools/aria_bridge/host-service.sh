@@ -29,6 +29,12 @@ aria_stop_role() {
         done
         if aria_alive "$aria_role"; then aria_error "Cannot stop $aria_role supervisor cleanly; refusing to create a duplicate."; return 1; fi
     fi
+    # Older supervisors let their background wait inherit this lock. Wait for
+    # that child and for the supervisor's final exit before launching a replacement.
+    if ! flock -w 5 "$aria_state/$aria_role.supervisor.lock" true; then
+        aria_error "The $aria_role supervisor lock is still held; refusing to create a duplicate."
+        return 1
+    fi
     rm -f "$aria_state/$aria_role.pid"
 }
 
@@ -112,7 +118,7 @@ aria_supervise() {
         aria_child_start="$(aria_pid_start "$aria_child" || true)"
         while kill -0 "$aria_child" 2>/dev/null; do
             aria_rotate "$aria_state/$aria_role.log"
-            sleep 2 & wait $! || true
+            sleep 2 8>&- & wait $! || true
         done
         wait "$aria_child" 2>/dev/null || true
         # A crashed PHP worker must not leave an earlier host command running.
@@ -120,7 +126,7 @@ aria_supervise() {
         if [[ -n "$aria_active_pid" ]]; then kill -KILL -- "-$aria_active_pid" 2>/dev/null || true; fi
         kill -KILL -- "-$aria_child" 2>/dev/null || true
         aria_child=''
-        sleep 2 & wait $! || true
+        sleep 2 8>&- & wait $! || true
     done
 }
 

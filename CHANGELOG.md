@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-07: Repair Aria host-service restarts
+
+- Close the supervisor lock in background timers and wait for the previous supervisor's lock to be released before replacing it. This prevents a restart from leaving the API available but the job worker stopped. Exercise both the inherited-lock failure and the shutdown handoff with real Bash and file locks.
+
 ## 2026-10-07: Fix live Aria container listings with large metadata
 
 - Request only the six container summary fields from Docker before capturing output, preventing unused labels and other metadata from exceeding the host agent's 64 KiB command-output limit. Preserve JSON escaping and reject truncated summaries. Add regression coverage for 66 containers with oversized metadata and escaped summary values.
