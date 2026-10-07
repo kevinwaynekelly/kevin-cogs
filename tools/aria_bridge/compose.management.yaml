@@ -1,0 +1,14 @@
+# Optional host management. Start host-service.sh and install-boot first.
+# docker compose -f compose.yaml -f compose.management.yaml up -d --build
+services:
+  aria-gpt-bridge:
+    environment:
+      ARIA_AGENT_SOCKET: /run/aria-agent/agent.sock
+    volumes:
+      - type: bind
+        source: /var/run/aria-gpt-bridge
+        target: /run/aria-agent
+        read_only: true
+        bind:
+          # Docker must recreate this volatile directory after reboot.
+          create_host_path: true

@@ -429,7 +429,7 @@ def test_initialization_negotiation_and_tool_annotations(settings, version):
         "aria_containers",
         "aria_update_red",
         "aria_red_update_status",
-    }
+    } | set(bridge.management.TOOLS)
     assert all(tool["inputSchema"]["additionalProperties"] is False for tool in tools)
     update = next(tool for tool in tools if tool["name"] == "aria_update_red")
     assert update["annotations"]["destructiveHint"]
@@ -481,7 +481,9 @@ def test_modern_protocol_discovery_and_calls_need_no_handshake(settings):
     assert bridge.MODERN_VERSION in discovered["supportedVersions"]
     assert discovered["resultType"] == "complete"
     assert discovered["_meta"][bridge.META_PREFIX + "serverInfo"] == bridge.SERVER_INFO
-    assert len(server.handle(modern("tools/list"))["result"]["tools"]) == 4
+    assert len(server.handle(modern("tools/list"))["result"]["tools"]) == 4 + len(
+        bridge.management.TOOLS
+    )
     result = server.handle(modern("tools/call", {"name": "aria_status"}))["result"]
     assert result["structuredContent"]["unraid_version"] == "7.3.2"
     assert result["resultType"] == "complete"

@@ -1,3 +1,4 @@
+# Add -f compose.management.yaml to enable the native host agent connection.
 services:
   aria-gpt-bridge:
     image: aria-gpt-bridge:v1
