@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-07: Recover webhook updates after storage errors
+
+- Keep DownloaderPlus's HTTP update worker alive after failures to save a claim or an error result. Preserve accepted pending work until its claim is saved, serialize claims with incoming requests, and back off between storage retries.
+- Add regression tests for a transient claim-write failure and a failed error-status write, using real Red Config and local HTTP with package updates mocked.
+
 ## 2026-10-07: Remote Aria bridge upgrades
 
 - Add `aria_bridge_update` and `aria_bridge_update_status` so an activated installation can upgrade its own bridge from the fixed repository's `main` branch. Preserve tunnel credentials and runtime settings, require a clean fast-forwardable checkout and idle job queue, and report durable progress across tunnel reconnection.

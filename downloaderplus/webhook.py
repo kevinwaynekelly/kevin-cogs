@@ -239,14 +239,17 @@ class GitHubWebhook:
         return web.json_response({"status": "queued"}, status=202)
 
     async def _result(self, status, detail, *, after_reload=False):
-        async with self.config.webhook() as policy:
+        async with (
+            self.config.webhook.get_lock(),
+            self.config.webhook(acquire_lock=False) as policy,
+        ):
             if (
                 (self.closed and not after_reload)
                 or not policy["enabled"]
                 or policy["secret"] != self.policy["secret"]
             ):
                 return False
-            if status != "running" and policy["last_result"].get("token") != self._run_token:
+            if policy["last_result"].get("token") != self._run_token:
                 return False
             policy["last_result"] = {
                 "status": status,
@@ -254,8 +257,30 @@ class GitHubWebhook:
                 "at": int(time.time()),
                 "token": self._run_token,
             }
-            if status == "running":
+        return True
+
+    async def _claim(self):
+        async with self._accept_lock:
+            async with (
+                self.config.webhook.get_lock(),
+                self.config.webhook(acquire_lock=False) as policy,
+            ):
+                if (
+                    self.closed
+                    or not policy["enabled"]
+                    or policy["secret"] != self.policy["secret"]
+                ):
+                    return False
+                self._run_token = secrets.token_hex(8)
+                policy["last_result"] = {
+                    "status": "running",
+                    "detail": "Refreshing all repositories and unpinned cogs.",
+                    "at": int(time.time()),
+                    "token": self._run_token,
+                }
                 policy["pending"] = False
+            # Preserve the wakeup on storage failure and serialize it with ingress.
+            self._event.clear()
         return True
 
     async def _run(self):
@@ -268,15 +293,17 @@ class GitHubWebhook:
         )
         last_start = time.monotonic() - min(self.interval, elapsed)
         while not self.closed:
-            await self._event.wait()
-            await asyncio.sleep(max(self.coalesce, last_start + self.interval - time.monotonic()))
-            self._event.clear()
-            self._run_token = secrets.token_hex(8)
-            if not await self._result("running", "Refreshing all repositories and unpinned cogs."):
-                return
-            last_start = time.monotonic()
             reloading = False
+            claimed = False
             try:
+                await self._event.wait()
+                await asyncio.sleep(
+                    max(self.coalesce, last_start + self.interval - time.monotonic())
+                )
+                if not await self._claim():
+                    return
+                claimed = True
+                last_start = time.monotonic()
                 status, detail, reload = await self.update(self.policy)
                 if not await self._result("reloading" if reload else status, detail):
                     return
@@ -298,8 +325,20 @@ class GitHubWebhook:
                         else "Repository update",
                     },
                 )
-                await self._result(
-                    "failed",
-                    "Update failed; check Red logs and the result channel.",
-                    after_reload=reloading,
-                )
+                if claimed:
+                    try:
+                        await self._result(
+                            "failed",
+                            "Update failed; check Red logs and the result channel.",
+                            after_reload=reloading,
+                        )
+                    except Exception as storage_error:
+                        log.error(
+                            "Automatic update result could not be saved.",
+                            extra={
+                                "notification_error": type(storage_error).__name__,
+                                "notification_stage": "Webhook result storage",
+                            },
+                        )
+                # Bound retries while storage is unavailable; keep accepting later work.
+                await asyncio.sleep(max(self.coalesce, self.interval, 0.01))

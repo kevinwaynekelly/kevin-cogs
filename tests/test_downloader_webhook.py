@@ -243,6 +243,57 @@ async def test_failed_update_safe_status_log_and_later_events_continue(hook, cap
     assert (await config.webhook())["last_result"]["status"] == "complete"
 
 
+async def test_claim_storage_failure_retries_accepted_push(hook, monkeypatch, caplog):
+    service, config, update, client, url = hook
+    original_set = config._driver.set
+    failed = asyncio.Event()
+
+    async def save(identifier, value=None):
+        if isinstance(value, dict) and value.get("last_result", {}).get("status") == "running":
+            if not failed.is_set():
+                failed.set()
+                raise OSError("private storage path")
+        await original_set(identifier, value)
+
+    monkeypatch.setattr(config._driver, "set", save)
+    body = json.dumps(push()).encode()
+    async with client.post(url, data=body, headers=headers(body)) as response:
+        assert response.status == 202
+    await asyncio.wait_for(failed.wait(), 1)
+    await eventually(lambda: update.await_count == 1)
+    assert (await config.webhook())["last_result"]["status"] == "complete"
+    assert not service.worker.done()
+    assert "private storage path" not in caplog.text
+
+
+async def test_failed_result_storage_does_not_kill_worker(hook, monkeypatch, caplog):
+    service, config, update, client, url = hook
+    original_set = config._driver.set
+    failed = asyncio.Event()
+
+    async def save(identifier, value=None):
+        if isinstance(value, dict) and value.get("last_result", {}).get("status") == "failed":
+            failed.set()
+            raise OSError("private storage path")
+        await original_set(identifier, value)
+
+    monkeypatch.setattr(config._driver, "set", save)
+    update.side_effect = RuntimeError("private update error")
+    body = json.dumps(push()).encode()
+    async with client.post(url, data=body, headers=headers(body)) as response:
+        assert response.status == 202
+    await asyncio.wait_for(failed.wait(), 1)
+    update.side_effect = None
+    body = json.dumps(push(after="next")).encode()
+    async with client.post(url, data=body, headers=headers(body, "next-delivery")) as response:
+        assert response.status == 202
+    await eventually(lambda: update.await_count == 2)
+    assert (await config.webhook())["last_result"]["status"] == "complete"
+    assert not service.worker.done()
+    assert "private storage path" not in caplog.text
+    assert "private update error" not in caplog.text
+
+
 async def test_webhook_native_all_update_preserves_pins_dependencies_and_deferred_reload(
     download_runtime, monkeypatch
 ):
