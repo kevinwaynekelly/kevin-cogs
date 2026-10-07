@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07: Discord webhook update trigger
+
+- Add owner-only `download discord` status/enable/disable prefix and slash controls for an existing incoming Discord webhook. Validate the webhook's server/channel, bot permissions and message intents before binding. No public Red listener or inbound port is needed.
+- Accept only `updateall` or `!updateall` from the approved webhook in its exact server/channel. Bound ingress and one coalescing worker, retain a single replay cursor, preserve pending work and result state across self-reload, and use the shared update lock plus current owner/native permission checks. Update every repository and unpinned installed cog, reload changes and sync enabled slash commands.
+- Keep webhook URLs/tokens and message contents out of stored state, exports and logs. Export only the requesting owner's binding, cancel in-flight configuration on privacy deletion and preserve other owners' automation. Settings-only exports retain only the enabled switch. The slash tree remains within Discord limits at 92 roots/463 actions, including 32 DownloaderPlus actions.
+- Cover real Red prefix/slash parsing and Config lifecycle with mocked Discord/package transport. Publication does not enable a running bot's trigger or post a live webhook message.
+
 ## 2026-10-07: Private update URL, daily updates and slash sync
 
 - Add a private browser link and authenticated `POST /update` beside the signed GitHub endpoint. Opening the DM-only link queues all-repo/all-unpinned-cog updates; GET/HEAD previews cannot perform updates. Bearer credentials stay in the URL fragment and are sent in a header. Rotation invalidates old links; requests share bounded ingress, burst coalescing and the existing worker.

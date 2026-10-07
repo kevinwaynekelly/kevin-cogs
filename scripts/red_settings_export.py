@@ -177,6 +177,7 @@ GLOBAL = {
     "DownloaderPlus": {
         "webhook": fields("enabled bind port"),
         "daily": fields("enabled time timezone"),
+        "discord_trigger": fields("enabled"),
     },
     "NotificationPlus": fields("enabled"),
     "AudioPlus": {"watchdog": fields("enabled guild_id channel_id video_url hour minute timezone")},

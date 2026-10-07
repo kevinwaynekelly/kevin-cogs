@@ -51,6 +51,19 @@ NON_POLICY_NESTED = {
     + tuple(
         "GLOBAL.daily." + key
         for key in ("owner_id", "channel_id", "generation", "next_run", "last_result")
+    )
+    + tuple(
+        "GLOBAL.discord_trigger." + key
+        for key in (
+            "webhook_id",
+            "guild_id",
+            "channel_id",
+            "owner_id",
+            "generation",
+            "pending",
+            "last_message_id",
+            "last_result",
+        )
     ),
     "AudioPlus": tuple(
         "GLOBAL.watchdog." + key

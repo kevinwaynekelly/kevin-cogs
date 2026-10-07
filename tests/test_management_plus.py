@@ -487,7 +487,7 @@ async def test_core_helper_copies_and_all_packages_fit_discord(core_runtime, mon
                     actions += 1
                     if leaf.binding is core:
                         core_actions += 1
-        assert (len(roots), actions, core_actions) == (92, 460, 14)
+        assert (len(roots), actions, core_actions) == (92, 463, 14)
         print(f"{len(roots)} roots / {actions} actions")
     finally:
         for cog in reversed(loaded):

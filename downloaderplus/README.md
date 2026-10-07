@@ -1,6 +1,6 @@
 # DownloaderPlus
 
-The shared theme, owner-only prefix/slash controls, private update URLs, optional signed GitHub pushes and daily updates for bundled Red Downloader. Red keeps its repository copies, installed-package records, dependency installer, converters, installation agreement and reload behavior.
+The shared theme, owner-only prefix/slash controls, approved Discord webhook messages, private update URLs, optional signed GitHub pushes and daily updates for bundled Red Downloader. Red keeps its repository copies, installed-package records, dependency installer, converters, installation agreement and reload behavior.
 
 ## Install
 
@@ -28,11 +28,39 @@ not installed, and native dependency/check failures remain visible. This updates
 Downloader-managed packages, not Red itself or its bundled core cogs.
 
 `!download updateall` and `/download updateall` provide the same action under
-the management group. These commands share the webhook/daily update lock, so automatic
+the management group. These commands share the Discord/webhook/daily update lock, so automatic
 and manual update operations do not run over each other. The shortcut respects disabled
 `download`, `download updateall` and native `cog update` commands.
 
 Slash sync happens after reload and preserves Red's enabled/disabled command selections; it does not enable every installed cog. It also checks the native `slash sync` permissions and disabled state. Unchanged command definitions skip a redundant upload, and changed/failed uploads share a persisted one-minute retry budget. A sync failure does not undo installed updates. Normal `download update` still uses its existing selected-package behavior.
+
+## Discord webhook updates
+
+Use an existing **incoming Discord webhook** in the channel where update results should appear. Copy the webhook's numeric ID from its private URL, the digits immediately after `/webhooks/`. Keep the full webhook URL private. As the bot owner, run in that webhook's server text channel:
+
+```text
+!download discord enable WEBHOOK_ID
+!download discord
+```
+
+Replace `WEBHOOK_ID` with the numeric ID. Slash equivalents are `/download discord enable` and `/download discord status`. The bot needs **View Channel**, **Send Messages** and **Manage Webhooks** there. Red needs server message and Message Content intents enabled. The bot checks the webhook through Discord before saving its exact webhook/server/channel binding; ordinary members cannot authorize it.
+
+Send this JSON as an HTTP POST to the existing private Discord webhook URL:
+
+```json
+{"content":"updateall","allowed_mentions":{"parse":[]}}
+```
+
+Discord delivers the message to Red through its normal connection. No public bot URL, incoming router port, Docker port mapping or reverse proxy is needed. A normal person typing `updateall`, another webhook using the same name, or a message in another channel cannot activate this trigger. The webhook accepts exactly `updateall` or `!updateall`, ignoring surrounding whitespace and case. It does not run arbitrary commands, add repositories or change pins. Prefix commands posted by webhook accounts are not otherwise enabled.
+
+The approved message queues one bounded worker. Bursts coalesce for three seconds, with at most one waiting followup and at least 30 seconds between starts. The latest accepted Discord message ID prevents replay across reloads. Updates use the configuring owner's current permissions, refresh all configured repositories and unpinned installed cogs, reload changed loaded cogs, then sync enabled slash commands. Results appear in the same channel, and failures reach optional NotificationPlus. The owner must remain a bot owner and a member of that server.
+
+```text
+!download discord disable
+!download discord enable
+```
+
+Disable stops this trigger and its queued worker without deleting the Discord webhook or changing daily/HTTP automation. Enable without an ID reuses the saved binding, provided it still belongs to the current channel. To replace it, enable a different webhook ID in that webhook's channel. To revoke the webhook URL itself, delete that webhook in Discord. Store the URL privately in whichever external service sends requests; DownloaderPlus saves IDs and bounded runtime status, never the URL/token or message contents. Connecting a webhook does not itself give ChatGPT permission or a tool to send HTTP requests; the client must have a supported way to POST to Discord.
 
 ## Private update link
 
@@ -107,6 +135,9 @@ Every new control requires bot ownership. Server administrator permission alone 
 | `[p]download daily` | `/download daily status` | Show the schedule, next run and latest result. |
 | `[p]download daily enable [clock] [timezone]` | `/download daily enable` | Enable/change daily updates and use this channel for results. |
 | `[p]download daily disable` | `/download daily disable` | Disable daily automation and cancel its worker. |
+| `[p]download discord` | `/download discord status` | Show the approved Discord webhook, channel and latest result. |
+| `[p]download discord enable [webhook_id]` | `/download discord enable` | Approve an existing incoming webhook in this channel; reuse its saved ID if omitted. |
+| `[p]download discord disable` | `/download discord disable` | Stop this trigger without deleting the Discord webhook. |
 
 For example, `[p]download update True audioplus communityplus` updates and reloads those installed packages. `[p]download version kevin-cogs origin/main True audioplus` uses that repository's main revision. Pinning, compatibility/dependency failures and revision errors are reported by the original engine. Review repository code before accepting Red's native installation agreement; DownloaderPlus does not automatically accept it.
 
@@ -150,6 +181,6 @@ An update's reload option follows Red's native behavior. Repository-copy updates
 
 ## Data and validation
 
-DownloaderPlus retains optional webhook listener settings, a private secret, the configuring owner's ID, result-channel ID, bounded delivery IDs/body digests, one pending flag and the latest safe update result. The manual trigger credential is derived from the secret. Daily automation stores its time/timezone, owner/channel IDs, generation, next run and latest result. Slash sync stores only a schema fingerprint and two timestamps. Red Downloader remains responsible for repository copies and installed-package data. User-data exports include the requesting owner's ID, result channels and enabled states; they exclude credentials and replay digests. Deleting that owner's data cancels/waits in-flight configuration, stops their automation and clears its settings, preserving another owner's automation. Settings-only exports include webhook enabled/bind/port and daily enabled/time/timezone; they exclude credentials, identities and runtime records. Additive defaults preserve existing webhook configuration without changing its secret.
+DownloaderPlus retains optional webhook listener settings, a private secret, the configuring owner's ID, result-channel ID, bounded delivery IDs/body digests, one pending flag and the latest safe update result. The manual trigger credential is derived from the secret. Daily automation stores its time/timezone, owner/channel IDs, generation, next run and latest result. Discord triggers retain approved webhook/server/channel/owner IDs, generation, one latest-message cursor, pending state and latest result, without webhook URLs/tokens or message contents. Slash sync stores only a schema fingerprint and two timestamps. Red Downloader remains responsible for repository copies and installed-package data. User-data exports include the requesting owner's ID, result channels, enabled states and Discord webhook/server bindings; they exclude credentials and replay digests. Deleting that owner's data cancels/waits in-flight configuration, stops their automation and clears its settings, preserving another owner's automation. Settings-only exports include webhook enabled/bind/port, daily enabled/time/timezone and Discord-trigger enabled state; they exclude credentials, identities and runtime records. Additive defaults preserve existing webhook configuration without changing its secret.
 
-Regression tests use real local HTTP signatures and Red parsing/global checks, with Git/package installation and Discord transport mocked. They check signed and private triggers, non-mutating page previews, credential isolation, burst coalescing, schedule claims/DST/restarts, slash enable choices/rate budgets, pinning, dependency failures, self-reload locking, owner revocation and deletion races. They do not install packages on a live bot or expose a live public webhook.
+Regression tests use real local HTTP signatures and Red parsing/global checks, with Git/package installation and Discord transport mocked. They check Discord webhook identity/permissions, bounded message admission and replay, signed and private triggers, non-mutating page previews, credential isolation, burst coalescing, schedule claims/DST/restarts, slash enable choices/rate budgets, pinning, dependency failures, self-reload locking, owner revocation and deletion races. They do not install packages on a live bot or expose a live public webhook.

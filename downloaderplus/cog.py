@@ -13,8 +13,9 @@ from discord.ext.commands.view import StringView
 from redbot.core import Config, commands
 
 from .command_support import check_command, finish_configuration_audit, prepare_hybrid
-from .constants import DAILY_DEFAULTS, SYNC_DEFAULTS, WEBHOOK_DEFAULTS
+from .constants import DAILY_DEFAULTS, DISCORD_DEFAULTS, SYNC_DEFAULTS, WEBHOOK_DEFAULTS
 from .daily import DailyUpdates, next_daily
+from .discord_trigger import DiscordTrigger
 from .management import invoke_native, native_command, style_replies, words
 from .presentation import Presentation
 from .privacy import ConfigurationBarrier, configuration_request
@@ -86,6 +87,7 @@ class DownloaderPlus(commands.Cog):
             webhook=deepcopy(WEBHOOK_DEFAULTS),
             daily=deepcopy(DAILY_DEFAULTS),
             slash_sync=deepcopy(SYNC_DEFAULTS),
+            discord_trigger=deepcopy(DISCORD_DEFAULTS),
         )
         self._presentation = Presentation("DownloaderPlus", "download")
         self._closing = False
@@ -100,10 +102,23 @@ class DownloaderPlus(commands.Cog):
         self._daily = DailyUpdates(
             self.config, self._daily_update, ready=getattr(bot, "wait_until_red_ready", None)
         )
+        self._discord_trigger = DiscordTrigger(
+            self.config, self._discord_update, ready=getattr(bot, "wait_until_red_ready", None)
+        )
         self._privacy = ConfigurationBarrier()
 
     async def cog_load(self):
         self.bot.before_invoke(self.style_native_reply)
+        try:
+            await self._discord_trigger.start()
+        except Exception as error:
+            log.error(
+                "Discord update trigger could not start.",
+                extra={
+                    "notification_error": type(error).__name__,
+                    "notification_stage": "Discord update trigger",
+                },
+            )
         try:
             await self._webhook.start()
         except Exception as error:
@@ -133,6 +148,12 @@ class DownloaderPlus(commands.Cog):
         await self._privacy.close()
         await self._webhook.close()
         await self._daily.close()
+        await self._discord_trigger.close()
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if not self._closing:
+            await self._discord_trigger.accept(message)
 
     async def style_native_reply(self, ctx):
         if (
@@ -154,10 +175,12 @@ class DownloaderPlus(commands.Cog):
 
     async def red_get_data_for_user(self, *, user_id):
         data = {}
-        for name in ("webhook", "daily"):
+        for name in ("webhook", "daily", "discord_trigger"):
             policy = await getattr(self.config, name)()
             if policy["owner_id"] == user_id:
                 data[name] = {key: policy[key] for key in ("owner_id", "channel_id", "enabled")}
+                if name == "discord_trigger":
+                    data[name].update(webhook_id=policy["webhook_id"], guild_id=policy["guild_id"])
         if not data:
             return {}
         return {"downloaderplus.json": io.BytesIO(json.dumps(data, indent=2).encode())}
@@ -170,6 +193,7 @@ class DownloaderPlus(commands.Cog):
                 for name, defaults, service in (
                     ("webhook", WEBHOOK_DEFAULTS, self._webhook),
                     ("daily", DAILY_DEFAULTS, self._daily),
+                    ("discord_trigger", DISCORD_DEFAULTS, self._discord_trigger),
                 ):
                     async with getattr(self.config, name)() as policy:
                         owned = policy["owner_id"] == user_id
@@ -264,6 +288,9 @@ class DownloaderPlus(commands.Cog):
 
     async def _daily_update(self, policy):
         return await self._automatic_update(policy, self.daily)
+
+    async def _discord_update(self, policy):
+        return await self._automatic_update(policy, self.discord_trigger)
 
     async def _automatic_update(self, policy, control):
         async with self._operation_lock:
@@ -543,6 +570,114 @@ class DownloaderPlus(commands.Cog):
             policy["enabled"] = False
         await self._daily.close()
         await self._presentation.send(ctx, "Daily updates disabled.", tone="success")
+
+    @download.group(name="discord", invoke_without_command=True, fallback="status")
+    async def discord_trigger(self, ctx):
+        """Show the approved Discord webhook that can request updates."""
+        policy = await self.config.discord_trigger()
+        channel = f"<#{policy['channel_id']}>" if policy["channel_id"] else "Not configured"
+        embed = self._presentation.embed(
+            "Discord update trigger",
+            f"**Automation** · {'Enabled' if policy['enabled'] else 'Disabled'}\n"
+            f"**Webhook ID** · {policy['webhook_id'] or 'Not configured'}\n"
+            f"**Channel** · {channel}\n"
+            f"**Queued** · {'Yes' if policy['pending'] else 'No'}\n"
+            "Send `updateall` or `!updateall` through the approved webhook to update repositories "
+            "and unpinned cogs, reload changes and sync enabled slash commands. "
+            "Results appear in the configured channel. No public bot port is required.",
+        )
+        if policy["last_result"]:
+            result = policy["last_result"]
+            embed.add_field(
+                name="Last update", value=f"{result['status']} · {result['detail']}", inline=False
+            )
+        await self._presentation.send(ctx, embed=embed)
+
+    @discord_trigger.command(name="enable")
+    @commands.guild_only()
+    @configuration_request
+    async def discord_enable(self, ctx, webhook_id: str = ""):
+        """Approve an existing incoming Discord webhook in this text channel."""
+        if not isinstance(ctx.channel, discord.TextChannel):
+            raise commands.BadArgument(
+                "Run this in the webhook's server text channel, outside a thread."
+            )
+        if not self.bot.intents.message_content or not self.bot.intents.guild_messages:
+            raise commands.BadArgument(
+                "Enable Message Content and server message intents for Red, then restart it."
+            )
+        permissions = ctx.channel.permissions_for(ctx.guild.me)
+        if (
+            not permissions.view_channel
+            or not permissions.send_messages
+            or not permissions.manage_webhooks
+        ):
+            raise commands.BadArgument(
+                "The bot needs View Channel, Send Messages and Manage Webhooks in this channel."
+            )
+        policy = await self.config.discord_trigger()
+        value = webhook_id.strip() or str(policy["webhook_id"] or "")
+        if (
+            len(value) > 20
+            or not value.isascii()
+            or not value.isdecimal()
+            or not 0 < int(value) < 2**64
+        ):
+            raise commands.BadArgument("Supply the webhook's numeric ID, not its private URL.")
+        await self._source(ctx)
+        await check_command(ctx, native_command(self.bot, "cog update", {"Downloader"}))
+        await check_command(ctx, native_command(self.bot, "slash sync", {"Core"}))
+        try:
+            hook = await self.bot.fetch_webhook(int(value))
+        except discord.HTTPException:
+            raise commands.BadArgument(
+                "Could not inspect that webhook. Check its ID and the bot's Manage Webhooks permission."
+            ) from None
+        if (
+            hook.type != discord.WebhookType.incoming
+            or hook.guild_id != ctx.guild.id
+            or hook.channel_id != ctx.channel.id
+        ):
+            raise commands.BadArgument(
+                "Choose an incoming webhook that belongs to this server and text channel."
+            )
+        same_binding = (
+            policy["webhook_id"] == hook.id
+            and policy["guild_id"] == ctx.guild.id
+            and policy["channel_id"] == ctx.channel.id
+        )
+        await self._discord_trigger.close()
+        replacement = deepcopy(DISCORD_DEFAULTS)
+        replacement.update(
+            enabled=True,
+            webhook_id=hook.id,
+            guild_id=ctx.guild.id,
+            channel_id=ctx.channel.id,
+            owner_id=ctx.author.id,
+            generation=secrets.token_hex(16),
+            last_message_id=policy["last_message_id"] if same_binding else 0,
+            last_result=policy["last_result"] if same_binding else {},
+        )
+        try:
+            await self.config.discord_trigger.set(replacement)
+        finally:
+            # Re-read durable settings if a write fails, preserving the old worker.
+            await self._discord_trigger.start()
+        await self._presentation.send(
+            ctx,
+            "Discord webhook updates enabled here. Post `updateall` through that webhook; "
+            "the bot will update repositories and unpinned cogs, reload changes and sync enabled slash commands.",
+            tone="success",
+        )
+
+    @discord_trigger.command(name="disable")
+    @configuration_request
+    async def discord_disable(self, ctx):
+        """Stop updates from the approved Discord webhook without deleting it."""
+        async with self.config.discord_trigger() as policy:
+            policy.update(enabled=False, pending=False, generation=secrets.token_hex(16))
+        await self._discord_trigger.close()
+        await self._presentation.send(ctx, "Discord webhook updates disabled.", tone="success")
 
     @download.group(name="repos", invoke_without_command=True, fallback="list")
     async def repos(self, ctx):
