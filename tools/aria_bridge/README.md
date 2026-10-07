@@ -63,14 +63,15 @@ Wait for `running / healthy`. Health checks test tunnel readiness; they do not p
 
 ## 4. Refresh container status
 
-In Unraid User Scripts, add a script named `Aria GPT container status` with:
+The [Unraid User Scripts repository](https://github.com/kevinwaynekelly/unraid-userscripts) includes the standalone job `1_aria_gpt_container_status`. Install it by running your existing `3_pull_github_repo` job, or run this in the Unraid host terminal:
 
 ```bash
-#!/bin/bash
-bash /mnt/user/appdata/aria-gpt-bridge/source/tools/aria_bridge/export-containers.sh
+bash /boot/config/plugins/user.scripts/scripts/3_pull_github_repo/script
 ```
 
-Run it once and schedule it every minute with custom cron `* * * * *`. It only invokes `docker ps`, projects four status fields and atomically replaces `status/containers.json`. Failed refreshes preserve the previous snapshot. The bridge reports snapshot age and marks it stale after five minutes, so old values cannot appear to be fresh.
+Refresh the User Scripts page, run `1_aria_gpt_container_status` once and schedule it every minute with custom cron `* * * * *`. No hand-created wrapper or Kevin's Cogs checkout dependency is needed for this scheduled job. The updater preserves existing schedules and does not automatically enable new scripts.
+
+The job only invokes `docker ps`, projects four status fields and atomically replaces `status/containers.json`. Failed refreshes preserve the previous snapshot and use the shared Unraid failure notification system. The bridge reports snapshot age and marks it stale after five minutes, so old values cannot appear to be fresh. The bundled `export-containers.sh` remains available for initial installation and hosts that do not use the script repository.
 
 Host load/memory/uptime are read live. The snapshot contains no container environment variables, mounts or secrets. It is bounded to 1 MiB; the bridge returns up to 100 containers.
 
