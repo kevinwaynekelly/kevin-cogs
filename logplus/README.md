@@ -19,7 +19,7 @@ Commands and event notices use the [shared visual theme](../docs/PRESENTATION.md
 
 Commands require Red administrator access or the **Manage Server** permission and can only run in a server. The bot needs **View Channel**, **Send Messages**, and **Embed Links** in each log destination. Grant **View Audit Log** for attribution. Message text requires the Message Content intent, and member events require the Server Members intent to be enabled for the bot. Presence logging also needs the Presence intent.
 
-No destination is configured initially. Event switches default to on, compact styling defaults to on, and the duplicate-suppression window defaults to 2 seconds. Selected repeated reactions, voice states, presence changes, and other-bot messages use this window. Different reaction users have separate suppression keys.
+No destination is configured initially. Event switches default to on, compact styling defaults to on, and the duplicate-suppression window defaults to 2 seconds. Selected repeated reactions, voice states, and other-bot messages use this window. Different reaction users have separate suppression keys. Member presence is collected for hourly summaries instead of logging each transition.
 
 ## Direct and slash commands
 
@@ -93,6 +93,16 @@ Each toggle flips the current value. For example, `[p]log toggle message edit` s
 
 `commands_` and `thredupdate` remain aliases for compatibility. Thread and presence listeners honor their switches. Scheduled-event listeners use Discord's dispatched `on_scheduled_event_*` names and respect their Config switches, now available through `log event sched.<switch> [true|false]` and `/log event`.
 
+## Hourly member presence summaries
+
+`[p]log event member.presence true` enables one summary per member for each UTC clock hour. Use `false` to stop collecting and discard pending presence summaries. The existing `[p]log toggle member presence` and `/log event` controls govern the same switch. Existing saved settings, category routing, optional retained history, and bounded delivery retries apply to these summaries; no new command or setting is required.
+
+Each summary reports the observed window, time in Online, Idle, Do Not Disturb, and Offline states, the number of status changes, and durations for Discord-visible Playing, Streaming, Listening, Watching, or Competing activity names. Concurrent activities can overlap, so their durations can total more than the observed window. Custom status text, activity URLs, provider details, and message contents are not collected for presence summaries.
+
+The first window is partial, starting when collection loads, is enabled, or first observes that member. It is posted at the next UTC hour boundary. Continuing online presence can produce a summary without any new transition; offline-only windows with no change stay silent. Collection is memory-only, with no reconstruction of time before startup or while Discord is disconnected. Reloading discards unfinished windows.
+
+Collection is bounded to 1000 members per server and 5000 across the cog. Each member-hour keeps at most 20 distinct activity labels, at most five simultaneous activities, and 120 characters per label; additional labels are grouped under Other activities. Pending summaries are included in Red user-data export/deletion. Discord presence reflects what Discord exposes, not a reliable measure of real engagement. Invisible members appear offline.
+
 ## Behavior and limitations
 
 - Source-specific routing applies when an event supplies a source channel. All recognized events support category routes, including member and voice events without a source.
@@ -108,7 +118,7 @@ Each toggle flips the current value. For example, `[p]log toggle message edit` s
 
 Red Config stores server settings, event switches, destination channel IDs, source/category routing overrides, channel exemption lists, retry preferences, and style/rate preferences. Message text is persisted in Config only when optional local history is enabled. Logs posted to Discord can contain user IDs, names, invite codes, message contents, and event details, and remain in the destination channels until removed there.
 
-Pending retry records temporarily contain the same event details and message contents in memory. User-data export/deletion hooks return or remove pending and retained records containing that user's Discord ID and clear cached audit entries on deletion. Optional Config history holds bounded event records identifying members; posted Discord logs are managed in Discord.
+Pending retry records temporarily contain the same event details and message contents in memory. Pending hourly presence buffers hold member IDs, observed status durations, status-change counts, and bounded visible activity names in memory only. User-data export/deletion hooks return or remove those presence buffers and pending and retained records containing that user's Discord ID and clear cached audit entries on deletion. Optional Config history holds bounded event records identifying members; posted Discord logs are managed in Discord.
 
 ## Retained history, timelines, and exports
 
