@@ -10,10 +10,12 @@ __red_end_user_data_statement__ = (
     "This cog stores per-guild settings for logging preferences, the destination log channel, and optional "
     "per-channel/category routing overrides and retry preferences. Opt-in local history persists bounded event text, metadata, and identified member IDs for 1 to 90 days; it starts disabled. "
     "Unsent event records temporarily hold event details and message text in a bounded memory retry queue. "
+    "Hourly presence summaries temporarily hold member IDs, observed status durations, status-change counts, "
+    "and bounded visible activity names in memory only, without custom statuses, URLs, provider details or message contents. "
     "Optional summaries store at most eight recent daily aggregate category counts without member IDs. "
     "Incident cases retain titles, identified subjects/creators, up to ten staff notes, twenty bounded log "
     "copies with source channel IDs and resolution metadata, capped at 25 cases and 1 MiB per server for 90 days. User-data hooks "
-    "export/remove identified cases, queued/retained records and owner error-recipient settings. Repeated "
+    "export/remove pending presence buffers, identified cases, queued/retained records and owner error-recipient settings. Repeated "
     "command error signatures and burst timestamps are bounded memory-only counters. Posted logs remain managed in Discord."
 )
 
@@ -47,6 +49,7 @@ EVENT_STYLE: Dict[str, Dict[str, object]] = {
     "roles_changed": {"emoji": "🎭", "color": discord.Color.blurple()},
     "nick_changed": {"emoji": "✍️", "color": discord.Color.blurple()},
     "timeout_updated": {"emoji": "⏳", "color": discord.Color.orange()},
+    "presence_summary": {"emoji": "🕒", "color": discord.Color.blurple()},
     "user_banned": {"emoji": "🔨", "color": discord.Color.dark_red()},
     "user_unbanned": {"emoji": "✅", "color": discord.Color.green()},
     "voice_join": {"emoji": "🎤", "color": discord.Color.green()},
