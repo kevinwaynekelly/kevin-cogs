@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08: Hourly member presence summaries
+
+- Replace individual member presence transitions with one summary per member per UTC clock hour through the existing `member.presence` switch. Report observed status durations, status-change counts, and bounded visible activity names with durations. Continuing online presence is summarized without requiring a new transition; unchanged offline-only hours stay silent.
+- Start the first partial window on load, enable, or observation, and emit it at the next hour boundary. Keep collection in bounded memory, discard unfinished windows on reload, and do not backfill startup or disconnected time. Preserve existing logging switches, routing, optional history, and retry behavior.
+- Include pending presence buffers in Red user-data export/deletion. Exclude custom statuses, URLs, provider details, and message contents, and document that Discord-visible presence does not establish real engagement or reveal invisible users.
+
 ## Aria migration shutdown
 
 - Stop new management requests before releasing the queue lock for idle worker shutdown,
