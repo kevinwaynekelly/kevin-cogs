@@ -1,9 +1,5 @@
 # Changelog
 
-## 2026-10-08: Refresh the Aria bridge runtime
-
-- Move the Python 3.11 bridge image to Debian 13 and apply distribution security updates during builds. Preserve the runtime user, configuration, management API, and health checks.
-
 ## Aria migration shutdown
 
 - Stop new management requests before releasing the queue lock for idle worker shutdown,

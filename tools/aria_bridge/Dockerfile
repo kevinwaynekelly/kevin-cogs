@@ -1,8 +1,4 @@
-FROM python:3.11-slim-trixie
-
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
