@@ -70,7 +70,7 @@ FIELDS = {
 EXCLUDED = {
     "CommunityPlus": ("features.role_menus", "features.summary.last_week"),
     "LevelPlus": ("xp_features.boosts",),
-    "LogPlus": ("alert_settings.errors.recipient",),
+    "LogPlus": ("alert_settings.errors.recipient", "member.presence"),
     "OwoPlus": ("features.optouts",),
 }
 ROLE_LISTS = {

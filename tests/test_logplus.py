@@ -107,7 +107,7 @@ async def test_thread_routes_and_parent_exemptions(bot, guild):
     assert await cog._is_exempt(guild, thread.id, "server")
 
 
-async def test_scheduled_thread_presence_handlers_are_registered_and_dispatch(bot, guild):
+async def test_scheduled_thread_handlers_are_registered_and_dispatch(bot, guild):
     cog = LogPlus(bot)
     listeners = dict(cog.get_listeners())
     for name in [
@@ -119,7 +119,6 @@ async def test_scheduled_thread_presence_handlers_are_registered_and_dispatch(bo
         "on_thread_create",
         "on_thread_delete",
         "on_thread_update",
-        "on_presence_update",
     ]:
         assert name in listeners
     cog._audit_actor_recent = AsyncMock(return_value=None)

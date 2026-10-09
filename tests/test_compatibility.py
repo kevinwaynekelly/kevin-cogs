@@ -3,6 +3,7 @@
 import importlib
 import inspect
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,9 @@ def test_existing_commands_and_permissions_remain_compatible(package, bot):
         for name in [command.name, *command.aliases]:
             roots[name] = command
     for saved in BASELINE[package]["commands"]:
+        # Presence logging was intentionally removed from LogPlus.
+        if package == "logplus" and saved["name"] == "logplus toggle member presence":
+            continue
         root, *rest = saved["name"].split()
         command = roots[RENAMED_ROOTS.get(root, root)]
         for part in rest:
@@ -105,4 +109,7 @@ async def test_saved_configuration_namespace_and_defaults(package, bot):
         from logplus.delivery import FEATURE_DEFAULTS
 
         assert defaults["GUILD"].pop("features") == FEATURE_DEFAULTS
-    assert defaults == BASELINE[package]["defaults"]
+    expected = deepcopy(BASELINE[package]["defaults"])
+    if package == "logplus":
+        expected["GUILD"]["member"].pop("presence")
+    assert defaults == expected

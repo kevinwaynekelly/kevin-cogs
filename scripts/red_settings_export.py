@@ -131,7 +131,7 @@ GUILD = {
             "exempt_channels": IDS,
         },
         "invites": fields("create delete"),
-        "member": fields("join leave roles_changed nick_changed ban unban timeout presence"),
+        "member": fields("join leave roles_changed nick_changed ban unban timeout"),
         "voice": fields("join move leave mute deaf video stream"),
         "sched": fields("create update delete user_add user_remove"),
         "commands": fields("this_bot other_bots"),

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import io
-import json
 import logging
 import math
 import re
 import time
 from collections import OrderedDict, defaultdict, deque
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Literal, Optional, Union
 
 import discord
@@ -33,7 +31,6 @@ from .events import guild_enabled
 from .history import HISTORY_DEFAULTS, LogHistory, export_history
 from .incidents import ALERT_DEFAULTS, SUMMARY_DEFAULTS, IncidentCommands
 from .interactive import SetupView, close_views
-from .presence import PresenceTracker
 from .presentation import Presentation, settings
 
 log = logging.getLogger(__name__)
@@ -85,6 +82,8 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
             moderation_summary=SUMMARY_DEFAULTS,
             incident_cases={},
         )
+        # Red reuses Config instances on reload, including previously registered defaults.
+        self.config._defaults[Config.GUILD]["member"].pop("presence", None)
 
         self._last_event_at = OrderedDict()
         self._settings_cache = {}
@@ -99,10 +98,6 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
         self._closing = False
         self._history_task = None
         self._moderation_task = None
-        self._presence_task = None
-        self._presence_send_tasks = {}
-        self._presence_connected = True
-        self._presence_tracker = PresenceTracker()
         self._alert_tasks = set()
         self._alert_windows = OrderedDict()
         self._alert_sent = {}
@@ -387,7 +382,7 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
                 f"• `{p}log toggle reactions <add|remove|clear>`\n"
                 f"• `{p}log toggle server <channelcreate|channeldelete|channelupdate|rolecreate|roledelete|roleupdate|serverupdate|emojiupdate|stickerupdate|integrationsupdate|webhooksupdate|threadcreate|threaddelete|thredupdate>`\n"
                 f"• `{p}log toggle invites <create|delete>`\n"
-                f"• `{p}log toggle member <join|leave|roles|nick|ban|unban|timeout|presence>`\n"
+                f"• `{p}log toggle member <join|leave|roles|nick|ban|unban|timeout>`\n"
                 f"• `{p}log toggle voice <join|move|leave|mute|deaf|video|stream>`\n"
                 f"• `{p}log toggle commands <thisbot|otherbots>`"
             ),
@@ -852,8 +847,6 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
         else:
             async with section() as values:
                 values[key] = current = enabled
-            if event == "member.presence" and not current:
-                self._presence_tracker.drop_guild(ctx.guild.id)
         await self._reply(
             ctx,
             f"**{event}** · {'Enabled' if current else 'Disabled'}",
@@ -879,8 +872,6 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
         async with self.config.guild(ctx.guild).get_attr(group)() as section:
             section[key] = not section[key]
             enabled = section[key]
-        if group == "member" and key == "presence" and not enabled:
-            self._presence_tracker.drop_guild(ctx.guild.id)
         await self._reply(
             ctx,
             embed=await self._E(ctx.guild, "Toggle", f"{group}.{key} → **{self._onoff(enabled)}**"),
@@ -1071,11 +1062,6 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
     async def t_m_timeout(self, ctx: redcommands.Context):
         """Toggle member timeout logging."""
         await self._flip(ctx, "member", "timeout")
-
-    @member.command(name="presence")
-    async def t_m_presence(self, ctx: redcommands.Context):
-        """Toggle member presence change logging."""
-        await self._flip(ctx, "member", "presence")
 
     # voice toggles
     @toggle.group(autohelp=False)
@@ -1745,7 +1731,6 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
     @commands.Cog.listener()
     @guild_enabled
     async def on_member_remove(self, member: discord.Member):
-        self._presence_tracker.drop_member(member.guild.id, member.id)
         g = await self._settings(member.guild)
         if g["member"]["leave"]:
             # IMPROVED: Check for KICK
@@ -2178,24 +2163,27 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
         finish_configuration_audit(ctx)
         self._settings_cache.pop(ctx.guild.id, None)
 
+    async def _migrate_removed_presence(self):
+        """Remove the retired member presence switch without changing other settings."""
+        for guild_id, saved in (await self.config.all_guilds()).items():
+            if "presence" in saved.get("member", {}):
+                async with self.config.guild_from_id(guild_id).member() as member:
+                    member.pop("presence", None)
+        self._settings_cache.clear()
+
     async def cog_load(self):
         self._closing = False
+        await self._migrate_removed_presence()
         await self._migrate_case_sources()
         self._history_task = asyncio.create_task(
             self._history_maintenance(), name="logplus-history-retention"
         )
         self._moderation_task = asyncio.create_task(self._moderation_loop())
-        self._presence_task = asyncio.create_task(
-            self._presence_loop(), name="logplus-hourly-presence"
-        )
 
     async def cog_unload(self):
         self._closing = True
-        tasks = (
-            tuple(self._alert_tasks)
-            + ((self._moderation_task,) if self._moderation_task else ())
-            + ((self._presence_task,) if self._presence_task else ())
-            + tuple(self._presence_send_tasks)
+        tasks = tuple(self._alert_tasks) + (
+            (self._moderation_task,) if self._moderation_task else ()
         )
         for task in tasks:
             task.cancel()
@@ -2203,9 +2191,6 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
         self._alert_tasks.clear()
         self._alert_windows.clear()
         self._alert_sent.clear()
-        self._presence_task = None
-        self._presence_send_tasks.clear()
-        self._presence_tracker.clear()
         if self._history_task:
             self._history_task.cancel()
             await asyncio.gather(self._history_task, return_exceptions=True)
@@ -2321,149 +2306,7 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
             )
 
     @commands.Cog.listener()
-    @guild_enabled
-    async def on_presence_update(self, before, after):
-        if self._presence_connected and await self._presence_enabled(after.guild):
-            if self._closing or not self._presence_connected:
-                return
-            if after.guild.get_member(after.id) is None:
-                self._presence_tracker.drop_member(after.guild.id, after.id)
-                return
-            # Never use before to infer time preceding the first observed state.
-            self._presence_tracker.observe(after, time.time())
-
-    async def _presence_enabled(self, guild):
-        if (
-            self._closing
-            or not self._presence_connected
-            or getattr(guild, "unavailable", False) is True
-            or await self.bot.cog_disabled_in_guild(self, guild)
-        ):
-            self._presence_tracker.drop_guild(guild.id)
-            return False
-        intents = getattr(self.bot, "intents", None)
-        conf = await self._settings(guild)
-        enabled = (
-            conf["member"]["presence"]
-            and (intents is None or intents.presences)
-            and await self._log_channel(guild, category="member") is not None
-        )
-        enabled = (
-            enabled
-            and not self._closing
-            and self._presence_connected
-            and (self.bot.get_guild(guild.id) is not None)
-        )
-        if not enabled:
-            self._presence_tracker.drop_guild(guild.id)
-        return bool(enabled)
-
-    @staticmethod
-    def _presence_duration(seconds):
-        minutes, seconds = divmod(max(0, int(seconds)), 60)
-        return f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
-
-    async def _presence_cycle(self, now=None):
-        now = time.time() if now is None else now
-        for guild in tuple(self.bot.guilds):
-            if not await self._presence_enabled(guild):
-                continue
-            for member in tuple(guild.members):
-                self._presence_tracker.observe(member, now)
-        for summary in self._presence_tracker.drain(now):
-            guild = self.bot.get_guild(summary.guild_id)
-            if guild is None or not await self._presence_enabled(guild):
-                continue
-            if not self._presence_tracker.is_current(summary):
-                continue
-            embed = await self._E(
-                guild,
-                "Hourly activity summary",
-                description=f"<t:{int(summary.start)}:t> to <t:{int(summary.end)}:t>",
-                etype="presence_summary",
-                footer=("Partial hour. " if summary.partial else "")
-                + "Discord-reported presence; invisible appears offline. Activities can overlap.",
-            )
-            embed.timestamp = datetime.fromtimestamp(summary.end, tz=timezone.utc)
-            embed.add_field(
-                name="Member",
-                value=f"{discord.utils.escape_markdown(summary.name[:80])} (`{summary.user_id}`)",
-                inline=False,
-            )
-            labels = {
-                "online": "Online",
-                "idle": "Idle",
-                "dnd": "Do Not Disturb",
-                "offline": "Offline",
-            }
-            embed.add_field(
-                name="Presence",
-                value="\n".join(
-                    f"{labels.get(status, status)}: {self._presence_duration(seconds)}"
-                    for status, seconds in summary.status_seconds.items()
-                    if seconds > 0
-                )
-                or "No observed duration",
-                inline=True,
-            )
-            embed.add_field(name="Status changes", value=str(summary.status_changes), inline=True)
-            activities = sorted(
-                summary.activity_seconds.items(), key=lambda item: (-item[1], item[0])
-            )
-            if activities:
-                rows = [
-                    f"{discord.utils.escape_markdown(name)[:120]}: {self._presence_duration(seconds)}"
-                    for name, seconds in activities[:6]
-                ]
-                if len(activities) > 6:
-                    rows.append(f"Plus {len(activities) - 6} other observed activities")
-                embed.add_field(name="Activities", value="\n".join(rows), inline=False)
-            # Data deletion, reconnects and switch changes can occur during embed preparation.
-            if await self._presence_enabled(guild) and self._presence_tracker.is_current(summary):
-                await self._send_presence(guild, embed, summary.user_id)
-
-    async def _send_presence(self, guild, embed, user_id):
-        # Own the child independently so a privacy deletion can cancel and await
-        # this send without killing the hourly collector or another member's data.
-        task = asyncio.create_task(self._send(guild, embed, category="member"))
-        self._presence_send_tasks[task] = user_id
-        try:
-            result = (await asyncio.gather(task, return_exceptions=True))[0]
-            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
-                raise result
-        finally:
-            self._presence_send_tasks.pop(task, None)
-
-    async def _presence_loop(self):
-        await self.bot.wait_until_red_ready()
-        while not self._closing:
-            try:
-                if self._presence_connected:
-                    await self._presence_cycle()
-            except Exception as error:
-                log.warning("Hourly presence summary failed (%s)", type(error).__name__)
-            # Wake at the next minute, including the clock-hour boundary.
-            await asyncio.sleep(max(0.1, min(60.0, 60.0 - time.time() % 60)))
-
-    @commands.Cog.listener()
-    async def on_disconnect(self):
-        self._presence_connected = False
-        self._presence_tracker.clear()
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        self._presence_tracker.clear()
-        self._presence_connected = True
-        if not self._closing:
-            await self._presence_cycle()
-
-    @commands.Cog.listener()
-    async def on_resumed(self):
-        await self.on_ready()
-
-    @commands.Cog.listener()
     async def on_guild_remove(self, guild):
-        self._presence_tracker.drop_guild(guild.id)
         await self._cancel_retries(guild.id)
         self._retry_queues.pop(guild.id, None)
         self._delivery_status.pop(guild.id, None)
@@ -2479,18 +2322,10 @@ class LogPlus(IncidentCommands, LogDelivery, LogHistory, redcommands.Cog):
                 self._last_event_at.pop(key, None)
 
     async def red_delete_data_for_user(self, *, requester, user_id):
-        self._presence_tracker.drop_user(user_id)
-        tasks = tuple(task for task, uid in self._presence_send_tasks.items() if uid == user_id)
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
         await self._incident_user_data(user_id, delete=True)
         await super().red_delete_data_for_user(requester=requester, user_id=user_id)
 
     async def red_get_data_for_user(self, *, user_id):
         data = await super().red_get_data_for_user(user_id=user_id)
         data.update(await self._incident_export(user_id))
-        presence = self._presence_tracker.export_user(user_id)
-        if presence:
-            data["logplus-presence.json"] = io.BytesIO(json.dumps(presence, indent=2).encode())
         return data

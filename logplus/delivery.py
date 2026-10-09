@@ -32,8 +32,6 @@ EVENT_SWITCH = {
     "timeout_updated": ("member", "timeout"),
     "user_banned": ("member", "ban"),
     "user_unbanned": ("member", "unban"),
-    "presence_changed": ("member", "presence"),
-    "presence_summary": ("member", "presence"),
     "cmd_thisbot": ("commands", "this_bot"),
     "cmd_otherbot": ("commands", "other_bots"),
     **{

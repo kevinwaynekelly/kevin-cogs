@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-08: Remove LogPlus presence logging
+
+- Remove member presence tracking and hourly activity summaries, including their listener, tasks, event switch, toggle command, and in-memory activity buffers.
+- Remove the retired presence setting from saved guild configuration on load and from policy exports. Keep other member logs, routing, history, and incident tools intact.
+
 ## 2026-10-08: Hourly member presence summaries
 
 - Replace individual member presence transitions with one summary per member per UTC clock hour through the existing `member.presence` switch. Report observed status durations, status-change counts, and bounded visible activity names with durations. Continuing online presence is summarized without requiring a new transition; unchanged offline-only hours stay silent.
